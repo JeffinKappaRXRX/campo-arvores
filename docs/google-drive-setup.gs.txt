@@ -1,0 +1,136 @@
+// CAMPO — receptor de fotos, Excel e KML no seu Google Drive.
+// 1. Substitua SOMENTE o ID abaixo pelo ID da sua pasta privada.
+// 2. Execute configurarCampo uma vez e autorize o seu próprio projeto.
+// 3. Copie a CHAVE_INTEGRACAO do registro de execução e envie ao responsável pelo app.
+// 4. Implantar > Nova implantação > Aplicativo da Web > Executar como: Eu
+//    Quem tem acesso: Qualquer pessoa. Copie a URL terminada em /exec.
+// Não compartilhe a pasta ou a chave com os inspetores.
+const PASTA_CAMPO_ID = 'COLE_AQUI_O_ID_DA_PASTA';
+
+function configurarCampo() {
+  if (PASTA_CAMPO_ID === 'COLE_AQUI_O_ID_DA_PASTA') throw new Error('Preencha o ID da pasta antes de executar.');
+  const pasta = DriveApp.getFolderById(PASTA_CAMPO_ID);
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('CAMPO_FOLDER_ID', pasta.getId());
+  if (!props.getProperty('CAMPO_SECRET')) props.setProperty('CAMPO_SECRET', Utilities.getUuid()+Utilities.getUuid());
+  console.log('PASTA: '+pasta.getName());
+  console.log('CHAVE_INTEGRACAO: '+props.getProperty('CAMPO_SECRET'));
+}
+function doGet() {
+  return respostaCampo({ok:false,error:'Use o aplicativo Campo para enviar. Esta página não mostra arquivos.'});
+}
+function respostaCampo(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+function doPost(e) {
+  let lock;
+  try {
+    const p = JSON.parse(e.postData.contents), props = PropertiesService.getScriptProperties();
+    const secret = props.getProperty('CAMPO_SECRET');
+    if (!secret || p.token !== secret) return respostaCampo({ok:false,code:'AUTH',error:'Integração não autorizada.'});
+    if (p.action === 'status') {
+      const folder = DriveApp.getFolderById(props.getProperty('CAMPO_FOLDER_ID'));
+      return respostaCampo({ok:true,folderName:folder.getName(),consolidation:true,consolidatedUrl:props.getProperty('CAMPO_CONSOLIDADO_ID')?'https://drive.google.com/file/d/'+props.getProperty('CAMPO_CONSOLIDADO_ID')+'/view':null});
+    }
+    if(p.action==='consolidate'){
+      if(!/^[a-zA-Z0-9_-]{1,100}$/.test(p.recordId||'')||!/^\d{4}-\d{2}-\d{2}T[\d:.Z+-]+$/.test(p.version||''))throw Error('INVALID');
+      lock=LockService.getScriptLock();if(!lock.tryLock(10000))return respostaCampo({ok:false,code:'BUSY'});
+      const parent=DriveApp.getFolderById(props.getProperty('CAMPO_FOLDER_ID'));
+      const folders=parent.getFoldersByName('Campo_'+p.recordId+'_'+p.version.replace(/[^0-9]/g,''));if(!folders.hasNext())throw Error('VERIFY');
+      const row=lerCadastroCampo(folders.next());if(!row||row.id!==p.recordId||row.updatedAt!==p.version)throw Error('VERIFY');
+      const result=consolidarCampo(parent,row,false);return respostaCampo({ok:true,consolidated:true,recordId:p.recordId,version:p.version,url:result.url,count:result.count});
+    }
+    if (p.action !== 'file' || !/^[a-zA-Z0-9_-]{1,100}$/.test(p.recordId||'') || !/^\d{4}-\d{2}-\d{2}T[\d:.Z+-]+$/.test(p.version||'')) throw new Error('INVALID');
+    const allowed = /^(?:[a-zA-Z0-9_-]+_(?:original\.(?:jpg|png|webp|heic)|georreferenciada\.jpg)|inspecao\.(?:xlsx|kml)|metadados\.json)$/;
+    if (!allowed.test(p.name||'') || typeof p.base64 !== 'string' || p.base64.length>28000000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(p.base64)) throw new Error('INVALID');
+    const data = Utilities.base64Decode(p.base64);
+    if (!data.length || data.length>20*1024*1024) throw new Error('SIZE');
+    const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,data).map(b=>('0'+((b+256)%256).toString(16)).slice(-2)).join('');
+    const mimes={xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',kml:'application/vnd.google-earth.kml+xml',json:'application/json',jpg:'image/jpeg',png:'image/png',webp:'image/webp',heic:'image/heic'};
+    lock=LockService.getScriptLock();if (!lock.tryLock(10000)) return respostaCampo({ok:false,code:'BUSY',error:'Envio ocupado. Tente novamente.'});
+    const parent=DriveApp.getFolderById(props.getProperty('CAMPO_FOLDER_ID'));
+    // Uma subpasta por versão: uma edição não sobrescreve a inspeção anterior.
+    const folderName='Campo_'+p.recordId+'_'+p.version.replace(/[^0-9]/g,'');
+    const folders=parent.getFoldersByName(folderName), folder=folders.hasNext()?folders.next():parent.createFolder(folderName);
+    const existing=folder.getFilesByName(p.name);let file;
+    if (existing.hasNext()) {
+      file=existing.next();
+      // Conteúdo original permanece imutável em uma mesma versão.
+      const old=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,file.getBlob().getBytes()).map(b=>('0'+((b+256)%256).toString(16)).slice(-2)).join('');
+      if (old!==hash) return respostaCampo({ok:false,code:'CONFLICT',error:'Arquivo diferente com mesmo nome. Edite e salve a inspeção para criar nova versão.'});
+    } else {
+      file=folder.createFile(Utilities.newBlob(data,mimes[p.name.split('.').pop()],p.name));
+    }
+    if (file.getSize()!==data.length) throw new Error('VERIFY');
+    // Metadados são enviados por último. Consolidar não substitui os arquivos individuais.
+    if(p.name==='metadados.json'){try{const row=lerCadastroCampo(folder);if(row)consolidarCampo(parent,row,false);}catch(ignore){/* A ação consolidate retoma a atualização sem reenviar fotos. */}}
+    return respostaCampo({ok:true,id:file.getId(),size:file.getSize(),sha256:hash,folderId:folder.getId(),folderUrl:folder.getUrl()});
+  } catch(err) {
+    const known={SIZE:'Arquivo acima de 20 MB.',INVALID:'Solicitação inválida.',VERIFY:'Google não confirmou o tamanho do arquivo.'};
+    return respostaCampo({ok:false,code:known[err.message]?err.message:'GOOGLE',error:known[err.message]||'Falha no Google Drive. Confira permissões, espaço disponível e cotas no painel Execuções do Apps Script.'});
+  } finally {if(lock&&lock.hasLock())lock.releaseLock();}
+}
+
+// Execute esta função uma vez ao atualizar o receptor: inclui os cadastros existentes.
+function atualizarConsolidadoCampo(){
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{const props=PropertiesService.getScriptProperties(),parent=DriveApp.getFolderById(props.getProperty('CAMPO_FOLDER_ID')||PASTA_CAMPO_ID);
+    const result=consolidarCampo(parent,null,true);console.log('EXCEL_UNICO: '+result.url);console.log('CADASTROS: '+result.count);
+  }finally{lock.releaseLock();}
+}
+function lerCadastroCampo(folder){
+ const found=folder.getFilesByName('metadados.json');if(!found.hasNext())return null;
+ const row=JSON.parse(found.next().getBlob().getDataAsString('UTF-8'));
+ if(!/^[a-zA-Z0-9_-]{1,100}$/.test(row.id||'')||!Number.isFinite(Date.parse(row.updatedAt)))return null;
+ for(const name of ['inspecao.xlsx','inspecao.kml'])if(!folder.getFilesByName(name).hasNext())return null;
+ row.photos=(row.photos||[]).map(p=>{const out={...p};for(const [key,urlKey] of [['original','originalUrl'],['georreferenced','georreferencedUrl']]){
+   if(p[key]){const it=folder.getFilesByName(p[key]);if(!it.hasNext())throw Error('VERIFY');out[urlKey]=it.next().getUrl();}
+ }out.mime=p.original&&p.original.endsWith('.png')?'image/png':p.original&&p.original.endsWith('.webp')?'image/webp':p.original&&p.original.endsWith('.heic')?'image/heic':'image/jpeg';out.annotated=Boolean(p.georreferenced);return out;});
+ row.folderUrl=folder.getUrl();row.consolidatedAt=new Date().toISOString();return row;
+}
+function consolidarCampo(parent,row,rebuild){
+ const indexName='Campo-Consolidado-base.json',it=parent.getFilesByName(indexName);let index=it.hasNext()?it.next():null,rows=Object.create(null);
+ if(index&&!rebuild)rows=Object.assign(Object.create(null),JSON.parse(index.getBlob().getDataAsString('UTF-8')).rows||{});
+ const put=r=>{if(r&&(!rows[r.id]||Date.parse(rows[r.id].updatedAt)<=Date.parse(r.updatedAt)))rows[r.id]=r;};
+ if(rebuild){const folders=parent.getFolders();while(folders.hasNext()){const f=folders.next();if(!f.getName().startsWith('Campo_'))continue;try{put(lerCadastroCampo(f));}catch(ignore){}}}
+ put(row);const all=Object.values(rows).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||a.id.localeCompare(b.id));
+ const text=JSON.stringify({schemaVersion:1,updatedAt:new Date().toISOString(),rows});if(index)index.setContent(text);else index=parent.createFile(Utilities.newBlob(text,'application/json',indexName));
+ const blob=CampoCentralXlsx.xlsx(all),name='Campo-Arvores-Consolidado.xlsx',props=PropertiesService.getScriptProperties();
+ let file=null;const oldId=props.getProperty('CAMPO_CONSOLIDADO_ID');if(oldId){try{file=DriveApp.getFileById(oldId);}catch(ignore){}}
+ if(!file){const existing=parent.getFilesByName(name);if(existing.hasNext())file=existing.next();}
+ if(file){const response=UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files/'+encodeURIComponent(file.getId())+'?uploadType=media',{method:'patch',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},payload:blob.getBytes(),muteHttpExceptions:true});if(response.getResponseCode()<200||response.getResponseCode()>=300)throw Error('GOOGLE');}
+ else file=parent.createFile(blob.setName(name).setContentType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'));
+ props.setProperty('CAMPO_CONSOLIDADO_ID',file.getId());return {url:file.getUrl(),count:all.length};
+}
+
+const CampoCentralXlsx=(function(){
+ const xml=v=>String(v??'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+ const numeric=v=>v!==''&&v!==null&&v!==undefined&&Number.isFinite(Number(v))?Number(v):null;
+ const columns=[['id','ID'],['createdAt','Criado em (ISO)'],['updatedAt','Atualizado em (ISO)'],['inspector','Inspetor'],['feeder','Alimentador / localidade'],['lat','Latitude árvore (WGS84)',1],['lon','Longitude árvore (WGS84)',1],['height','Altura (m)',1],['dap','DAP (cm)',1],['circ','CAP (cm)',1],['mt','Rede MT'],['mtDistance','Distância MT (m)',1],['bt','Rede BT'],['btDistance','Distância BT (m)',1],['at','Rede AT'],['atDistance','Distância AT (m)',1],['position','Posição na rede'],['projection','Em projeção'],['grouped','Poda agrupada'],['pole','ID poste'],['span','ID vão'],['poda','Poda'],['os','OS SGM'],['species','Espécie'],['note','Observação'],['deviceLat','Latitude aparelho',1],['deviceLon','Longitude aparelho',1],['accuracy','Precisão GPS aparelho (m)',1],['gpsAt','Data GPS aparelho (ISO)'],['locationMethod','Método da posição'],['photoCount','Quantidade fotos',1],['heightMethod','Método altura'],['heightDistance','Distância usada altura (m)',1],['heightBase','Ângulo base (graus)',1],['heightTop','Ângulo topo (graus)',1],['heightConfirmed','Altura confirmada pelo inspetor'],['plantConfidence','Confiança identificação',1],['folderUrl','Pasta das fotos'],['consolidatedAt','Consolidado em (ISO)']];
+ function values(r){const g=r.origin||r.photos?.[0]?.metadata?.deviceGps||{},h=r.heightMeasurement||{},lat=numeric(r.lat),lon=numeric(r.lon);const same=lat!==null&&lon!==null&&numeric(g.lat)!==null&&Math.abs(lat-g.lat)<1e-7&&Math.abs(lon-g.lon)<1e-7;return {...r,deviceLat:g.lat,deviceLon:g.lon,accuracy:g.accuracy,gpsAt:g.timestamp,locationMethod:same?'GPS do aparelho':'Ponto ajustado no mapa ou coordenadas manuais',photoCount:r.photos?.length||0,heightMethod:h.method||h.distanceMethod||'',heightDistance:h.horizontalDistance,heightBase:h.baseAngle,heightTop:h.topAngle,heightConfirmed:h.confirmedByInspector===true?'sim':'',plantConfidence:r.plantIdentification?.results?.[r.plantIdentification?.acceptedIndex]?.score};}
+ const colName=n=>{let s='';for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
+ function sheet(rows,headers){const all=[headers,...rows];return '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+headers.map((_,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+([0,1,2].includes(i)?26:22)+'" customWidth="1"/>').join('')+'</cols><sheetData>'+all.map((row,i)=>'<row r="'+(i+1)+'"'+(i===0?' ht="32" customHeight="1"':'')+'>'+row.map((v,j)=>{const ref=colName(j)+(i+1);return typeof v==='number'&&Number.isFinite(v)?'<c r="'+ref+'" s="2"><v>'+v+'</v></c>':'<c r="'+ref+'" t="inlineStr" s="'+(i===0?1:0)+'"><is><t xml:space="preserve">'+xml(typeof v==='boolean'?(v?'sim':'não'):v)+'</t></is></c>';}).join('')+'</row>').join('')+'</sheetData><autoFilter ref="A1:'+colName(headers.length-1)+Math.max(1,all.length)+'"/></worksheet>';}
+ function xlsx(records){const files={},put=(n,v)=>files[n]=v;const sheets=['Árvores','Fotos','Método'];
+ put('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+sheets.map((_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>');
+ put('_rels/.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+ put('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+sheets.map((n,i)=>'<sheet name="'+xml(n)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>');
+ put('xl/_rels/workbook.xml.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+sheets.map((_,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+'<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+ put('xl/styles.xml','<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF164B3C"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+ put('xl/worksheets/sheet1.xml',sheet(records.map(r=>{const v=values(r);return columns.map(([k,_,n])=>n?numeric(v[k]):v[k]);}),columns.map(c=>c[1])));
+ put('xl/worksheets/sheet2.xml',sheet(records.flatMap(r=>(r.photos||[]).map(p=>[r.id,p.id,p.name,p.receivedAt,p.id.replace(/[^a-zA-Z0-9_-]/g,'_')+'_original.'+(p.mime==='image/png'?'png':p.mime==='image/webp'?'webp':p.mime==='image/heic'?'heic':'jpg'),p.annotated?p.id.replace(/[^a-zA-Z0-9_-]/g,'_')+'_georreferenciada.jpg':''])),['ID inspeção','ID foto','Nome original','Recebida em (ISO)','Arquivo original','Arquivo georreferenciado']));
+ put('xl/worksheets/sheet3.xml',sheet([['Coordenadas','WGS84 / EPSG:4326. Posição final do alfinete da árvore.'],['Precisão GPS','Refere-se à leitura do aparelho; não certifica o ponto da árvore ajustado no mapa.'],['Horários','ISO 8601, com fuso informado no valor.'],['Campo vazio','Não informado ou não medido; zero permanece zero.'],['Altura','Estimativa. Confira a medição e o método antes de usar.'],['Identificação','Sugestão Pl@ntNet confirmada pelo inspetor, quando disponível.'],['Fotos','Links para as fotos e a pasta privada do cadastro.'],['Registros','Todos os cadastros completos no repositório. Uma linha por ID, com a última versão sincronizada.']],['Campo','Definição']));
+ 
+ // Links externos são gerados a partir das URLs privadas confirmadas pelo Drive.
+ const mainLinks=records.map((r,i)=>({ref:'AL'+(i+2),url:r.folderUrl})).filter(l=>l.url);
+ const photoRows=records.flatMap(r=>(r.photos||[]).map(p=>[r.id,p.id,p.name,p.receivedAt,p.originalUrl||'',p.georreferencedUrl||'',r.folderUrl]));
+ files['xl/worksheets/sheet2.xml']=sheet(photoRows,['ID inspeção','ID foto','Nome original','Recebida em (ISO)','Foto original','Foto anotada','Pasta das fotos']);
+ const photoLinks=[];photoRows.forEach((r,i)=>[4,5,6].forEach(j=>{if(r[j])photoLinks.push({ref:colName(j)+(i+2),url:r[j]});}));
+ for(const [number,links] of [[1,mainLinks],[2,photoLinks]]){
+ const path='xl/worksheets/sheet'+number+'.xml';if(!links.length)continue;
+ files[path]=files[path].replace('<worksheet xmlns=', '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns=').replace('</worksheet>','<hyperlinks>'+links.map((l,i)=>'<hyperlink ref="'+l.ref+'" r:id="link'+i+'"/>').join('')+'</hyperlinks></worksheet>');
+ files['xl/worksheets/_rels/sheet'+number+'.xml.rels']='<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+links.map((l,i)=>'<Relationship Id="link'+i+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="'+xml(l.url)+'" TargetMode="External"/>').join('')+'</Relationships>';
+ }
+ return Utilities.zip(Object.keys(files).map(n=>Utilities.newBlob(files[n],'application/xml',n)),'Campo-Arvores-Consolidado.xlsx');}
+
+
+return {xlsx};})();
