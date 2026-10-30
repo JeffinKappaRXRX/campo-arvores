@@ -2,7 +2,7 @@
 
 Aplicativo para registro de árvores, mapa da rede, operação offline e sincronização.
 
-**Versão:** 3.12.0.
+**Versão:** 4.0.0.
 
 ## Publicação
 
@@ -10,7 +10,11 @@ A interface está em `docs/`. No GitHub, abra **Settings → Pages**, escolha **
 
 Endereço esperado após ativação: https://JeffinKappaRXRX.github.io/campo-arvores/
 
-**A API ainda precisa ser implantada e configurada.** O endereço em `docs/config.js` é um exemplo; identificação e sincronização só funcionarão após configurar o backend.
+O ambiente existente utiliza a API Cloudflare configurada em `docs/config.js`. Novos ambientes precisam de bindings e secrets próprios.
+
+A versão 4.0 inclui mapa compartilhado da equipe, importação CSV/XLSX e pedidos de exclusão com evidência e aprovação administrativa. Veja o [guia da base compartilhada](BASE-COMPARTILHADA.md).
+
+Se o Pages estiver configurado na raiz, `index.html` encaminha para `docs/`.
 
 Siga o [guia completo](LEIA-ME.md) e o [checklist de validação](PUBLICACAO-CHECKLIST.md).
 

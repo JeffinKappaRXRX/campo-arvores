@@ -13,7 +13,7 @@ const feederPanel=document.createElement('details');feederPanel.className='map-f
 feederPanel.innerHTML='<summary id="mapFeedersSummary">Todos os alimentadores</summary><label>Pesquisar alimentador<input id="mapFeederSearch" type="search" placeholder="Ex.: RBR, TAN, AAL…" autocomplete="off"></label><button type="button" id="allMapFeeders" class="secondary">Mostrar todos · limpar seleção</button><div id="mapFeederChoices"></div><p class="hint">Marque um ou vários. Sem seleção, o mapa mostra todos. O alimentador do cadastro é independente.</p>';
 baseControls.after(feederPanel);
 function openMapMenu(){mapMenu.hidden=false;mapMenuButton.setAttribute('aria-expanded','true');}
-function closeMapMenu(){mapMenu.hidden=true;mapMenuButton.setAttribute('aria-expanded','false');}
+function closeMapMenu(){if(typeof sharedReady!=='undefined'&&sharedReady)renderInspectionPins();mapMenu.hidden=true;mapMenuButton.setAttribute('aria-expanded','false');}
 mapMenuButton.onclick=()=>mapMenu.hidden?openMapMenu():closeMapMenu();$('closeMapMenu').onclick=closeMapMenu;
 $('mapFeederSearch').oninput=renderFeederChoices;
 $('allMapFeeders').onclick=()=>setMapFeeders([]);

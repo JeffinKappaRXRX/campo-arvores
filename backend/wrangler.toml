@@ -4,10 +4,15 @@ compatibility_date = "2026-10-13"
 workers_dev = true
 
 [vars]
-APP_ORIGIN = "https://JeffinKappaRXRX.github.io"
+APP_ORIGIN = "https://jeffinkapparxrx.github.io"
 CAMPO_ADMIN_EMAIL = "administrador@campo.local"
 
 
 [[kv_namespaces]]
 binding = "LOGIN_GUARD"
 id = "COLE_O_ID_DO_NAMESPACE_KV"
+
+[[d1_databases]]
+binding = "SHARED_DB"
+database_name = "campo-arvores-compartilhadas"
+database_id = "COLE_O_ID_DO_BANCO_D1"

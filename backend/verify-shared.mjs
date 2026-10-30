@@ -1,0 +1,31 @@
+import fs from 'node:fs/promises';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(await fs.readFile(new URL('shared-schema.sql',import.meta.url),'utf8'));
+class Query{constructor(sql,args=[]){this.sql=sql;this.args=args;}bind(...args){return new Query(this.sql,args);}async first(){return sqlite.prepare(this.sql).get(...this.args)||null;}async all(){return {results:sqlite.prepare(this.sql).all(...this.args)};}async run(){const r=sqlite.prepare(this.sql).run(...this.args);return {meta:{changes:Number(r.changes)}};}}
+const DB={prepare:sql=>new Query(sql),withSession(){return this;},async batch(queries){sqlite.exec('BEGIN');try{const result=[];for(const q of queries)result.push(await q.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
+const {default:app}=await import('data:text/javascript;base64,'+Buffer.from(await fs.readFile(new URL('worker.js',import.meta.url),'utf8')).toString('base64'));
+const guard=new Map(),env={APP_ORIGIN:'https://team.example',FIELD_ACCESS_TOKEN:'k'.repeat(40),ADMIN_PASSWORD:'a-private-example-password',ADMIN_SESSION_SECRET:'s'.repeat(40),CAMPO_ADMIN_EMAIL:'admin@example.com',LOGIN_GUARD:{get:async k=>guard.get(k),put:async(k,v)=>guard.set(k,v)},SHARED_DB:DB};let admin='';
+async function call(path,body,{asAdmin=false,key=env.FIELD_ACCESS_TOKEN}={}){const r=await app.fetch(new Request('https://api.example/api/'+path,{method:body===undefined?'GET':'POST',headers:{Origin:env.APP_ORIGIN,'X-Campo-Access':key,'Content-Type':'application/json',...(asAdmin?{Authorization:'Bearer '+admin}:{})},body:body===undefined?undefined:JSON.stringify(body)}),env);return {...await r.json(),httpStatus:r.status};}
+admin=(await call('admin/login',{password:env.ADMIN_PASSWORD})).token;
+const record={id:'tree-1',lat:-9.9,lon:-67.8,species:'Teste',height:3,inspector:'A',updatedAt:new Date().toISOString()},save={record,baseVersion:0,actor:'A',operationId:'op-1'};
+let r=await call('shared/save',save);assert.equal(r.httpStatus,200);assert.equal(r.tree.sharedVersion,1);assert.equal((await call('shared/save',save)).tree.sharedVersion,1,'retry is idempotent');
+r=await call('shared/save',{...save,operationId:'op-stale'});assert.equal(r.httpStatus,409,'stale creation cannot overwrite');
+r=await call('shared/save',{...save,record:{...record,height:5},baseVersion:1,operationId:'op-2'});assert.equal(r.tree.sharedVersion,2);
+assert.equal((await call('shared/save',{...save,baseVersion:1,operationId:'op-other'})).httpStatus,409,'two technicians do not overwrite');
+assert.equal((await call('shared/admin/deletions')).httpStatus,403);assert.equal((await call('shared/changes',{},{key:'wrong'})).httpStatus,403);
+assert.equal((await call('shared/deletion-request',{id:'request-1',treeId:record.id,baseVersion:2,actor:'A',reason:'Não existe'})).httpStatus,400,'photo and GPS required');
+const image='data:image/jpeg;base64,/9j/AA==',hash=Buffer.from(await crypto.subtle.digest('SHA-256',Buffer.from('/9j/AA==','base64'))).toString('hex'),time=new Date().toISOString();
+const evidence={original:image,annotated:image,sha256:hash,lat:-9.9,lon:-67.8,accuracy:4,capturedAt:time,gpsTimestamp:time,address:'Rua de teste'};
+assert.equal((await call('shared/deletion-request',{id:'bad-gps',treeId:record.id,baseVersion:2,actor:'A',reason:'Teste',evidence:{...evidence,gpsTimestamp:'bad'}})).httpStatus,400);
+r=await call('shared/deletion-request',{id:'request-1',treeId:record.id,baseVersion:2,actor:'A',reason:'Não existe',evidence});assert.equal(r.httpStatus,200);assert.equal(r.tree.sharedDeleted,false);assert.equal(r.tree.sharedVersion,3);
+assert.equal((await call('shared/admin/evidence?id=request-1')).httpStatus,403,'team cannot read deletion evidence');
+r=await call('shared/admin/evidence?id=request-1',undefined,{asAdmin:true});assert.equal(r.request.evidence.original,image);
+assert.equal((await call('shared/admin/review',{id:'request-1',decision:'approve'})).httpStatus,403,'technician cannot approve');
+r=await call('shared/admin/review',{id:'request-1',decision:'approve'},{asAdmin:true});assert.equal(r.httpStatus,200);assert.equal(r.tree.sharedDeleted,true);assert.equal(r.archiveStatus,'pending','Drive outage keeps cleanup pending');
+assert.equal((await call('shared/save',{...save,baseVersion:4,operationId:'resurrect'})).httpStatus,410,'deleted tree cannot resurrect');
+r=await call('shared/changes?after=0');assert.equal(r.changes.length,4);assert.equal(r.changes.at(-1).tree.sharedDeleted,true);
+const imported={record:{id:'imp-1',externalId:'01',lat:0,lon:0},baseVersion:0,operationId:'import-1'};
+assert.equal((await call('shared/admin/import',{rows:[imported]})).httpStatus,403);
+r=await call('shared/admin/import',{rows:[imported]},{asAdmin:true});assert.equal(r.results[0].ok,true);assert.equal(r.results[0].tree.lat,0,'zero coordinates supported');
+assert.equal((await call('shared/admin/import',{rows:[imported]},{asAdmin:true})).results[0].tree.sharedVersion,1);
+const changed={record:{id:'tree-2',lat:1,lon:2,photos:[{id:'photo-1',assetId:'photo-1'}]},baseVersion:0,operationId:'photo-op',actor:'B',uploads:[{assetId:'photo-1',image,sha256:hash}]};r=await call('shared/save',changed);assert.equal(r.httpStatus,200);assert.equal((await call('shared/tree?id=tree-2')).tree.photos[0].original,image);
+console.log('PASS shared: SQLite schema, access boundaries, idempotency, version conflicts, photo/GPS evidence, administrator review, tombstones, offline replay and import updates.');
