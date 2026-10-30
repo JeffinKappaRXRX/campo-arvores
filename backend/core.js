@@ -45,6 +45,7 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
   }
  }
  if(!status&&env.SHARED_DB){try{const tree=await env.SHARED_DB.prepare('SELECT deleted FROM shared_trees WHERE id=?').bind(payload.recordId).first();if(tree?.deleted)return json({error:'Árvore excluída pelo administrador. Não será reenviada.',code:'DELETED'},410);}catch{return json({error:'Não foi possível conferir o cadastro. Tente novamente.'},503);}}
+ if(!status&&env.PRODUCTION_DATA_EPOCH&&Date.parse(payload.version)<Date.parse(env.PRODUCTION_DATA_EPOCH))return json({error:'Cadastro de homologação encerrado. Atualize o aplicativo.',code:'DELETED'},410);
  activeDriveRequests++;const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),85000);
  try{
   const result=await fetch(endpoint,{method:'POST',redirect:'follow',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,token:secret}),signal:abort.signal});

@@ -1,8 +1,10 @@
+**Endereço oficial fixo: https://mapeamento-arvores.pages.dev/**
+
 # Campo — inspeção de vegetação
 
 Aplicativo para registro de árvores, mapa da rede, operação offline e sincronização.
 
-**Versão:** 4.0.2.
+**Versão:** 4.1.0.
 
 ## Publicação
 
@@ -28,3 +30,6 @@ Não publique fotos, cadastros, backups, GPKGs privados ou chaves de API neste r
 Os IDs da pasta e do GPKG e a URL do Apps Script não são distribuídos no repositório. Configure no Worker com `npx wrangler secret put GOOGLE_SCRIPT_URL` e `npx wrangler secret put REDE_CAMPO_ID`. No modelo `docs/google-drive-update.gs.txt`, substitua `CONFIGURE_ID_PASTA_PRIVADA` e `CONFIGURE_ID_GPKG_PRIVADO` apenas no seu projeto privado do Apps Script. Não envie o modelo preenchido para o GitHub.
 
 A lista privada de alimentadores e as cores por identificador não estão incluídas. Carregue essa configuração dentro do aplicativo, junto com a base privada. Os perfis genéricos das quatro camadas foram preservados.
+
+
+A publicação oficial usa `hosting/pages-worker.js` na Cloudflare Pages. Ela serve a interface de `docs/` do GitHub e encaminha a API por service binding privado `CAMPO_API`. Atualizações em `docs/` mantêm o endereço; aumente a versão do service worker. A integração Git da Cloudflare está indisponível nesta conta; a publicação direta já está configurada.

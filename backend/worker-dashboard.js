@@ -54,6 +54,7 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
   }
  }
  if(!status&&env.SHARED_DB){try{const tree=await env.SHARED_DB.prepare('SELECT deleted FROM shared_trees WHERE id=?').bind(payload.recordId).first();if(tree?.deleted)return json({error:'Árvore excluída pelo administrador. Não será reenviada.',code:'DELETED'},410);}catch{return json({error:'Não foi possível conferir o cadastro. Tente novamente.'},503);}}
+ if(!status&&env.PRODUCTION_DATA_EPOCH&&Date.parse(payload.version)<Date.parse(env.PRODUCTION_DATA_EPOCH))return json({error:'Cadastro de homologação encerrado. Atualize o aplicativo.',code:'DELETED'},410);
  activeDriveRequests++;const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),85000);
  try{
   const result=await fetch(endpoint,{method:'POST',redirect:'follow',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,token:secret}),signal:abort.signal});
@@ -241,11 +242,12 @@ async function sharedReview(db,body,env){
 }
 async function sharedAPI(request,env){
  if(!env.SHARED_DB)return json({error:'Base compartilhada ainda não configurada.'},503);
+ if(new URL(request.url).pathname==='/api/shared/generation'&&request.method==='GET')return json({id:env.PRODUCTION_DATA_EPOCH||null});
  const db=env.SHARED_DB.withSession?env.SHARED_DB.withSession('first-primary'):env.SHARED_DB,url=new URL(request.url),path=url.pathname;
  try{
   if(request.method==='GET'&&path==='/api/shared/changes'){const after=Number(url.searchParams.get('after')||0);if(!Number.isSafeInteger(after)||after<0)throw sharedError('Cursor inválido.');const r=await db.prepare('SELECT * FROM shared_changes WHERE seq>? ORDER BY seq LIMIT 201').bind(after).all(),rows=r.results.slice(0,200);return json({changes:rows.map(r=>({seq:r.seq,tree:sharedView(r)})),next:rows.at(-1)?.seq||after,hasMore:r.results.length>200});}
   if(request.method==='GET'&&path==='/api/shared/tree'){const id=url.searchParams.get('id');if(!sharedId(id))throw sharedError('ID inválido.');const r=await sharedRead(db,id);if(!r)throw sharedError('Árvore não encontrada.',404);const out=sharedView(r);if(!r.deleted){const refs=out.photos.map(p=>p.assetId);const photos=refs.length?await db.prepare('SELECT asset_id,image FROM shared_photos WHERE tree_id=? AND asset_id IN ('+refs.map(()=>'?').join(',')+')').bind(id,...refs).all():{results:[]};const assets=new Map(photos.results.map(p=>[p.asset_id,p.image]));out.photos=out.photos.map(p=>({...p,original:assets.get(p.assetId)||'',sharedDerivative:true}));}return json({tree:out});}
-  if(request.method==='POST'&&path==='/api/shared/save'){const body=await sharedBody(request),actor=String(body.actor||'').trim().slice(0,120);if(!actor)throw sharedError('Informe o nome do inspetor.');return json({tree:await sharedSave(db,body,actor)});}
+  if(request.method==='POST'&&path==='/api/shared/save'){const body=await sharedBody(request);if(env.PRODUCTION_DATA_EPOCH&&Date.parse(body.record?.updatedAt)<Date.parse(env.PRODUCTION_DATA_EPOCH))throw sharedError('Cadastro de homologação encerrado. Atualize o aplicativo.',410);const actor=String(body.actor||'').trim().slice(0,120);if(!actor)throw sharedError('Informe o nome do inspetor.');return json({tree:await sharedSave(db,body,actor)});}
   if(request.method==='POST'&&path==='/api/shared/address'){const b=await sharedBody(request,1024);if(!sharedCoordinate(b.lat,90)||!sharedCoordinate(b.lon,180))throw sharedError('Coordenadas inválidas.');return json(await sharedAddress(db,b.lat,b.lon));}
   if(request.method==='POST'&&path==='/api/shared/deletion-request')return json(await sharedRequestDelete(db,await sharedBody(request,1300000)));
   if(path.startsWith('/api/shared/admin/')){if(!isAdministrator(request,env))throw sharedError('Acesso restrito ao administrador.',403);
@@ -259,6 +261,9 @@ async function sharedAPI(request,env){
  }catch(e){console.warn(JSON.stringify({event:'shared_error',path,status:e.status||503,message:e.status?e.message:'database_unavailable'}));return json({error:e.status?e.message:'Base compartilhada ocupada ou indisponível. Sua cópia continua salva no aparelho.'},e.status||503);}
 }
 
+// Read-only repository inventory. No file or inspection is deleted by this job.
+async function runRepositoryInventory(env){const db=env.SHARED_DB,id='repository-inventory',job=await db.prepare('SELECT status FROM campo_maintenance WHERE id=?').bind(id).first();if(job?.status!=='inspect')return;try{let offset=0;const rows=[];do{const r=await fetch(env.GOOGLE_SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:env.GOOGLE_SCRIPT_TOKEN,action:'admin_list',offset,limit:200}),signal:AbortSignal.timeout(60000)});const d=await r.json();if(!r.ok||!d.ok||!Array.isArray(d.records))throw Error('Lista não confirmada: '+(d.code||r.status));rows.push(...d.records.map(v=>({id:v.id,version:v.updatedAt,createdAt:v.createdAt,inspector:v.inspector,species:v.species,pole:v.pole,feeder:v.feeder,photos:v.photos?.length||0})));offset=d.nextOffset;if(rows.length>2000)throw Error('Inventário acima de 2000 registros');}while(offset!==null&&offset!==undefined);await db.prepare('UPDATE campo_maintenance SET status=?,result=? WHERE id=?').bind('review_required',JSON.stringify({count:rows.length,records:rows}),id).run();}catch(e){await db.prepare('UPDATE campo_maintenance SET status=?,result=? WHERE id=?').bind('failed',JSON.stringify({error:e.message}),id).run();}}
+
 const encoder=new TextEncoder();
 const b64=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 const unb64=s=>Uint8Array.from(atob(s.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
@@ -266,10 +271,10 @@ async function equalSecret(a,b){if(typeof a!=='string'||typeof b!=='string')retu
 async function sessionKey(env){return crypto.subtle.importKey('raw',encoder.encode(env.ADMIN_SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign','verify']);}
 async function issueSession(env){const payload=b64(encoder.encode(JSON.stringify({role:'admin',exp:Math.floor(Date.now()/1000)+28800,aud:env.APP_ORIGIN}))),sig=await crypto.subtle.sign('HMAC',await sessionKey(env),encoder.encode(payload));return payload+'.'+b64(new Uint8Array(sig));}
 async function validSession(token,env){try{if(!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32)return false;const [payload,sig,extra]=token.split('.');if(extra||!payload||!sig)return false;const okay=await crypto.subtle.verify('HMAC',await sessionKey(env),unb64(sig),encoder.encode(payload));if(!okay)return false;const data=JSON.parse(new TextDecoder().decode(unb64(payload)));return data.role==='admin'&&data.aud===env.APP_ORIGIN&&data.exp>Math.floor(Date.now()/1000);}catch{return false;}}
-export default {async fetch(request,env){
- const origin=request.headers.get('Origin'),url=new URL(request.url);const cors=origin===env.APP_ORIGIN?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Campo-Access','Vary':'Origin'}:{};
+export default {async scheduled(event,env,ctx){ctx.waitUntil(runRepositoryInventory(env));},async fetch(request,env){
+ const origin=request.headers.get('Origin'),url=new URL(request.url);const allowed=[env.APP_ORIGIN,...String(env.APP_ADDITIONAL_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean)];const cors=allowed.includes(origin)?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Campo-Access','Vary':'Origin'}:{};
  const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{...cors,'Content-Type':'application/json','Cache-Control':'no-store'}});
- if(origin!==env.APP_ORIGIN)return response({error:'Origem não autorizada.'},403);
+ if(!allowed.includes(origin))return response({error:'Origem não autorizada.'},403);
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(!env.FIELD_ACCESS_TOKEN||env.FIELD_ACCESS_TOKEN.length<32||!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<14||!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32||!env.LOGIN_GUARD)return response({error:'Configure acesso da equipe, administrador e LOGIN_GUARD no Worker.'},503);
  if(!await equalSecret(request.headers.get('X-Campo-Access')||'',env.FIELD_ACCESS_TOKEN))return response({error:'Código de acesso da equipe inválido. Abra o link autorizado.'},403);
