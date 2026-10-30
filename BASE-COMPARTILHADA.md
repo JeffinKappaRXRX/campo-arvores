@@ -1,6 +1,6 @@
 # Campo 4.0 — base compartilhada
 
-O mapa da equipe usa uma base D1 privada na Cloudflare, acessível pelo código da equipe. As credenciais continuam no servidor. O Google Drive mantém os arquivos de cada cadastro e a planilha consolidada já existentes.
+O mapa da equipe usa uma base D1 privada na Cloudflare, acessível pelo link do aplicativo, sem código de equipe. Quem tiver o link pode consultar e atualizar árvores e baixar a rede. As operações administrativas continuam exigindo senha. As credenciais continuam no servidor. O Google Drive mantém os arquivos de cada cadastro e a planilha consolidada já existentes.
 
 ## Uso do técnico
 

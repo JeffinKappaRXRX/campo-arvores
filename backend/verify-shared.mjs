@@ -11,7 +11,7 @@ let r=await call('shared/save',save);assert.equal(r.httpStatus,200);assert.equal
 r=await call('shared/save',{...save,operationId:'op-stale'});assert.equal(r.httpStatus,409,'stale creation cannot overwrite');
 r=await call('shared/save',{...save,record:{...record,height:5},baseVersion:1,operationId:'op-2'});assert.equal(r.tree.sharedVersion,2);
 assert.equal((await call('shared/save',{...save,baseVersion:1,operationId:'op-other'})).httpStatus,409,'two technicians do not overwrite');
-assert.equal((await call('shared/admin/deletions')).httpStatus,403);assert.equal((await call('shared/changes',{},{key:'wrong'})).httpStatus,403);
+assert.equal((await call('shared/admin/deletions')).httpStatus,403);assert.equal((await call('shared/changes?after=0',undefined,{key:''})).httpStatus,200);
 assert.equal((await call('shared/deletion-request',{id:'request-1',treeId:record.id,baseVersion:2,actor:'A',reason:'Não existe'})).httpStatus,400,'photo and GPS required');
 const image='data:image/jpeg;base64,/9j/AA==',hash=Buffer.from(await crypto.subtle.digest('SHA-256',Buffer.from('/9j/AA==','base64'))).toString('hex'),time=new Date().toISOString();
 const evidence={original:image,annotated:image,sha256:hash,lat:-9.9,lon:-67.8,accuracy:4,capturedAt:time,gpsTimestamp:time,address:'Rua de teste'};

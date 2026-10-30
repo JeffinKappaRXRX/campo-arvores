@@ -10,8 +10,8 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil(runRepositoryInvent
  const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{...cors,'Content-Type':'application/json','Cache-Control':'no-store'}});
  if(!allowed.includes(origin))return response({error:'Origem não autorizada.'},403);
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
- if(!env.FIELD_ACCESS_TOKEN||env.FIELD_ACCESS_TOKEN.length<32||!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<14||!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32||!env.LOGIN_GUARD)return response({error:'Configure acesso da equipe, administrador e LOGIN_GUARD no Worker.'},503);
- if(!await equalSecret(request.headers.get('X-Campo-Access')||'',env.FIELD_ACCESS_TOKEN))return response({error:'Código de acesso da equipe inválido. Abra o link autorizado.'},403);
+ if(!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<14||!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32||!env.LOGIN_GUARD)return response({error:'Configure administrador e LOGIN_GUARD no Worker.'},503);
+ // Inspector services use the shared application link. Administrative routes still require a signed session.
  if(url.pathname==='/api/admin/login'){
   if(request.method!=='POST')return response({error:'Use POST.'},405);if(Number(request.headers.get('content-length')||0)>2048)return response({error:'Solicitação grande demais.'},413);
   const ip=request.headers.get('CF-Connecting-IP')||'unknown',hash=b64(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(ip)))),bucket=Math.floor(Date.now()/60000),guard='login:'+hash+':'+bucket;const tries=Number(await env.LOGIN_GUARD.get(guard)||0);if(tries>=5)return response({error:'Muitas tentativas. Aguarde um minuto.'},429);try{await env.LOGIN_GUARD.put(guard,String(tries+1),{expirationTtl:120});}catch{return response({error:'Aguarde alguns segundos antes de tentar entrar novamente.'},429);}
