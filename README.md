@@ -2,7 +2,7 @@
 
 Aplicativo para registro de árvores, mapa da rede, operação offline e sincronização.
 
-**Versão:** 4.0.0.
+**Versão:** 4.0.1.
 
 ## Publicação
 
