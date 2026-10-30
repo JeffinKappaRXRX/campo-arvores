@@ -8,7 +8,8 @@ function consolidatedLink(value){
  }catch{}return null;
 }
 async function limitedBody(request,limit=12*1024*1024){const reader=request.body?.getReader();if(!reader)throw Error('EMPTY');const chunks=[];let size=0;while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>limit){await reader.cancel();throw Error('SIZE');}chunks.push(value);}return new Blob(chunks);}
-let activeDriveRequests=0;
+const driveRequestLeases=new Map();
+function reserveDriveRequest(){const now=Date.now();for(const [id,deadline]of driveRequestLeases)if(deadline<=now)driveRequestLeases.delete(id);if(driveRequestLeases.size>=2)return null;const id=Symbol();driveRequestLeases.set(id,now+85000);return ()=>driveRequestLeases.delete(id);}
 let activeStreetRequests=0;
 async function streets(request){
  if(request.method!=='POST')return json({error:'Use POST.'},405);
@@ -34,7 +35,6 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
  const endpoint=env.GOOGLE_SCRIPT_URL,secret=env.GOOGLE_SCRIPT_TOKEN;
  if(!endpoint||!secret)return status?json({configured:false,connected:false}):json({error:'Google Drive ainda não conectado. Siga Configurar Google Drive na aba Envio.'},503);
  if(!/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec$/.test(endpoint))return json({error:'Endereço do receptor Google inválido. Avise o responsável.'},503);
- if(activeDriveRequests>=2)return json({error:'Envio ocupado. Tente novamente em alguns segundos.'},429);
  let payload={action:'status'};
  if(!status){
   if(!request.headers.get('Content-Type')?.startsWith('application/json'))return json({error:'Use JSON.'},400);
@@ -46,7 +46,7 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
  }
  if(!status&&env.SHARED_DB){try{const tree=await env.SHARED_DB.prepare('SELECT deleted FROM shared_trees WHERE id=?').bind(payload.recordId).first();if(tree?.deleted)return json({error:'Árvore excluída pelo administrador. Não será reenviada.',code:'DELETED'},410);}catch{return json({error:'Não foi possível conferir o cadastro. Tente novamente.'},503);}}
  if(!status&&env.PRODUCTION_DATA_EPOCH&&Date.parse(payload.version)<Date.parse(env.PRODUCTION_DATA_EPOCH))return json({error:'Cadastro de homologação encerrado. Atualize o aplicativo.',code:'DELETED'},410);
- activeDriveRequests++;const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),85000);
+ const releaseDriveRequest=reserveDriveRequest();if(!releaseDriveRequest)return json({error:'Envio ocupado. Tente novamente em alguns segundos.'},429);const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),85000);
  try{
   const result=await fetch(endpoint,{method:'POST',redirect:'follow',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,token:secret}),signal:abort.signal});
   if(!result.ok)return json({error:'Receptor Google indisponível. Confira a implantação e tente novamente.'},502);
@@ -56,7 +56,7 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
   if(consolidate){if(data.consolidated!==true||data.recordId!==payload.recordId||data.version!==payload.version)return json({error:'O receptor não confirmou o ID e a versão do cadastro no Excel único. Os arquivos da inspeção são conferidos separadamente.'},502);return json({consolidated:true,version:data.version,url:isAdministrator(request,env)?consolidatedLink(data.url):null,count:isAdministrator(request,env)?data.count:undefined});}
   if(typeof data.id!=='string'||!Number.isFinite(data.size)||! /^[a-f0-9]{64}$/.test(data.sha256||'')||typeof data.folderId!=='string')return json({error:'Confirmação incompleta do Google. Arquivo continua pendente.'},502);
   return json({id:data.id,size:data.size,sha256:data.sha256,folderId:data.folderId,folderUrl:typeof data.folderUrl==='string'&&data.folderUrl.startsWith('https://drive.google.com/')?data.folderUrl:null});
- }catch(e){return json({error:e.name==='AbortError'?'Google excedeu o tempo de resposta. Reenvie para verificar os arquivos pendentes.':'Falha de conexão com Google. Tente novamente.'},504);}finally{clearTimeout(timer);activeDriveRequests--;}
+ }catch(e){return json({error:e.name==='AbortError'?'Google excedeu o tempo de resposta. Reenvie para verificar os arquivos pendentes.':'Falha de conexão com Google. Tente novamente.'},504);}finally{clearTimeout(timer);releaseDriveRequest();}
 }
 async function adminRepository(request,env,remove=false){
  if(!isAdministrator(request,env))return json({error:'Acesso restrito ao administrador.'},403);
@@ -77,16 +77,15 @@ async function centralNetwork(request,env){
  if(request.method!=='GET')return json({error:'Use GET.'},405);
  const url=new URL(request.url),chunk=url.pathname.endsWith('/chunk'),endpoint=env.GOOGLE_SCRIPT_URL;
  if(!endpoint||!env.GOOGLE_SCRIPT_TOKEN)return json({error:'Receptor Google não configurado.'},503);
- if(activeDriveRequests>=2)return json({error:'Conexão ocupada. Tente novamente.'},429);
  let payload={action:'network_manifest'};
  if(chunk){const offset=Number(url.searchParams.get('offset')),revision=url.searchParams.get('revision');if(!Number.isSafeInteger(offset)||offset<0||!revision||revision.length>200)return json({error:'Bloco inválido.'},400);payload={action:'network_chunk',offset,revision};}
- activeDriveRequests++;const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),85000);
+ const releaseDriveRequest=reserveDriveRequest();if(!releaseDriveRequest)return json({error:'Conexão ocupada. Tente novamente.'},429);const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),85000);
  try{const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,token:env.GOOGLE_SCRIPT_TOKEN}),signal:controller.signal});
   const data=await r.json();if(!r.ok||!data.ok){const errors={REDE_ACCESS:'O receptor não conseguiu acessar a rede privada. Execute configurarRedeCampo no Apps Script.',REDE_FORMAT:'A origem deve ser GPKG ou ZIP contendo GPKG.',REDE_CHANGED:'A rede mudou durante o download. Tente novamente.',REDE_RANGE:'Google não confirmou o bloco da rede.'};return json({error:errors[data.code]||'Atualize o receptor Google na Administração para habilitar a rede central.'},502);}
   if(!chunk){const m=data.network;if(m?.fileId!==env.REDE_CAMPO_ID||!Number.isSafeInteger(m.size)||m.size<1||!/[.](gpkg|zip)$/i.test(m.name||'')||typeof m.revision!=='string')return json({error:'Atualize o receptor Google na Administração para habilitar a rede central.'},502);return json(m);}
   if(data.offset!==payload.offset||data.revision!==payload.revision||typeof data.base64!=='string'||data.base64.length>5600000||!/^[A-Za-z0-9+/]*={0,2}$/.test(data.base64))return json({error:'Bloco não confirmado. Base local preservada.'},502);
   return new Response(Uint8Array.from(atob(data.base64),c=>c.charCodeAt(0)),{headers:{'Content-Type':'application/octet-stream','Cache-Control':'no-store'}});
- }catch{return json({error:'Rede central indisponível. Confira a implantação do receptor; a base local continua disponível.'},502);}finally{clearTimeout(timer);activeDriveRequests--;}
+ }catch{return json({error:'Rede central indisponível. Confira a implantação do receptor; a base local continua disponível.'},502);}finally{clearTimeout(timer);releaseDriveRequest();}
 }
 async function identify(request,env){
  if(request.method!=='POST')return json({error:'Use POST.'},405);
