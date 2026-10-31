@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-const files=['geo.js','map-ruler.js','map-ruler.css','shared-trees.js','tree-photos.js','shared.css','index.html','sw.js','field-reliability.js'];
+const files=['app.js','distance-units.js','distance-fields.js','distance-units.css','geo.js','map-ruler.js','map-ruler.css','shared-trees.js','tree-photos.js','shared.css','index.html','sw.js','field-reliability.js'];
 const assets=Object.fromEntries(await Promise.all(files.map(async file=>['/'+file,await fs.readFile(new URL('../docs/'+file,import.meta.url),'utf8')])));
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');
 const source='// Generated release; run hosting/build-release.mjs after changing docs/.\nconst RELEASE_ASSETS='+JSON.stringify(assets)+';\n'+template.replace(' const upstream=new URL('," if(Object.prototype.hasOwnProperty.call(RELEASE_ASSETS,path)){const mime=path.endsWith('.css')?'text/css':path.endsWith('.html')?'text/html':'application/javascript';return new Response(request.method==='HEAD'?null:RELEASE_ASSETS[path],{headers:{'Content-Type':mime+'; charset=utf-8','Cache-Control':'no-cache'}});}\n const upstream=new URL(");

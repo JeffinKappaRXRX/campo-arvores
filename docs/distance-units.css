@@ -1,0 +1,9 @@
+.distance-equivalent{display:block;margin-top:.4rem;font-size:.85rem;font-weight:500;color:var(--muted,#64776f)}
+.distance-warning{display:block;margin-top:.45rem;padding:.6rem .7rem;border-left:3px solid #c37a14;border-radius:.4rem;background:#fff0d8;color:#6d4106;font-size:.85rem;font-weight:600;line-height:1.4}
+.distance-warning[hidden]{display:none}
+.distance-needs-review{outline:2px solid #c37a14;outline-offset:1px}
+.distance-reference{margin:.8rem 0 .45rem;font-size:.88rem;line-height:1.5}
+.distance-reference strong,.distance-reference span{display:block}
+.distance-help{font-size:.85rem;line-height:1.5;margin-top:.45rem}
+.distance-help summary{cursor:pointer;font-weight:600}
+[data-theme="dark"] .distance-warning{background:#493219;color:#ffe0a4}
