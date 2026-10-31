@@ -34,7 +34,7 @@ $('basemap').onchange=async(options={})=>{if($('basemap').value!=='google'&&!$('
 $('fitStreets').onclick=()=>{if(!offlineStreets){$('streetStatus').textContent='Baixe uma área primeiro.';return;}const b=offlineStreets.bounds;$('basemap').value='streets';$('basemap').onchange();fieldMap.fitBounds([[b.south,b.west],[b.north,b.east]]);};
 function streetParts(center,radius){
  const n=Math.ceil(radius/10);if(n===1)return [{center,radius}];const b=streetBounds(center,radius),parts=[];
- for(let y=0;y<n;y++)for(let x=0;x<n;x++)parts.push({center:{lat:b.south+(y+.5)*(b.north-b.south)/n,lng:b.west+(x+.5)*(b.east-b.west)/n},radius:11});return parts;
+ for(let y=0;y<n;y++)for(let x=0;x<n;x++)parts.push({center:{lat:b.south+(y+.5)*(b.north-b.south)/n,lng:b.west+(x+.5)*(b.east-b.west)/n},radius:11});return parts.sort((a,b)=>(a.center.lat-center.lat)**2+(a.center.lng-center.lng)**2-(b.center.lat-center.lat)**2-(b.center.lng-center.lng)**2);
 }
 async function fetchStreetPart(part){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
