@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(await fs.readFile(new URL('shared-schema.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(await fs.readFile(new URL('shared-schema.sql',import.meta.url),'utf8'));sqlite.exec(await fs.readFile(new URL('admin-schema.sql',import.meta.url),'utf8'));
 class Query{constructor(sql,args=[]){this.sql=sql;this.args=args;}bind(...args){return new Query(this.sql,args);}async first(){return sqlite.prepare(this.sql).get(...this.args)||null;}async all(){return {results:sqlite.prepare(this.sql).all(...this.args)};}async run(){const r=sqlite.prepare(this.sql).run(...this.args);return {meta:{changes:Number(r.changes)}};}}
 const DB={prepare:sql=>new Query(sql),withSession(){return this;},async batch(queries){sqlite.exec('BEGIN');try{const result=[];for(const q of queries)result.push(await q.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 const {default:app}=await import('data:text/javascript;base64,'+Buffer.from(await fs.readFile(new URL('worker.js',import.meta.url),'utf8')).toString('base64'));
