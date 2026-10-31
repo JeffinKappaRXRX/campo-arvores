@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),c=require('../docs/clinometer-core.js');
+for(const [b,g,expected]of [[90,0,0],[60,0,-30],[120,0,30],[0,-90,0]])assert(Math.abs(c.elevation(b,g)-expected)<1e-6);
+assert(Math.abs(c.screenRoll(90,0,0))<1e-6);assert(Math.abs(c.screenRoll(0,-90,90))<1e-6);assert(Math.abs(c.screenRoll(0,90,270))<1e-6);assert(Math.abs(c.screenRoll(-90,0,180))<1e-6);
+const samples=(fn,n=9,dt=150)=>Array.from({length:n},(_,i)=>({at:1000+i*dt,value:fn(i)}));
+assert(c.quality(samples(()=>.15),2200));assert(Math.abs(c.quality(samples(()=>.15),2200).angle-.15)<1e-8);
+assert(c.quality(samples(()=>2,6,200),2000),'low sensor rates still capture');
+assert(!c.quality(samples(()=>2),3000),'old samples cannot capture');
+assert(!c.quality(samples(i=>i*.14),2200),'continuous tilt is not stable');
+assert(!c.quality(samples(i=>i%2?2:-2),2200),'shaking is rejected');
+assert(c.quality(samples(i=>i===2?1.2:.15),2200),'one isolated spike does not block a steady view');
+assert(c.sensitivity(50,0,1)>c.sensitivity(5,0,1)*9.99);
+assert.equal(c.sensitivity(0,0,1),null);
+console.log('PASS: rear-camera elevation, portrait/landscape roll, small angles, low event rate, stale/moving/shaking rejection, isolated sensor noise, distance sensitivity.');

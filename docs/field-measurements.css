@@ -1,0 +1,13 @@
+/* Passive drawings never take taps away from network assets. */
+.leaflet-ruler-pane>canvas,.leaflet-networkSelection-pane>canvas,.leaflet-offlineStreets-pane>canvas{pointer-events:none!important}
+.map-ruler-endpoint{pointer-events:auto!important}
+#mapRulerUse{width:100%;min-height:44px;margin:7px 0 0;font-size:13px;padding:8px}
+#mapRulerReturnHelp{font-size:11px;margin:7px 0}
+.map-ruler-return .fullscreenbottom{display:none!important}
+.map-ruler-return .map-ruler-panel{bottom:14px!important}
+.map-ruler-return .map-ruler-toggle{bottom:250px}
+#measurement #distanceMapShortcut{width:100%;min-height:36px;padding:6px;font-size:12px;margin-top:5px;background:#214f40;color:#fff;border-color:#ffffff70}
+.height-camera-zoom{position:absolute;z-index:4;right:12px;top:calc(26dvh + 78px);display:flex;align-items:center;gap:4px;padding:3px;border-radius:10px;background:#092a21cc;color:#fff}
+#measurement .height-camera-zoom button{min-width:38px;min-height:38px;padding:4px;border-color:#fff8;background:#163e31;color:#fff;font-size:19px}
+#measurement .height-camera-zoom output{min-width:36px;margin:0;font-size:12px;text-align:center;color:#fff}
+@media(max-height:500px){.height-camera-zoom{left:10px;right:auto;top:auto;bottom:15px}.map-ruler-return .map-ruler-panel{left:75px;max-width:420px}.map-ruler-return .map-ruler-toggle{bottom:24px}}
