@@ -33,3 +33,11 @@ As camadas de régua, seleção e ruas são passivas: seus canvas não podem int
 O atalho Medir no mapa no medidor de altura abre a régua com retorno ao diálogo. Usar distância e voltar atualiza apenas a distância horizontal e sua proveniência. Base, topo e altura preenchida são preservados; a altura ainda exige confirmação. Voltar sem usar preserva também a distância anterior. A medida cartográfica depende da localização dos dois pontos e não equivale a medir afastamento vertical copa–condutor.
 
 A câmera nativa das fotos continua através do input capture=environment, como preferência traseira sujeita ao navegador/aplicativo do aparelho. O medidor de altura solicita câmera traseira, oferece ampliação central de 1× a 4× e captura uma janela estável de inclinação. Os ângulos usam o eixo óptico traseiro e compensam a orientação da tela. Capturas pendentes expiram, rejeitam movimento/leitura antiga e cancelam ao fechar/refazer. A indicação de sensibilidade geométrica a ±0,5° não é certificação de precisão do sensor. É necessário validar em campo com medidas conhecidas.
+
+### Exportação de unidades — 4.2.6
+
+As distâncias copa–MT/BT/AT são exportadas em centímetros no XLSX individual, XLSX agrupado e nos geradores do consolidado Google Drive. A conversão acontece somente na projeção de exportação: os registros, JSON, API e recibos continuam em metros. Altura da árvore, distância horizontal usada na altura e precisão GPS permanecem em metros; DAP/CAP permanecem em centímetros. A aba Método explicita as unidades. Não renomear cabeçalhos de uma planilha antiga sem converter também as células numéricas (1,25 m = 125 cm).
+
+O código do Apps Script precisa ser salvo e uma nova versão deve ser associada à implantação existente, preservando sua URL. Executar `atualizarConsolidadoCampo` reconstrói o consolidado a partir dos metadados, sem alterar fotos e registros. Arquivos individuais de versões já sincronizadas são imutáveis: as próximas exportações/novas versões usam cm; os antigos permanecem válidos em metros conforme seu cabeçalho.
+
+Os arquivos `.gs.txt` agora fazem parte do release publicado, para que o download do receptor não dependa de uma cópia anterior no GitHub Pages.

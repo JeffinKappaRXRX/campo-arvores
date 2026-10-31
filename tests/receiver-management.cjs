@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const version='2026-10-31T12:00:00.000Z';let index={rows:{test:{id:'test',updatedAt:version},official:{id:'official',updatedAt:version}},updatedAt:version},trashed=[],writes=0,locked=false;
+const iterator=items=>{let i=0;return {hasNext:()=>i<items.length,next:()=>items[i++]};};
+const folder=name=>({getName:()=>name,getFiles:()=>iterator([{setTrashed:v=>{if(v)trashed.push(name+'/file');}}]),setTrashed:v=>{if(v)trashed.push(name);}});
+const folders=[folder('Campo_test_20261030120000000'),folder('Campo_test_20261031120000000'),folder('Campo_official_20261031120000000'),folder('Rede_Campo')];
+const indexFile={getBlob:()=>({getDataAsString:()=>JSON.stringify(index)}),setContent:text=>{index=JSON.parse(text);writes++;}};
+const parent={getFilesByName:()=>iterator([indexFile]),getFolders:()=>iterator(folders)};
+const context=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:()=> 'private-test-folder'})},DriveApp:{getFolderById:()=>parent},LockService:{getScriptLock:()=>({tryLock:()=>{locked=true;return true;},releaseLock:()=>{locked=false;}})}});
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../docs/google-drive-update.gs.txt'),'utf8')+'\nconsolidarCampo=function(){};',context);
+const run=p=>context.administrarCampo(p);
+let result=run({action:'admin_list',offset:0,limit:200});assert.equal(result.total,2);assert.equal(result.deletedIds.length,0);assert.equal(writes,0);assert.equal(trashed.length,0);
+assert.equal(run({action:'admin_delete',records:[{id:'test',version:'2026-10-29T12:00:00Z'}]}).code,'CONFLICT');assert.equal(writes,0);assert.equal(trashed.length,0);
+result=run({action:'admin_delete',records:[{id:'test',version}]});assert.equal(result.deletedIds[0],'test');assert(!index.rows.test);assert(index.rows.official);assert(index.deleted.test);assert.equal(index.deleted.test.cleanupPending,false);assert.equal(trashed.length,4);assert(trashed.every(x=>x.startsWith('Campo_test_')));assert.equal(run({action:'admin_list'}).total,1);assert.equal(locked,false);
+console.log('PASS: legacy index inventory is read-only; newer version blocks deletion; selected-ID cleanup leaves official records and network intact, removes all selected folder versions, and records tombstones. No live data used.');
