@@ -16,3 +16,12 @@ Sempre execute `node hosting/build-release.mjs` antes de publicar. O build calcu
 O aplicativo verifica atualizações ao abrir, retornar, reconectar e a cada minuto enquanto está visível. Depois de baixar todos os componentes, pede Atualizar agora e aguarda operações em andamento. O rascunho só libera o recarregamento após concluir a transação local; falha ao preservar os dados mantém a tela aberta. Cadastros, fotos, GPKG e ruas offline não são removidos. Sem internet, a versão já preparada continua disponível.
 
 Na primeira migração das versões anteriores a 4.2.3, reabra a página uma vez para carregar o gerenciador. As versões seguintes já avisam dentro do app.
+
+
+## Ruas automáticas e alternância de fundo (4.2.4+)
+
+Preparar/importar um GPKG agenda ruas de 30 km da região de trabalho. Bases já instaladas são verificadas na abertura, retorno e reconexão. Uma área completa que ainda cobre o trabalho é reutilizada. A escolha usa árvore atual, GPS disponível, extensão pequena do GPKG ou mapa aproximado; uma base de todo o estado exige localizar a região de trabalho, e não usa cegamente o centro geográfico do Acre. Não é um pacote de ruas de todo o Acre.
+
+O download é serial, usa Web Locks entre abas quando disponível, aguarda respostas 429/erros transitórios e persiste cada parte concluída. Interrupções retomam automaticamente com o app aberto. A área antiga só é substituída em uma transação após completar a nova. Na primeira preparação, partes concluídas podem ser visualizadas com indicação de cobertura parcial. Fechar a aba não continua o download em segundo plano.
+
+A conexão real é verificada a cada 20 segundos enquanto visível, além dos eventos do navegador. Falha de internet ou do híbrido usa ruas salvas; recuperar acesso restaura o híbrido. O ponto da árvore não é modificado. O download manual e a opção de desativar a preparação automática permanecem disponíveis. São dados vetoriais de ruas e localidades do OpenStreetMap, com atribuição, não imagens de satélite nem download de tiles públicos.
