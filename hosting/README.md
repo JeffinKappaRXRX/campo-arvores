@@ -41,3 +41,11 @@ As distâncias copa–MT/BT/AT são exportadas em centímetros no XLSX individua
 O código do Apps Script precisa ser salvo e uma nova versão deve ser associada à implantação existente, preservando sua URL. Executar `atualizarConsolidadoCampo` reconstrói o consolidado a partir dos metadados, sem alterar fotos e registros. Arquivos individuais de versões já sincronizadas são imutáveis: as próximas exportações/novas versões usam cm; os antigos permanecem válidos em metros conforme seu cabeçalho.
 
 Os arquivos `.gs.txt` agora fazem parte do release publicado, para que o download do receptor não dependa de uma cópia anterior no GitHub Pages.
+
+### Street View — 4.2.7
+
+O bonequinho Ver rua fica dentro do mapa normal e ampliado. Arrastar o controle até o mapa, arrastar seu marcador ou ativar e tocar escolhe uma posição independente do cadastro. A consulta não altera coordenadas da árvore, referências de poste/vão ou formulários. Todos os caminhos de clique (fundo, pontos, linhas, rótulos e árvores) consomem o modo antes das ações normais. A régua e o Street View são exclusivos; fechar/cancelar libera os cliques normais.
+
+Quando Maps JavaScript já está carregado pelo usuário, usa StreetViewService e StreetViewPanorama no painel do mapa, com procura externa em até 50 m, retorno, tratamento de falta de cobertura, limite de espera e descarte de respostas antigas. Não carrega a API nem cria chave/faturamento para essa função. Na configuração padrão XYZ, usa Maps URLs oficial (`api=1&map_action=pano&viewpoint=...`) no Google Maps/app ou nova guia, preservando o formulário; o link permanece disponível se o navegador bloquear a abertura pelo gesto de arrastar. Sem internet, não inicia consulta. Não armazena imagens Street View para offline. A cobertura e a data das imagens são do Google.
+
+Validação: `node tests/street-view.cjs`, `node tests/field-interactions.cjs`, `node tests/map-hit-test.cjs`, `node tests/app-updates.cjs`; build e verificação sintática do release. Nenhum cadastro real é criado para o teste.
