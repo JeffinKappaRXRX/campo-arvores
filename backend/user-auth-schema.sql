@@ -5,3 +5,5 @@ CREATE TABLE IF NOT EXISTS campo_login_nonces(token_hash TEXT PRIMARY KEY,expire
 CREATE TABLE IF NOT EXISTS campo_auth_keys(id TEXT PRIMARY KEY,kid TEXT NOT NULL,public_jwk TEXT NOT NULL,private_jwk TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS campo_auth_audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT,actor_id TEXT NOT NULL,action TEXT NOT NULL,at TEXT NOT NULL,detail TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS campo_presence_identities(session_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,email TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS campo_access_requests(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,phone TEXT,status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),revision INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,reviewed_at TEXT,reviewed_by TEXT);
+CREATE INDEX IF NOT EXISTS campo_access_requests_inbox ON campo_access_requests(status,created_at DESC);

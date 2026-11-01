@@ -97,3 +97,14 @@ Validação: `node tests/map-search.cjs`, `node backend/verify-map-search.mjs`, 
 - Celular é contato opcional para pesquisa/gestão. Não é método de login nem dispara SMS/WhatsApp. Um provedor e autorização de custos serão necessários para autenticação por mensagem.
 
 Validação: `node backend/verify-user-auth.mjs` (RSA real com provedor simulado e SQLite em memória), `NODE_PATH=... node tests/user-access-ui.cjs` (jsdom), verificações existentes. OTP real exige cadastrar primeiro um e-mail autorizado e concluir a entrada com acesso à sua caixa postal. Nenhum e-mail é pré-cadastrado ou mensagem é enviada pela publicação.
+
+
+## Versão 4.4.1 — entrada exclusiva e solicitação de acesso
+
+- Sem sessão, a interface exibe somente a entrada, o formulário Solicitar liberação e a recuperação administrativa. A classe inicial no HTML bloqueia a tela desde o primeiro carregamento; apenas perfil lembrado no armazenamento não desbloqueia uso online antes da validação. APIs continuam exigindo sessão no servidor. Sessão lembrada permite trabalhar offline; reconectar verifica bloqueio/revogação. Valores locais não são apagados.
+- Migração aditiva em `backend/user-auth-schema.sql`: `campo_access_requests` e índice. Solicitação pública (nome, e-mail, celular opcional) não cria sessão nem conta autorizada. E-mail informado ainda não é verificado; a Administração deve conferir a identidade antes de aprovar. O código OTP valida a caixa postal na entrada posterior.
+- `/api/auth/request-access` recebe solicitações com resposta genérica sem enumerar contas, limite por IP de 10/h e uma solicitação persistente por e-mail. Repetição não sobrescreve identidade, revive recusas ou desbloqueia contas. Existe limite de 5.000 linhas; operação de alta escala deve usar proteção adicional e política de retenção.
+- `/api/admin/access-requests` permite consultar, aprovar como Inspetor ou recusar, com revisão concorrente, auditoria e paginação. Não rebaixa/promove contas existentes nem desbloqueia contas automaticamente. Conflito de celular exige revisão manual. Cadastro administrativo continua disponível para liberar e-mails diretamente e para o primeiro administrador.
+- Aviso no cabeçalho e contador persistente de solicitações pendentes, atualizados a cada 30 s enquanto um administrador está com o app visível, ao entrar e ao retornar. Nenhum dado da fila é entregue a inspetores ou visitantes. Não envia e-mail/SMS/push em segundo plano; notificação externa requer configurar canal e destinatário.
+
+Validação: testes de autenticação real com RSA simulado, aprovação/recusa/duplicidade/limites e preservação das permissões; UI com jsdom para bloqueio inicial/revogação, offline, recuperação, envio de solicitação e aviso administrativo. Testes usam banco em memória e não criam usuários no ambiente oficial.

@@ -28,6 +28,8 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  else if(path==='/api/auth/complete')authResult=await campoAuthComplete(request,env);
  else if(path==='/api/auth/status')authResult=await campoAuthStatus(request,env,identity,bootstrapAdmin||identity?.user.role==='admin');
  else if(path==='/api/auth/logout')authResult=await campoAuthLogout(request,env,identity);
+ else if(path==='/api/auth/request-access')authResult=await campoRequestAccess(request,env);
+ else if(path==='/api/admin/access-requests')authResult=await campoManageAccessRequests(request,env,identity,bootstrapAdmin);
  else if(path==='/api/admin/users')authResult=await campoManageUsers(request,env,identity,bootstrapAdmin);
  else if(path==='/api/access')authResult=response({admin:Boolean(bootstrapAdmin||identity?.user.role==='admin'),authenticated:Boolean(identity),user:identity?.user||null,required:fieldAuthenticationRequired(env)});
  }catch(e){authResult=response({error:e.status?e.message:'Não foi possível concluir a autenticação.'},e.status||503);}
