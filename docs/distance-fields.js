@@ -9,6 +9,7 @@ function refreshDistanceUnits(){
   input.classList.toggle('distance-needs-review',review);
  }
 }
-function confirmDistanceReview(){const items=distanceReviewItems();return !items.length||confirm('Revisar distância em centímetros:\n'+items.map(x=>x.key.toUpperCase()+': '+CampoDistanceUnits.format(x.cm)+' cm = '+CampoDistanceUnits.format(x.cm/100)+' m').join('\n')+'\n\nOs valores estão abaixo de 5 cm ou acima de 20 m. Isso pode ser correto; confira a unidade.\n\nSalvar assim mesmo?');}
+function confirmDistanceReview(){refreshDistanceUnits();return true;} // Unit review stays inline; it never blocks saving.
+
 for(const k of ['mt','bt','at'])$(k+'Distance').addEventListener('input',refreshDistanceUnits);
 refreshDistanceUnits();

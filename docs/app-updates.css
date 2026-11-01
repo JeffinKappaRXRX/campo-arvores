@@ -4,3 +4,5 @@
 .app-update-dialog p{font-size:.95rem;line-height:1.45;margin:10px 0}
 .app-update-dialog #appUpdateStatus{font-size:.85rem;color:var(--muted,#546f64)}
 .app-update-dialog button{width:100%;margin-top:10px;min-height:48px}
+
+#resumeAppUpdate{min-height:36px;font-size:11px;padding:7px 10px;margin-left:8px}#resumeAppUpdate[hidden]{display:none!important}

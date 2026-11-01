@@ -2,10 +2,10 @@
 (function(){
  'use strict';
  if(!('serviceWorker' in navigator))return;
- let registration=null,pending=false,activating=false,reloading=false,hadController=Boolean(navigator.serviceWorker.controller),checking=false,lastCheck=0,retryTimer=null;
+ let registration=null,pending=false,activating=false,reloading=false,hadController=Boolean(navigator.serviceWorker.controller),checking=false,lastCheck=0,retryTimer=null,deferred=false;
  const dialog=document.createElement('dialog');dialog.id='appUpdateDialog';dialog.className='app-update-dialog';dialog.setAttribute('aria-labelledby','appUpdateTitle');
- dialog.innerHTML='<h2 id="appUpdateTitle">Atualização disponível</h2><p>A nova versão está pronta. Atualize para continuar usando o aplicativo.</p><p id="appUpdateStatus" role="status">Seu formulário será preservado neste aparelho antes de recarregar.</p><button type="button" id="applyAppUpdate" class="primary">Atualizar agora</button>';
- document.body.append(dialog);const status=document.getElementById('appUpdateStatus'),button=document.getElementById('applyAppUpdate');
+ dialog.innerHTML='<h2 id="appUpdateTitle">Atualização disponível</h2><p>A nova versão está pronta. Atualize para continuar usando o aplicativo.</p><p id="appUpdateStatus" role="status">Seu formulário será preservado neste aparelho antes de recarregar.</p><button type="button" id="applyAppUpdate" class="primary">Atualizar agora</button><button type="button" id="deferAppUpdate" class="secondary">Preservar formulário e continuar</button>';
+ document.body.append(dialog);const resume=document.createElement('button');resume.type='button';resume.id='resumeAppUpdate';resume.className='secondary';resume.textContent='Atualização pronta';resume.hidden=true;document.querySelector('header').append(resume);const status=document.getElementById('appUpdateStatus'),button=document.getElementById('applyAppUpdate');
  dialog.addEventListener('cancel',event=>event.preventDefault());
  function busy(){return Boolean(
   typeof driveBusy!=='undefined'&&driveBusy||typeof syncBusy!=='undefined'&&syncBusy||
@@ -20,7 +20,7 @@
  function anotherDialog(){return [...document.querySelectorAll('dialog[open]')].some(element=>element!==dialog);}
  function later(){clearTimeout(retryTimer);retryTimer=setTimeout(()=>{if(activating)void apply();else show();},1500);}
  function show(){
-  if(!pending||reloading)return;
+  if(!pending||reloading||deferred)return;
   if(document.hidden||anotherDialog()){later();return;}
   if(!dialog.open)dialog.showModal();
   const wait=busy();button.disabled=wait;status.textContent=wait?'Aguardando a operação em andamento terminar. Os dados continuam neste aparelho.':'Seu formulário será preservado neste aparelho antes de recarregar.';
@@ -33,7 +33,7 @@
   if(typeof pauseInspectionClock==='function')pauseInspectionClock();
   if(typeof draftTimer!=='undefined')clearTimeout(draftTimer);
   // Await the IndexedDB transaction, rather than a debounce or request success alone.
-  await saveDraft();
+  if(typeof checkpointDraft==='function')await checkpointDraft();else await saveDraft();
  }
  async function apply(){
   if(reloading)return;
@@ -47,7 +47,9 @@
    reloading=true;window.campoUpdateReloadSafe=true;window.location.reload();
   }catch(error){activating=false;button.disabled=false;status.textContent='Não foi possível preservar o formulário. A página não foi recarregada. '+error.message;}
  }
- button.onclick=()=>void apply();
+ button.onclick=()=>{deferred=false;resume.hidden=true;void apply();};
+ document.getElementById('deferAppUpdate').onclick=async()=>{try{await preserve();deferred=true;activating=false;clearTimeout(retryTimer);dialog.close();resume.hidden=false;}catch(error){status.textContent='Não foi possível confirmar o rascunho. Mantenha esta aba aberta. '+error.message;}};
+ resume.onclick=()=>{deferred=false;show();};
  navigator.serviceWorker.addEventListener('controllerchange',()=>{
   if(!hadController){hadController=true;return;}
   pending=true;
