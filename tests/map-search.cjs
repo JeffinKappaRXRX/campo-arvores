@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),c=require('../docs/map-search-core.js'),proj4=require('../docs/vendor/proj4.js');
 for(const s of ['-9.975, -67.810','-9.975 -67.810','-9,975; -67,810','9°58′30″S 67°48′36″W','9°58,5′S 67°48,6′O','S 9 58 30 W 67 48 36','-9 58 30; -67 48 36','https://www.google.com/maps/search/?api=1&query=-9.975%2C-67.810']){const p=c.parse(s);assert(Math.abs(p.lat+9.975)<1e-6,s);assert(Math.abs(p.lon+67.810)<1e-6,s);}
-for(const s of ['RBR234','2590367','Rua Rio Branco 123','4809656'])assert.equal(c.parse(s),null,s);
+for(const s of ['RBR234','2590367','Rua Rio Branco 123','4809656','Rua Amazonas Rio Branco Acre','Centro Santos Sao Paulo'])assert.equal(c.parse(s),null,s);
 for(const s of ['91, -67','9°60′0″S 67°48′36″W','-9N 67W','UTM 61S 631000 8897000','UTM 19S 631.000 8.897.000','UTM 19S 631000 8897000 SAD69'])assert.throws(()=>c.parse(s),undefined,s);
 for(const datum of ['WGS84','SIRGAS2000']){const def='+proj=utm +zone=19 +south +ellps='+(datum==='WGS84'?'WGS84':'GRS80')+' +units=m +no_defs';const [e,n]=proj4('EPSG:4326',def,[-67.81,-9.975]);for(const prefix of ['UTM 19S',datum==='WGS84'?'EPSG:32719':'EPSG:31979']){const p=c.convert(c.parse(prefix+' '+e.toFixed(3)+' '+n.toFixed(3)+' '+datum),proj4);assert(Math.abs(p.lat+9.975)<1e-7);assert(Math.abs(p.lon+67.81)<1e-7);}}
 assert(c.matches({name:'RBR23456',tipo:'Religador'},'rbr234'));assert(c.matches({name:'Ação',bairro:'Centro'},'acao centro'));assert(!c.matches({name:'RBR333'},'RBR234'));
