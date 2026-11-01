@@ -1,6 +1,7 @@
 // Stable public address; application source remains versioned in GitHub.
 export default {async fetch(request,env){
  const url=new URL(request.url),official='https://mapeamento-arvores.pages.dev';
+ if(url.pathname==='/entrar'){const headers=new Headers(request.headers);headers.set('Origin',official);return env.CAMPO_API.fetch(new Request('https://campo-internal/api/auth/complete'+url.search,{method:'GET',headers,redirect:'manual'}));}
  if(url.pathname.startsWith('/api/')){const origin=request.headers.get('Origin');if(origin&&origin!==official)return new Response('Origem não autorizada.',{status:403});const headers=new Headers(request.headers);headers.set('Origin',official);return env.CAMPO_API.fetch(new Request('https://campo-internal'+url.pathname+url.search,{method:request.method,headers,body:['GET','HEAD'].includes(request.method)?undefined:request.body,redirect:'manual'}));}
  if(!['GET','HEAD'].includes(request.method))return new Response('Método não permitido.',{status:405});
  if(url.pathname==='/config.js')return new Response('window.CAMPO_CONFIG={apiBase:location.origin};',{headers:{'Content-Type':'application/javascript','Cache-Control':'no-store'}});
