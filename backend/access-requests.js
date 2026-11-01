@@ -1,5 +1,5 @@
 // Public requests never authorize an account. Only an administrator can approve.
-const CAMPO_REQUEST_RECEIVED='Solicitação recebida. Aguarde a liberação do administrador e depois entre com código por e-mail.';
+const CAMPO_REQUEST_RECEIVED='Solicitação recebida. Aguarde a liberação do administrador e o administrador definirá seu usuário e senha.';
 async function campoRequestAccess(request,env){
  if(request.method!=='POST')return json({error:'Use POST.'},405);
  const b=await sharedBody(request,3000),name=String(b.name||'').trim(),email=String(b.email||'').trim().toLowerCase(),phone=normalizedPhone(b.phone);
@@ -28,15 +28,21 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  if(!current||current.status!=='pending'||current.revision!==b.revision)throw sharedError('Solicitação já analisada. Atualize a lista.',409);
  const stamp=new Date().toISOString(),decision=b.action==='approve'?'approved':'rejected',queries=[];
  if(decision==='approved'){
-  // Never unblock, rename, promote, or replace a previously registered identity.
-  const existing=await db.prepare('SELECT id,blocked FROM campo_users WHERE email=? COLLATE NOCASE').bind(current.email).first();
+  const existing=await db.prepare('SELECT u.id,u.blocked,c.username FROM campo_users u LEFT JOIN campo_user_credentials c ON c.user_id=u.id WHERE email=? COLLATE NOCASE').bind(current.email).first();
   if(existing?.blocked)throw sharedError('Esta conta está bloqueada. Revise o cadastro de usuários antes de liberar.',409);
-  if(current.phone&&await db.prepare('SELECT id FROM campo_users WHERE phone=? AND email<>? COLLATE NOCASE').bind(current.phone,current.email).first())throw sharedError('Celular já associado a outra conta. Cadastre o e-mail manualmente e revise o contato.',409);
-  const id=crypto.randomUUID();queries.push(db.prepare("INSERT OR IGNORE INTO campo_users(id,email,name,phone,role,blocked,created_at,updated_at) SELECT ?,email,name,phone,'inspector',0,?,? FROM campo_access_requests WHERE id=? AND status='pending' AND revision=? AND NOT EXISTS(SELECT 1 FROM campo_users WHERE email=campo_access_requests.email COLLATE NOCASE)").bind(id,stamp,stamp,b.id,b.revision));
+  // Existing active credentials are not changed by approving a request.
+  if(existing&&!existing.username)throw sharedError('Defina o usuário e a senha desta conta no cadastro de usuários antes de aprovar.',409);
+  if(!existing){
+   const username=normalizedUsername(b.username),password=await campoPasswordRecord(b.password,env),id=crypto.randomUUID();
+   if(current.phone&&await db.prepare('SELECT id FROM campo_users WHERE phone=?').bind(current.phone).first())throw sharedError('Celular já associado a outra conta. Revise o contato.',409);
+   queries.push(db.prepare("INSERT INTO campo_users(id,email,name,phone,role,blocked,created_at,updated_at) SELECT ?,email,name,phone,'inspector',0,?,? FROM campo_access_requests WHERE id=? AND status='pending' AND revision=?").bind(id,stamp,stamp,b.id,b.revision));
+   queries.push(db.prepare('INSERT INTO campo_user_credentials(user_id,username,password_hash,salt,revision,updated_at) SELECT ?,?,?,?,1,? WHERE changes()=1').bind(id,username,password.hash,password.salt,stamp));
+  }
  }
+
  const index=queries.length;
  queries.push(db.prepare("UPDATE campo_access_requests SET status=?,revision=revision+1,updated_at=?,reviewed_at=?,reviewed_by=? WHERE id=? AND status='pending' AND revision=? AND (?='rejected' OR EXISTS(SELECT 1 FROM campo_users WHERE email=campo_access_requests.email COLLATE NOCASE AND blocked=0))").bind(decision,stamp,stamp,actor,b.id,b.revision,decision));
  queries.push(db.prepare('INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) SELECT (SELECT id FROM campo_users WHERE email=r.email COLLATE NOCASE),?,?,?,? FROM campo_access_requests r WHERE id=? AND revision=? AND status=? AND reviewed_by=? AND reviewed_at=?').bind(actor,'access_request_'+decision,stamp,JSON.stringify({requestId:b.id,email:current.email}),b.id,b.revision+1,decision,actor,stamp));
- const results=await db.batch(queries);if(!results[index].meta.changes)throw sharedError('A solicitação mudou. Atualize a lista antes de continuar.',409);
+ let results;try{results=await db.batch(queries);}catch(e){if(/UNIQUE|constraint/i.test(e.message))throw sharedError('Usuário, e-mail ou celular já cadastrado. Atualize a lista e revise.',409);throw e;}if(!results[index].meta.changes)throw sharedError('A solicitação mudou. Atualize a lista antes de continuar.',409);
  return json({ok:true,status:decision});
 }

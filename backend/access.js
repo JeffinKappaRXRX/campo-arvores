@@ -7,8 +7,7 @@ async function issueSession(env){const payload=b64(encoder.encode(JSON.stringify
 async function validSession(token,env){try{if(!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32)return false;const [payload,sig,extra]=token.split('.');if(extra||!payload||!sig)return false;const okay=await crypto.subtle.verify('HMAC',await sessionKey(env),unb64(sig),encoder.encode(payload));if(!okay)return false;const data=JSON.parse(new TextDecoder().decode(unb64(payload)));return data.role==='admin'&&data.aud===env.APP_ORIGIN&&data.exp>Math.floor(Date.now()/1000);}catch{return false;}}
 export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await runRepositoryInventory(env);await runAuthorizedRepositoryCleanup(env);})());},async fetch(request,env){
  const path=new URL(request.url).pathname;
- if(path==='/api/auth/keys'){if(request.method!=='GET')return json({error:'Use GET.'},405);try{return json({keys:[(await campoEvaluationKey(env)).publicKey]});}catch{return json({error:'Chaves indisponíveis.'},503);}}
- if(path==='/api/auth/evaluate')return campoExternalEvaluation(request,env);
+ if(['/api/auth/keys','/api/auth/evaluate','/api/auth/complete'].includes(path))return json({error:'O login por e-mail foi substituído por usuário e senha.'},410);
  const origin=request.headers.get('Origin'),url=new URL(request.url);const allowed=[env.APP_ORIGIN,...String(env.APP_ADDITIONAL_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean)];const cors=allowed.includes(origin)?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Campo-Access','Vary':'Origin'}:{};
  const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{...cors,'Content-Type':'application/json','Cache-Control':'no-store'}});
  if(!allowed.includes(origin))return response({error:'Origem não autorizada.'},403);
@@ -24,8 +23,9 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env);
  let authResult=null;
- try{if(path==='/api/auth/start')authResult=await campoAuthStart(request,env);
- else if(path==='/api/auth/complete')authResult=await campoAuthComplete(request,env);
+ try{if(path==='/api/auth/start')authResult=new Response(null,{status:303,headers:{Location:CAMPO_AUTH_APP_ORIGIN+'/?login=senha','Cache-Control':'no-store'}});
+ else if(path==='/api/auth/login')authResult=await campoPasswordLogin(request,env);
+ else if(path==='/api/auth/password')authResult=await campoChangePassword(request,env,identity);
  else if(path==='/api/auth/status')authResult=await campoAuthStatus(request,env,identity,bootstrapAdmin||identity?.user.role==='admin');
  else if(path==='/api/auth/logout')authResult=await campoAuthLogout(request,env,identity);
  else if(path==='/api/auth/request-access')authResult=await campoRequestAccess(request,env);
@@ -34,7 +34,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  else if(path==='/api/access')authResult=response({admin:Boolean(bootstrapAdmin||identity?.user.role==='admin'),authenticated:Boolean(identity),user:identity?.user||null,required:fieldAuthenticationRequired(env)});
  }catch(e){authResult=response({error:e.status?e.message:'Não foi possível concluir a autenticação.'},e.status||503);}
  if(authResult){for(const [k,v]of Object.entries(cors))authResult.headers.set(k,v);return authResult;}
- if(fieldAuthenticationRequired(env)&&!identity&&!bootstrapAdmin)return response({error:'Entre com seu e-mail autorizado para acessar os dados compartilhados.',code:'AUTH_REQUIRED'},401);
+ if(fieldAuthenticationRequired(env)&&!identity&&!bootstrapAdmin)return response({error:'Entre com seu usuário e senha para acessar os dados compartilhados.',code:'AUTH_REQUIRED'},401);
  const headers=new Headers(request.headers);for(const key of [...headers.keys()])if(key.toLowerCase().startsWith('oai-'))headers.delete(key);headers.set('Origin',url.origin);
  const admin=bootstrapAdmin||identity?.user.role==='admin';headers.delete('Authorization');if(admin){headers.set('oai-authenticated-user-id','external-admin');headers.set('oai-authenticated-user-email',env.CAMPO_ADMIN_EMAIL||'administrador@campo.local');}
  const result=await internalApp.fetch(new Request(request,{headers}),{...env,CAMPO_ADMIN_EMAIL:env.CAMPO_ADMIN_EMAIL||'administrador@campo.local',CAMPO_USER:identity?.user||null,CAMPO_DEVICE_SESSION:identity?{hash:identity.session.token_hash,token:identity.token}:null});const output=new Response(result.body,result);for(const [k,v]of Object.entries(cors))output.headers.set(k,v);output.headers.set('Cache-Control','no-store');return output;

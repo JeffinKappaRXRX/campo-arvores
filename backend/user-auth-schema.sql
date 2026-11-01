@@ -7,3 +7,6 @@ CREATE TABLE IF NOT EXISTS campo_auth_audit(seq INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE TABLE IF NOT EXISTS campo_presence_identities(session_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,email TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS campo_access_requests(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,phone TEXT,status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),revision INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,reviewed_at TEXT,reviewed_by TEXT);
 CREATE INDEX IF NOT EXISTS campo_access_requests_inbox ON campo_access_requests(status,created_at DESC);
+CREATE TABLE IF NOT EXISTS campo_user_credentials(user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,salt TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES campo_users(id));
+CREATE TABLE IF NOT EXISTS campo_password_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,reset_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS campo_password_limits_expiry ON campo_password_limits(reset_at);
