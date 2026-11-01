@@ -19,8 +19,9 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  if(request.method==='GET'){
   const u=new URL(request.url),offset=Number(u.searchParams.get('offset')||0),reviewed=u.searchParams.get('status')==='reviewed';
   if(!Number.isSafeInteger(offset)||offset<0||offset>5000)throw sharedError('Página inválida.');
-  const where=reviewed?"status<>'pending'":"status='pending'",rows=await db.prepare('SELECT id,email,name,phone,status,revision,created_at,updated_at,reviewed_at FROM campo_access_requests WHERE '+where+' ORDER BY created_at DESC,id LIMIT 50 OFFSET ?').bind(offset).all(),counts=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending FROM campo_access_requests").first();
-  const pending=counts.pending||0,total=reviewed?counts.total-pending:pending;return json({requests:rows.results,pending,total,offset,nextOffset:offset+50<total?offset+50:null});
+  if(u.searchParams.get('summary')==='1'){const row=await db.prepare("SELECT COUNT(*) pending,(SELECT id FROM campo_access_requests WHERE status='pending' ORDER BY created_at DESC,id DESC LIMIT 1) latestId FROM campo_access_requests WHERE status='pending'").first();return json({pending:row.pending||0,latestId:row.latestId||null});}
+  const where=reviewed?"status<>'pending'":"status='pending'",rows=await db.prepare('SELECT id,email,name,phone,status,revision,created_at,updated_at,reviewed_at FROM campo_access_requests WHERE '+where+' ORDER BY created_at DESC,id LIMIT 50 OFFSET ?').bind(offset).all(),counts=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending,(SELECT id FROM campo_access_requests WHERE status='pending' ORDER BY created_at DESC,id DESC LIMIT 1) latestId FROM campo_access_requests").first();
+  const pending=counts.pending||0,total=reviewed?counts.total-pending:pending;return json({requests:rows.results,pending,latestId:counts.latestId||null,total,offset,nextOffset:offset+50<total?offset+50:null});
  }
  if(request.method!=='POST')return json({error:'Use GET ou POST.'},405);
  const b=await sharedBody(request,2000);if(!sharedId(b.id)||!Number.isSafeInteger(b.revision)||!['approve','reject'].includes(b.action))throw sharedError('Solicitação inválida.');

@@ -123,3 +123,16 @@ Validação: testes de autenticação real com RSA simulado, aprovação/recusa/
 - API e Pages precisam ser publicados juntos após `node backend/build.mjs` e `node hosting/build-release.mjs`. O service worker detecta o novo conteúdo e preserva o rascunho antes de atualizar.
 
 Validação: `node backend/verify-user-auth.mjs` usa SQLite em memória e criptografia real para criação, colisões/rollback, login, permissões, bloqueio, redefinição, alteração própria, revogação, origem e limites; `NODE_PATH=... node tests/user-access-ui.cjs` verifica tela bloqueada, sessão lembrada/offline, erros de login, solicitação/aprovação e limpeza de campos secretos. Nenhuma identidade de teste é criada no banco de produção.
+
+
+## Versão 4.5.1 — gestão de contas, senhas visíveis e avisos
+
+- Migração aditiva: última instrução de `backend/user-auth-schema.sql` cria `campo_user_lifecycle`. Não altera contas ou cadastros existentes. Publicar a migração antes da API.
+- Excluir usuário exige Administração no servidor, ID/revisão e confirmação EXCLUIR. Marca a conta como excluída/bloqueada, remove credenciais e sessões, encerra presença e mantém inspeções/fotos/autoria/auditoria. Guarda contra exclusão concorrente ou do último administrador ativo. Nenhuma conta é removida automaticamente.
+- Filtro Excluídos permite restaurar com novo usuário/senha. O e-mail continua reservado ao ID histórico; a restauração não recupera sessões/credenciais antigas. Senhas novas continuam sendo hashes com sal/pepper.
+- Mostrar/ocultar senha nos campos de login, administração, nova conta e modais de alteração/aprovação, inclusive os inseridos posteriormente. Só revela o que foi digitado no campo; não há consulta de senha armazenada. Fecha/envia diálogo, troca de edição e saída da página retornam ao modo oculto.
+- Sessão comum permanece válida no servidor até revogação, saída, bloqueio, exclusão ou redefinição de senha. `expires_at` é metadado da concessão do cookie, não encerra por si só a sessão D1. Cookie de 400 dias, renovado durante uso; o navegador ainda pode expirar/remover cookies. Não usar armazenamento JS como substituto do cookie HttpOnly. A recuperação administrativa por senha segue com bearer de 8 h por aba.
+- Consulta leve `/api/admin/access-requests?summary=1` retorna só quantidade pendente e ID da última solicitação, sem lista de contatos. Consulta a cada 10 s com app visível e, quando avisos estão habilitados, tenta também enquanto em segundo plano. Navegadores podem limitar/suspender essas consultas. Não é push remoto nem garantia de entrega com o app fechado.
+- Administração tem Ativar avisos neste aparelho. Permissão do navegador solicitada apenas por clique explícito. Usa service worker/showNotification quando disponível, ou Notification desktop. Avisos têm apenas contagem e são deduplicados por última solicitação no aparelho. Clicar abre o painel administrativo após autenticação. Não adiciona serviços pagos ou envia mensagens externas. Para evitar espera, criar contas conhecidas antes do início do trabalho.
+
+Validação: testes de autenticação, exclusão/restauração, revogação e último administrador em SQLite isolado; UI com jsdom para confirmação, filtros, senhas e permissão/deduplicação de avisos; testes existentes de administração, sincronização, atualização e Pages. Nenhum usuário real é excluído na publicação.

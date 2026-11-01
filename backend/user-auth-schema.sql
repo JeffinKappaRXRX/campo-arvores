@@ -10,3 +10,4 @@ CREATE INDEX IF NOT EXISTS campo_access_requests_inbox ON campo_access_requests(
 CREATE TABLE IF NOT EXISTS campo_user_credentials(user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,salt TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES campo_users(id));
 CREATE TABLE IF NOT EXISTS campo_password_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,reset_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS campo_password_limits_expiry ON campo_password_limits(reset_at);
+CREATE TABLE IF NOT EXISTS campo_user_lifecycle(user_id TEXT PRIMARY KEY,deleted_at TEXT NOT NULL,deleted_by TEXT NOT NULL,operation_id TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES campo_users(id));

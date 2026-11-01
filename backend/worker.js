@@ -347,28 +347,30 @@ async function updateAdminLabels(env,body){const records=body.records,value=body
 
 // D1 authorizes each password-authenticated data request and revokes devices.
 const CAMPO_AUTH_APP_ORIGIN='https://mapeamento-arvores.pages.dev';
-const CAMPO_SESSION_COOKIE='__Host-campo-session',CAMPO_SESSION_LIFE=365*86400000;
+const CAMPO_SESSION_COOKIE='__Host-campo-session',CAMPO_SESSION_LIFE=400*86400000;
 function fieldAuthenticationRequired(env){return env.FIELD_AUTH_REQUIRED!=='false';}
 function authDB(env){if(!env.SHARED_DB)throw sharedError('Autenticação central indisponível.',503);return env.SHARED_DB.withSession?env.SHARED_DB.withSession('first-primary'):env.SHARED_DB;}
 function authCookie(request,name){const found=(request.headers.get('Cookie')||'').split(';').map(x=>x.trim()).filter(x=>x.startsWith(name+'='));return found.length===1?found[0].slice(name.length+1):'';}
-function sessionCookie(name,value,age=31536000){return name+'='+value+'; Path=/; Max-Age='+age+'; Secure; HttpOnly; SameSite=Lax';}
+function sessionCookie(name,value,age=34560000){return name+'='+value+'; Path=/; Max-Age='+age+'; Secure; HttpOnly; SameSite=Lax';}
 async function authHash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('');}
 function authRandom(){return b64(crypto.getRandomValues(new Uint8Array(32)));}
 function authUser(row){return row?{id:row.id,email:row.email,name:row.name,role:row.role,username:row.username||''}:null;}
-async function authenticatedOperator(request,env){const token=authCookie(request,CAMPO_SESSION_COOKIE);if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;const db=authDB(env),hash=await authHash(token),row=await db.prepare('SELECT u.*,c.username,s.token_hash,s.last_seen,s.expires_at FROM campo_user_sessions s JOIN campo_users u ON u.id=s.user_id LEFT JOIN campo_user_credentials c ON c.user_id=u.id WHERE s.token_hash=? AND s.expires_at>? AND u.blocked=0').bind(hash,Date.now()).first();return row?{user:authUser(row),session:row,token}:null;}
+async function authenticatedOperator(request,env){const token=authCookie(request,CAMPO_SESSION_COOKIE);if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;const db=authDB(env),hash=await authHash(token),row=await db.prepare('SELECT u.*,c.username,s.token_hash,s.last_seen,s.expires_at FROM campo_user_sessions s JOIN campo_users u ON u.id=s.user_id LEFT JOIN campo_user_credentials c ON c.user_id=u.id WHERE s.token_hash=? AND u.blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=u.id)').bind(hash).first();return row?{user:authUser(row),session:row,token}:null;}
 async function campoAuthStatus(request,env,identity,admin){if(request.method!=='GET')return json({error:'Use GET.'},405);const required=fieldAuthenticationRequired(env),out=json({required,authenticated:Boolean(identity),user:identity?.user||null,admin:Boolean(admin)});if(identity&&Date.now()-identity.session.last_seen>3600000){const now=Date.now();await authDB(env).prepare('UPDATE campo_user_sessions SET last_seen=?,expires_at=? WHERE token_hash=?').bind(now,now+CAMPO_SESSION_LIFE,identity.session.token_hash).run();out.headers.append('Set-Cookie',sessionCookie(CAMPO_SESSION_COOKIE,identity.token));}return out;}
 async function campoAuthLogout(request,env,identity){if(request.method!=='POST')return json({error:'Use POST.'},405);if(identity)await authDB(env).prepare('DELETE FROM campo_user_sessions WHERE token_hash=?').bind(identity.session.token_hash).run();const r=json({ok:true});r.headers.set('Set-Cookie',sessionCookie(CAMPO_SESSION_COOKIE,'',0));return r;}
 function normalizedPhone(value){const raw=String(value||'').trim();if(!raw)return null;let digits=raw.replace(/\D/g,'');if(!raw.startsWith('+')&&[10,11].includes(digits.length))digits='55'+digits;if(!/^[1-9]\d{9,14}$/.test(digits))throw sharedError('Celular inválido. Informe DDD e número.');return '+'+digits;}
 async function campoManageUsers(request,env,identity,bootstrapAdmin){
  if(!bootstrapAdmin&&identity?.user.role!=='admin')return json({error:'Acesso restrito ao administrador.'},403);const db=authDB(env),actor=identity?.user.id||'admin-password';
- if(request.method==='GET'){const rows=await db.prepare('SELECT u.id,u.email,u.name,u.phone,u.role,u.blocked,u.revision,u.created_at,u.updated_at,c.username,(c.user_id IS NOT NULL) passwordConfigured,(SELECT MAX(s.last_seen) FROM campo_user_sessions s WHERE s.user_id=u.id) last_seen FROM campo_users u LEFT JOIN campo_user_credentials c ON c.user_id=u.id ORDER BY u.blocked,u.name').all();return json({users:rows.results,loginMethod:'username_password',phoneAuthentication:false});}
+ if(request.method==='GET'){const rows=await db.prepare('SELECT u.id,u.email,u.name,u.phone,u.role,u.blocked,u.revision,u.created_at,u.updated_at,l.deleted_at,c.username,(c.user_id IS NOT NULL) passwordConfigured,(SELECT MAX(s.last_seen) FROM campo_user_sessions s WHERE s.user_id=u.id) last_seen FROM campo_users u LEFT JOIN campo_user_credentials c ON c.user_id=u.id LEFT JOIN campo_user_lifecycle l ON l.user_id=u.id ORDER BY (l.deleted_at IS NOT NULL), u.blocked,u.name').all();return json({users:rows.results,loginMethod:'username_password',phoneAuthentication:false});}
  if(request.method!=='POST')return json({error:'Use GET ou POST.'},405);
  try{
  const b=await sharedBody(request,5000);
+ if(b.action==='delete')return await campoDeleteUser(db,b,actor);
  if(b.action==='revoke'){if(typeof b.id!=='string')throw sharedError('Usuário inválido.');await db.batch([db.prepare('DELETE FROM campo_user_sessions WHERE user_id=?').bind(b.id),db.prepare("INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) VALUES(?,?,'revoke_sessions',?,'{}')").bind(b.id,actor,new Date().toISOString())]);return json({ok:true});}
  const name=String(b.name||'').trim(),email=String(b.email||'').trim().toLowerCase(),role=b.role,blocked=b.blocked===true?1:0,phone=normalizedPhone(b.phone),username=normalizedUsername(b.username);
  if(!name||name.length>100||!/^\S+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||!['inspector','admin'].includes(role))throw sharedError('Informe nome, e-mail de contato válido e perfil.');
  const stamp=new Date().toISOString(),id=b.id||crypto.randomUUID();if(!sharedId(id))throw sharedError('Usuário inválido.');const old=b.id?await db.prepare('SELECT * FROM campo_users WHERE id=?').bind(id).first():null;
+ const deleted=old?await db.prepare('SELECT user_id FROM campo_user_lifecycle WHERE user_id=?').bind(id).first():null;if(deleted&&b.action!=='restore')throw sharedError('Usuário excluído. Use Restaurar e defina uma nova senha.',409);if(!deleted&&b.action==='restore')throw sharedError('A conta não está excluída. Atualize a lista.',409);
  if(b.id&&(!old||b.revision!==old.revision))throw sharedError('Usuário alterado. Atualize a lista.',409);
  if(old&&old.email!==email)throw sharedError('Para mudar o e-mail de contato, cadastre uma nova conta e bloqueie a anterior.');
  const credential=old?await db.prepare('SELECT * FROM campo_user_credentials WHERE user_id=?').bind(id).first():null;
@@ -378,8 +380,25 @@ async function campoManageUsers(request,env,identity,bootstrapAdmin){
  const credentialEdit=db.prepare('INSERT INTO campo_user_credentials(user_id,username,password_hash,salt,revision,updated_at) SELECT ?,?,?,?,1,? WHERE changes()=1 ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,password_hash=excluded.password_hash,salt=excluded.salt,revision=campo_user_credentials.revision+1,updated_at=excluded.updated_at WHERE campo_user_credentials.revision=?').bind(id,username,nextPassword.hash,nextPassword.salt,stamp,credential?.revision||0);
  const revoke=blocked||old?.role!==role||Boolean(b.password)||Boolean(credential&&credential.username!==username),result=await db.batch([edit,credentialEdit,db.prepare('DELETE FROM campo_user_sessions WHERE user_id=? AND ?=1 AND EXISTS(SELECT 1 FROM campo_users WHERE id=? AND revision=? AND updated_at=?)').bind(id,revoke?1:0,id,(old?.revision||0)+1,stamp),db.prepare('INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_users WHERE id=? AND revision=? AND updated_at=?)').bind(id,actor,old?'update_user':'create_user',stamp,JSON.stringify({email,username,role,blocked:Boolean(blocked),passwordChanged:Boolean(b.password)}),id,(old?.revision||0)+1,stamp)]);
  if(!result[0].meta.changes||!result[1].meta.changes)throw sharedError('Usuário alterado. Atualize a lista.',409);
+ if(deleted){await db.prepare('DELETE FROM campo_user_lifecycle WHERE user_id=? AND EXISTS(SELECT 1 FROM campo_users WHERE id=? AND revision=? AND updated_at=?)').bind(id,id,(old?.revision||0)+1,stamp).run();await db.prepare("INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) VALUES(?,?,'restore_user',?,'{}')").bind(id,actor,stamp).run();}
  if(blocked)await db.prepare('UPDATE campo_presence SET active=0 WHERE session_id IN (SELECT session_id FROM campo_presence_identities WHERE user_id=?)').bind(id).run();return json({ok:true,id,passwordChanged:Boolean(b.password)});
  }catch(e){return json({error:e.status?e.message:/UNIQUE|constraint/i.test(e.message)?'Usuário, e-mail ou celular já cadastrado. Revise a conta existente.':'Não foi possível salvar o usuário.'},e.status||400);}
+}
+
+// Account removal preserves inspection authorship; credentials and sessions are revoked.
+async function campoDeleteUser(db,body,actor){
+ if(!sharedId(body.id)||!Number.isSafeInteger(body.revision)||body.confirmation!=='EXCLUIR')throw sharedError('Confirme a exclusão do usuário selecionado.');
+ const stamp=new Date().toISOString(),operation=crypto.randomUUID();
+ const result=await db.batch([
+  db.prepare("INSERT OR IGNORE INTO campo_user_lifecycle(user_id,deleted_at,deleted_by,operation_id) SELECT u.id,?,?,? FROM campo_users u WHERE u.id=? AND u.revision=? AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=u.id) AND (u.role<>'admin' OR u.blocked=1 OR EXISTS(SELECT 1 FROM campo_users other WHERE other.id<>u.id AND other.role='admin' AND other.blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=other.id)))").bind(stamp,actor,operation,body.id,body.revision),
+  db.prepare('UPDATE campo_users SET blocked=1,revision=revision+1,updated_at=? WHERE id=? AND EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=? AND operation_id=?)').bind(stamp,body.id,body.id,operation),
+  db.prepare('DELETE FROM campo_user_sessions WHERE user_id=? AND EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=? AND operation_id=?)').bind(body.id,body.id,operation),
+  db.prepare('DELETE FROM campo_user_credentials WHERE user_id=? AND EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=? AND operation_id=?)').bind(body.id,body.id,operation),
+  db.prepare('UPDATE campo_presence SET active=0,lat=NULL,lon=NULL,accuracy=NULL,location_at=NULL,sharing=0 WHERE session_id IN (SELECT session_id FROM campo_presence_identities WHERE user_id=?) AND EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=? AND operation_id=?)').bind(body.id,body.id,operation),
+  db.prepare("INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) SELECT user_id,?,'delete_user',?,'{}' FROM campo_user_lifecycle WHERE user_id=? AND operation_id=?").bind(actor,stamp,body.id,operation)
+ ]);
+ if(!result[0].meta.changes)throw sharedError('Não foi possível excluir: conta alterada, já excluída ou último administrador ativo. Atualize a lista.',409);
+ return json({ok:true,deleted:true,id:body.id});
 }
 
 // Worker-native password hashing: per-user salt, PBKDF2 platform cap and secret HMAC pepper.
@@ -403,7 +422,7 @@ async function campoCreateUserSession(db,row,env,expectedCredentialRevision,oldS
  const token=authRandom(),hash=await authHash(token),now=Date.now(),queries=[];
  if(oldSession)queries.push(db.prepare('DELETE FROM campo_user_sessions WHERE token_hash=?').bind(oldSession));
  const index=queries.length;
- queries.push(db.prepare('INSERT INTO campo_user_sessions(token_hash,user_id,created_at,last_seen,expires_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_users u JOIN campo_user_credentials c ON c.user_id=u.id WHERE u.id=? AND u.revision=? AND u.blocked=0 AND c.revision=?)').bind(hash,row.id,now,now,now+CAMPO_SESSION_LIFE,row.id,row.revision,expectedCredentialRevision));
+ queries.push(db.prepare('INSERT INTO campo_user_sessions(token_hash,user_id,created_at,last_seen,expires_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_users u JOIN campo_user_credentials c ON c.user_id=u.id WHERE u.id=? AND u.revision=? AND u.blocked=0 AND c.revision=? AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=u.id))').bind(hash,row.id,now,now,now+CAMPO_SESSION_LIFE,row.id,row.revision,expectedCredentialRevision));
  queries.push(db.prepare("INSERT INTO campo_auth_audit(user_id,actor_id,action,at,detail) SELECT ?,?,'login',?,'{\"method\":\"password\"}' WHERE EXISTS(SELECT 1 FROM campo_user_sessions WHERE token_hash=?)").bind(row.id,row.id,new Date(now).toISOString(),hash));
  const result=await db.batch(queries);if(!result[index].meta.changes)throw sharedError('Conta alterada ou bloqueada. Entre novamente.',401);
  const out=json({ok:true,user:authUser(row),admin:row.role==='admin'});out.headers.append('Set-Cookie',sessionCookie(CAMPO_SESSION_COOKIE,token));return out;
@@ -412,7 +431,7 @@ async function campoPasswordLogin(request,env){
  if(request.method!=='POST')return json({error:'Use POST.'},405);
  const b=await sharedBody(request,3000),login=String(b.username||'').trim().toLowerCase(),password=b.password;
  if(!login||login.length>254||typeof password!=='string'||password.length>128)return json({error:'Usuário ou senha incorretos.'},401);
- await campoPasswordRateLimit(request,env,login);const db=authDB(env),row=await db.prepare('SELECT u.*,c.username,c.password_hash,c.salt,c.revision credential_revision FROM campo_users u JOIN campo_user_credentials c ON c.user_id=u.id WHERE c.username=? COLLATE NOCASE OR u.email=? COLLATE NOCASE').bind(login,login).first();
+ await campoPasswordRateLimit(request,env,login);const db=authDB(env),row=await db.prepare('SELECT u.*,c.username,c.password_hash,c.salt,c.revision credential_revision FROM campo_users u JOIN campo_user_credentials c ON c.user_id=u.id WHERE (c.username=? COLLATE NOCASE OR u.email=? COLLATE NOCASE) AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=u.id)').bind(login,login).first();
  if(!await checkCampoPassword(password,row,env)||row.blocked)return json({error:'Usuário ou senha incorretos.'},401);
  return campoCreateUserSession(db,row,env,row.credential_revision,authCookie(request,CAMPO_SESSION_COOKIE)?await authHash(authCookie(request,CAMPO_SESSION_COOKIE)):null);
 }
@@ -447,8 +466,9 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  if(request.method==='GET'){
   const u=new URL(request.url),offset=Number(u.searchParams.get('offset')||0),reviewed=u.searchParams.get('status')==='reviewed';
   if(!Number.isSafeInteger(offset)||offset<0||offset>5000)throw sharedError('Página inválida.');
-  const where=reviewed?"status<>'pending'":"status='pending'",rows=await db.prepare('SELECT id,email,name,phone,status,revision,created_at,updated_at,reviewed_at FROM campo_access_requests WHERE '+where+' ORDER BY created_at DESC,id LIMIT 50 OFFSET ?').bind(offset).all(),counts=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending FROM campo_access_requests").first();
-  const pending=counts.pending||0,total=reviewed?counts.total-pending:pending;return json({requests:rows.results,pending,total,offset,nextOffset:offset+50<total?offset+50:null});
+  if(u.searchParams.get('summary')==='1'){const row=await db.prepare("SELECT COUNT(*) pending,(SELECT id FROM campo_access_requests WHERE status='pending' ORDER BY created_at DESC,id DESC LIMIT 1) latestId FROM campo_access_requests WHERE status='pending'").first();return json({pending:row.pending||0,latestId:row.latestId||null});}
+  const where=reviewed?"status<>'pending'":"status='pending'",rows=await db.prepare('SELECT id,email,name,phone,status,revision,created_at,updated_at,reviewed_at FROM campo_access_requests WHERE '+where+' ORDER BY created_at DESC,id LIMIT 50 OFFSET ?').bind(offset).all(),counts=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending,(SELECT id FROM campo_access_requests WHERE status='pending' ORDER BY created_at DESC,id DESC LIMIT 1) latestId FROM campo_access_requests").first();
+  const pending=counts.pending||0,total=reviewed?counts.total-pending:pending;return json({requests:rows.results,pending,latestId:counts.latestId||null,total,offset,nextOffset:offset+50<total?offset+50:null});
  }
  if(request.method!=='POST')return json({error:'Use GET ou POST.'},405);
  const b=await sharedBody(request,2000);if(!sharedId(b.id)||!Number.isSafeInteger(b.revision)||!['approve','reject'].includes(b.action))throw sharedError('Solicitação inválida.');
