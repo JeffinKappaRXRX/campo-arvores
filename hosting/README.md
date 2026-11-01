@@ -69,3 +69,16 @@ Selecionar todos usa todas as páginas do filtro. Classificação e exclusão s�
 A exclusão mantém a validação de versões e o bloqueio de edição concorrente, envia pastas e arquivos para a lixeira do Drive, atualiza o Excel consolidado e mantém tombstones no mapa. Derivadas de fotos compartilhadas no D1 são removidas após a confirmação; o histórico administrativo e a evidência de solicitações de exclusão permanecem para auditoria. Cada lote de 20 foi verificado para consumir no máximo 50 consultas D1.
 
 Validação: `node tests/cleanup-selection.cjs`, `node backend/verify-homologacao.mjs`, `node backend/verify-admin.mjs`, `node backend/verify-shared.mjs`, `node backend/verify.mjs`, `node tests/admin-productivity.cjs`, `node tests/app-updates.cjs`, build de API/Pages e verificação sintática. Exclusões dos testes automatizados usam somente SQLite em memória e receptor simulado; nenhum cadastro real foi marcado ou excluído na publicação.
+
+
+## Versão 4.3.2 — pesquisa e retomada da limpeza
+
+- Executar `backend/map-search-schema.sql` na mesma D1 antes de publicar a API.
+- Lupa dentro do mapa: coordenadas decimais, DMS/DDM e UTM com zona e hemisfério explícitos; SIRGAS2000/GRS80 ou WGS84. SAD69 não é convertido sem parâmetros específicos. Conversor proj4 existente é carregado só quando necessário.
+- Sugestões das árvores e rede são locais. A pesquisa GPKG usa o worker existente, com uma solicitação em voo, descarte de respostas antigas e resultados limitados. Não carrega toda a rede na memória.
+- Endereços: `/api/map/search`, somente por envio explícito, Photon/OpenStreetMap, até seis resultados, cache de sete dias (máximo mil consultas) e limite global de uma consulta a cada 1,1 s. Não envia GPS. O serviço público não oferece garantia de disponibilidade; pode ser substituído por instância Photon em `MAP_GEOCODER_URL` (HTTPS), sem alterar o app. Em implantação com muitos técnicos, usar instância própria/contratada.
+- Rotas: Google Maps URLs para carro, moto, caminhada e bicicleta. Navegação e ETA são do Google, fora do CAMPO; não há API paga configurada para calcular navegação dentro do mapa. Cobertura de moto depende da região.
+- Limpeza pela UI passa a usar lotes de dois IDs, com mensagens específicas de timeout e retomada de `pendingDeletes` devolvidas pelo receptor. Tag continua em lotes de até vinte. A versão e a revisão da classificação são conferidas no servidor.
+- `runAuthorizedRepositoryCleanup` é uma manutenção privada e de execução única via controle Cloudflare/D1: manifesto explícito de até dois registros/revisões com status `approved`. Nenhuma rota pública dispara o trabalho e nenhum cron permanente é exigido. Preservar o resultado final para auditoria; restaurar as agendas anteriores depois do uso. Não inferir homologação por data.
+
+Validação: `node tests/map-search.cjs`, `node backend/verify-map-search.mjs`, `node backend/verify-homologacao.mjs`; `tests/map-search-ui.cjs` exige jsdom. Demais verificações administrativas, compartilhamento, seleção do mapa e receptor continuam aplicáveis.

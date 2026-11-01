@@ -121,6 +121,7 @@ function isAdministrator(request,env){
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
  if(/^\/api\/(?:admin\/(?:universe|audit|presence)|team\/presence)(?:[/?]|$)/.test(url.pathname))return adminControlAPI(request,env);
+ if(url.pathname==='/api/map/search')return mapAddressSearch(request,env);
  if(url.pathname.startsWith('/api/shared/'))return sharedAPI(request,env);
  if(url.pathname==='/api/network/manifest'||url.pathname==='/api/network/chunk')return centralNetwork(request,env);
  if(url.pathname==='/api/access')return request.method==='GET'?json({admin:isAdministrator(request,env)}):json({error:'Use GET.'},405);
