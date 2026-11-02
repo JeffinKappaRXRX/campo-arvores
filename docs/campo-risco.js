@@ -3,10 +3,10 @@
 // tests/gestao-risco.cjs compara o resultado com o Python; qualquer mudança aqui precisa ser igual lá.
 (()=>{
  const H_MT=9,H_BT=7,ESBELTEZ=80,FRAGEIS=['EUCALIPTO','EMBAÚBA','EMBAUBA','LEUCENA','BAMBU','BAMBÚ','PINHEIRO','PINUS','ACÁCIA','FLAMBOYANT','PAU-DE-BALSA','PAU DE BALSA','GUAPURUVU'],ALERTA=/crítico|inclinad|mort|decepad/i,PESO={T1:1,T2:.8},SOBE={'MÉDIO':'ALTO','BAIXO':'MÉDIO','SEM RISCO':'MÉDIO'};
- const num=v=>{if(v===null||v===undefined||v==='')return NaN;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:NaN;};
+ const rede=v=>{const n=num(v);return n<0?NaN:n;},num=v=>{if(v===null||v===undefined||v==='')return NaN;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:NaN;};
  const round=(v,d)=>{const f=10**d;return Math.round(v*f)/f;};
  // Entrada: altura, distâncias (m), DAP (cm), espécie, alerta, projeção, clientes, trecho, vendaval, clientesMax.
- function calcular(a){let h=num(a.altura);if(h<=0)h=NaN;if(h>40)h=round(h/10,1);const dmt=num(a.distMT),dbt=num(a.distBT),raio=Number.isFinite(h)?Math.min(6,Math.max(1.5,.25*h)):NaN;let d=num(a.distRede);if(!Number.isFinite(d)){const base=Number.isFinite(dmt)?dmt:Number.isFinite(dbt)?dbt:1;d=base+raio;}
+ function calcular(a){let h=num(a.altura);if(h<=0)h=NaN;if(h>40)h=round(h/10,1);const dmt=rede(a.distMT),dbt=rede(a.distBT),raio=Number.isFinite(h)?Math.min(6,Math.max(1.5,.25*h)):NaN;let d=num(a.distRede);if(!Number.isFinite(d)){const base=Number.isFinite(dmt)?dmt:Number.isFinite(dbt)?dbt:1;d=base+raio;}
   const alcanca=(alt)=>Number.isFinite(h)&&Number.isFinite(d)&&h*h>=d*d+alt*alt,alcancaMT=alcanca(H_MT),alcancaBT=alcanca(H_BT),copa=dmt<=.5||dbt<=.3;
   const dap=num(a.dap),altaFina=Boolean(a.dapMedido)&&dap>0&&Number.isFinite(h)&&h/(dap/100)>=ESBELTEZ,especie=String(a.especie||'').toUpperCase(),fragil=FRAGEIS.some(e=>especie.includes(e)),alerta=ALERTA.test(String(a.alerta||''));
   const prob=Math.max(0,Math.min(100,(alcancaMT?40:0)+(!alcancaMT&&alcancaBT?25:0)+(copa?20:0)+(dmt>.5&&dmt<=1.5?10:0)+(altaFina?15:0)+(fragil?10:0)+(h>=15?10:0)+(alerta?15:0)+(a.projecao==='SIM'?10:0)));

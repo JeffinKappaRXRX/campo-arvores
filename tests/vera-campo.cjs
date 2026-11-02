@@ -13,7 +13,7 @@ const html='<form id="form"><div class="sectionhead"></div><input id="lat"><inpu
  assert.equal(stored.veraFieldV1.generation,'g1','fica guardada para usar sem internet');
  const row=run("veraBaseRow('vera-100')");
  assert.equal(row.externalId,'100');assert.equal(row.species,'MANGUEIRA');assert.equal(row.height,12);assert.equal(row.mt,true);assert.equal(row.mtDistance,1.2);assert.equal(row.bt,false);assert.equal(row.btDistance,'');assert.equal(row.projection,'sim');assert.equal(row.pole,'7');assert.equal(row.circ,'125.7');
- assert.equal(run("veraBaseRow('vera-101')").dap,'','DAP estimado não entra como se fosse medido');const semMedida=run("veraBaseRow('vera-101')");assert.equal(semMedida.mt,false,'0 na planilha não vira distância medida');assert.equal(semMedida.bt,false);assert.equal(semMedida.at,false,'-1 na planilha não vira distância');assert.equal(semMedida.atDistance,'');
+ assert.equal(run("veraBaseRow('vera-101')").dap,30,'DAP estimado também abre preenchido');const semMedida=run("veraBaseRow('vera-101')");assert.equal(semMedida.mt,true,'0 é copa encostada');assert.equal(semMedida.mtDistance,0);assert.equal(semMedida.bt,true);assert.equal(semMedida.at,false,'-1 é rede que não existe');assert.equal(semMedida.atDistance,'');assert.equal(semMedida.dapEstimado,true);
  await run('veraLoad()');assert.equal(run('veraGeneration'),'g1','mesma geração não baixa de novo');
  const set=(lat,lon,sp)=>{d.getElementById('lat').value=lat;d.getElementById('lon').value=lon;d.getElementById('species').value=sp;run('veraDuplicateCheck()');};
  const box=d.getElementById('duplicateWarning');
