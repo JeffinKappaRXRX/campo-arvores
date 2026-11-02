@@ -2,7 +2,7 @@
 // Mesma fórmula de risco da análise VERA (analise_vera.py), para as inspeções novas do campo.
 // tests/gestao-risco.cjs compara o resultado com o Python; qualquer mudança aqui precisa ser igual lá.
 (()=>{
- const H_MT=9,H_BT=7,ESBELTEZ=80,FRAGEIS=['EUCALIPTO','EMBAÚBA','EMBAUBA','LEUCENA','BAMBU','BAMBÚ','PINHEIRO','PINUS','ACÁCIA','FLAMBOYANT','PAU-DE-BALSA','PAU DE BALSA','GUAPURUVU'],ALERTA=/crítico|inclinad|mort|decepad/i,PESO={T1:1,T2:.8};
+ const H_MT=9,H_BT=7,ESBELTEZ=80,FRAGEIS=['EUCALIPTO','EMBAÚBA','EMBAUBA','LEUCENA','BAMBU','BAMBÚ','PINHEIRO','PINUS','ACÁCIA','FLAMBOYANT','PAU-DE-BALSA','PAU DE BALSA','GUAPURUVU'],ALERTA=/crítico|inclinad|mort|decepad/i,PESO={T1:1,T2:.8},SOBE={'MÉDIO':'ALTO','BAIXO':'MÉDIO','SEM RISCO':'MÉDIO'};
  const num=v=>{if(v===null||v===undefined||v==='')return NaN;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:NaN;};
  const round=(v,d)=>{const f=10**d;return Math.round(v*f)/f;};
  // Entrada: altura, distâncias (m), DAP (cm), espécie, alerta, projeção, clientes, trecho, vendaval, clientesMax.
@@ -11,10 +11,12 @@
   const dap=num(a.dap),altaFina=Boolean(a.dapMedido)&&dap>0&&Number.isFinite(h)&&h/(dap/100)>=ESBELTEZ,especie=String(a.especie||'').toUpperCase(),fragil=FRAGEIS.some(e=>especie.includes(e)),alerta=ALERTA.test(String(a.alerta||''));
   const prob=Math.max(0,Math.min(100,(alcancaMT?40:0)+(!alcancaMT&&alcancaBT?25:0)+(copa?20:0)+(dmt>.5&&dmt<=1.5?10:0)+(altaFina?15:0)+(fragil?10:0)+(h>=15?10:0)+(alerta?15:0)+(a.projecao==='SIM'?10:0)));
   const clientes=num(a.clientes)||0,maximo=Math.max(num(a.clientesMax)||0,1);let impacto=Math.sqrt(clientes/maximo)*(PESO[a.trecho]??.6)*(a.vendaval==='Sim'?1.15:1);impacto=round(Math.max(0,Math.min(1,impacto)),3);
-  const prioridade=round(prob*(.4+.6*impacto),1),real=alcancaMT||alcancaBT||copa,classe=!real?'SEM RISCO':prioridade>=60?'CRÍTICO':prioridade>=40?'ALTO':prioridade>=25?'MÉDIO':'BAIXO';
-  let acao=real?'Monitorar no ciclo':'Sem ação';if(classe==='CRÍTICO'||classe==='ALTO'){if(alcancaMT&&(altaFina||fragil||alerta||h>=15))acao='Supressão (com compensação SEMEIA)';else acao=copa||alcancaMT?'Poda de redução/afastamento':'Poda de limpeza';}
+  const prioridade=round(prob*(.4+.6*impacto),1),real=alcancaMT||alcancaBT||copa,calculada=!real?'SEM RISCO':prioridade>=60?'CRÍTICO':prioridade>=40?'ALTO':prioridade>=25?'MÉDIO':'BAIXO',forte=calculada==='CRÍTICO'||calculada==='ALTO';
+  // Foto que não sustenta manda revisar em campo; foto que confirma sobe um nível.
+  let classe=calculada;if(a.verificacao==='NÃO CONFIRMADA'&&forte)classe='REVISAR EM CAMPO';else if(a.verificacao==='CONFIRMADA'&&a.elevar!==false)classe=SOBE[calculada]||calculada;
+  let acao=real?'Monitorar no ciclo':'Sem ação';if(classe==='CRÍTICO'||classe==='ALTO'){if(forte&&alcancaMT&&(altaFina||fragil||ALERTA.test(String(a.obsAcao??a.alerta??''))||h>=15))acao='Supressão (com compensação SEMEIA)';else acao=copa||alcancaMT?'Poda de redução/afastamento':'Poda de limpeza';}
   const motivo=[];if(alcancaMT)motivo.push('alcança a MT se cair ('+h+' m a '+round(d,1)+' m da rede)');else if(alcancaBT)motivo.push('alcança a BT se cair ('+h+' m)');if(copa)motivo.push('copa encostada na rede');if(altaFina)motivo.push('alta e fina');if(fragil)motivo.push('espécie de queda/quebra frequente');if(alerta)motivo.push('alerta na observação do campo');
-  return {altura:Number.isFinite(h)?h:null,distRede:Number.isFinite(d)?round(d,1):null,prob,impacto,prioridade,classe,acao,alcancaMT:alcancaMT?'SIM':'NÃO',motivo:motivo.join('; ')};}
+  return {classeCalculada:calculada,altura:Number.isFinite(h)?h:null,distRede:Number.isFinite(d)?round(d,1):null,prob,impacto,prioridade,classe,acao,alcancaMT:alcancaMT?'SIM':'NÃO',motivo:motivo.join('; ')};}
  const plain=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
  const nomes=s=>plain(s).split(/[,;/]/).map(x=>x.trim()).filter(Boolean);
  const metros=(a,b)=>{const y=(a.lat-b.lat)*111320,x=(a.lon-b.lon)*111320*Math.cos(a.lat*Math.PI/180);return Math.hypot(x,y);};
