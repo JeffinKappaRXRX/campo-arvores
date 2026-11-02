@@ -9,3 +9,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS shared_one_pending ON shared_deletions(tree_id
 CREATE TABLE IF NOT EXISTS shared_geocodes(key TEXT PRIMARY KEY, address TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TRIGGER IF NOT EXISTS shared_insert AFTER INSERT ON shared_trees BEGIN INSERT INTO shared_changes(tree_id,data,version,deleted,pending,updated_at,actor) VALUES(NEW.id,NEW.data,NEW.version,NEW.deleted,NEW.pending,NEW.updated_at,NEW.actor); END;
 CREATE TRIGGER IF NOT EXISTS shared_update AFTER UPDATE ON shared_trees BEGIN INSERT INTO shared_changes(tree_id,data,version,deleted,pending,updated_at,actor) VALUES(NEW.id,NEW.data,NEW.version,NEW.deleted,NEW.pending,NEW.updated_at,NEW.actor); END;
+-- Histórico de origem e vínculos de duplicatas. Mesclar nunca apaga fotos/versões.
+CREATE TABLE IF NOT EXISTS shared_baselines(tree_id TEXT PRIMARY KEY,data TEXT NOT NULL,recorded_at TEXT NOT NULL,actor TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS shared_merges(source_id TEXT PRIMARY KEY,target_id TEXT NOT NULL,operation_id TEXT NOT NULL UNIQUE,source_version INTEGER NOT NULL,target_version INTEGER NOT NULL,created_at TEXT NOT NULL,actor TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS shared_merges_target ON shared_merges(target_id,source_id);
+CREATE TABLE IF NOT EXISTS shared_local_history(seq INTEGER PRIMARY KEY AUTOINCREMENT,tree_id TEXT NOT NULL,local_version TEXT NOT NULL,data TEXT NOT NULL,received_at TEXT NOT NULL,actor TEXT NOT NULL,UNIQUE(tree_id,local_version));
+CREATE INDEX IF NOT EXISTS shared_local_history_tree ON shared_local_history(tree_id,seq);
