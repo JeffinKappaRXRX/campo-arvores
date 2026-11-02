@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),R=require('../docs/gestao-risco.js');
+const base={clientesMax:6389,trecho:'T1',vendaval:'Não',clientes:5426};
+let r=R.calcular({...base,altura:20,distMT:3,distRede:8,especie:'GUAPURUVU',projecao:'SIM'});assert.equal(r.alcancaMT,'SIM');assert.equal(r.prob,40+10+10+10);
+r=R.calcular({...base,altura:6,distMT:4,distBT:4,especie:'OITI'});assert.equal(r.classe,'SEM RISCO');assert.equal(r.acao,'Sem ação');
+r=R.calcular({...base,altura:15,distMT:0,especie:'FÍCUS'});assert.equal(r.classe,'CRÍTICO');assert.equal(r.prob,40+20+10);assert.equal(r.acao,'Supressão (com compensação SEMEIA)');
+r=R.calcular({...base,altura:123,distMT:1,especie:'FÍCUS'});assert.equal(r.altura,12.3,'erro de digitação');
+r=R.calcular({...base,altura:null,distMT:0,especie:'OITI'});assert.equal(r.alcancaMT,'NÃO');assert.notEqual(r.classe,'SEM RISCO','copa encostada conta mesmo sem altura');
+r=R.calcular({...base,altura:18,distMT:1,dap:15,dapMedido:true,especie:'OITI'});assert(r.motivo.includes('alta e fina'));r=R.calcular({...base,altura:18,distMT:1,dap:15,dapMedido:false,especie:'OITI'});assert(!r.motivo.includes('alta e fina'),'DAP estimado não marca alta e fina');
+assert.equal(R.calcular({...base,altura:15,distMT:0,especie:'FÍCUS',trecho:'T3',clientes:100}).classe,'MÉDIO','impacto baixo reduz a prioridade');
+const dup=R.duplicatas([{id:'n',especies:'Oiti',lat:-9.9,lon:-67.8},{id:'m',especies:'Oiti',lat:-9.95,lon:-67.8},{id:'o',especies:'Mangueira',lat:-9.9,lon:-67.8}],[{id:'b',especies:'OITI, FÍCUS',pontos:[{lat:-9.90005,lon:-67.8}]}]);assert.equal(dup.get('n').id,'b');assert(dup.get('n').m<=8);assert(!dup.has('m'),'longe não é duplicata');assert(!dup.has('o'),'outra espécie ao lado não é duplicata');
+console.log('PASS risco do campo: fórmula, classes, ação, altura digitada errada, DAP estimado e duplicatas por espécie e distância.');
