@@ -1,4 +1,4 @@
-const assert=require('node:assert/strict'),R=require('../docs/gestao-risco.js');
+const assert=require('node:assert/strict'),R=require('../docs/campo-risco.js');
 const base={clientesMax:6389,trecho:'T1',vendaval:'Não',clientes:5426};
 let r=R.calcular({...base,altura:20,distMT:3,distRede:8,especie:'GUAPURUVU',projecao:'SIM'});assert.equal(r.alcancaMT,'SIM');assert.equal(r.prob,40+10+10+10);
 r=R.calcular({...base,altura:6,distMT:4,distBT:4,especie:'OITI'});assert.equal(r.classe,'SEM RISCO');assert.equal(r.acao,'Sem ação');
