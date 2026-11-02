@@ -135,3 +135,6 @@ article{border-radius:var(--radius);padding:22px;background:var(--surface)}h2{fo
 .record-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0}.record-pager span{font-size:12px;text-align:center}.inspection-pin-status{position:absolute;bottom:38px;left:10px;right:10px;z-index:600;margin:0;padding:7px 10px;border-radius:7px;background:var(--surface,#fff);color:var(--text,#183731);font-size:11px;pointer-events:none}.inspection-pin-status[hidden]{display:none!important}
 
 .inspection-tree-cluster{display:flex;align-items:center;justify-content:center;border:3px solid #fff;border-radius:50%;background:#11634f;color:#fff;box-shadow:0 2px 8px #0004;font-size:12px;font-weight:750}
+
+/* Compact network symbols; tree icons and all inspection interactions are retained. */
+.equipment-pin span{width:9px;height:9px;border-width:1px}.network-label.leaflet-tooltip{font-size:10px;padding:0 2px;max-width:150px;line-height:1.2}
