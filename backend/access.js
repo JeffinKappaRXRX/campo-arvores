@@ -18,13 +18,14 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
   if(request.method!=='POST')return response({error:'Use POST.'},405);if(Number(request.headers.get('content-length')||0)>2048)return response({error:'Solicitação grande demais.'},413);
   const ip=request.headers.get('CF-Connecting-IP')||'unknown',hash=b64(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(ip)))),bucket=Math.floor(Date.now()/60000),guard='login:'+hash+':'+bucket;const tries=Number(await env.LOGIN_GUARD.get(guard)||0);if(tries>=5)return response({error:'Muitas tentativas. Aguarde um minuto.'},429);try{await env.LOGIN_GUARD.put(guard,String(tries+1),{expirationTtl:120});}catch{return response({error:'Aguarde alguns segundos antes de tentar entrar novamente.'},429);}
   let data;try{const raw=await request.text();if(raw.length>2048)return response({error:'Solicitação inválida.'},413);data=JSON.parse(raw);}catch{return response({error:'Solicitação inválida.'},400);}
-  if(!await equalSecret(String(data.password||''),env.ADMIN_PASSWORD))return response({error:'Senha incorreta.'},401);return response({token:await issueSession(env),expiresIn:28800});
+  if(!await equalSecret(String(data.password||''),env.ADMIN_PASSWORD))return response({error:'Senha incorreta.'},401);const token=await issueSession(env),out=response({token,expiresIn:28800});out.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery',token,28800));return out;
  }
+ if(path==='/api/admin/logout'){if(request.method!=='POST')return response({error:'Use POST.'},405);const out=response({ok:true});out.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery','',0));return out;}
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
- const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env);
+ const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
  try{if(path==='/api/auth/start')authResult=new Response(null,{status:303,headers:{Location:CAMPO_AUTH_APP_ORIGIN+'/?login=senha','Cache-Control':'no-store'}});
- else if(path==='/api/auth/login')authResult=await campoPasswordLogin(request,env);
+ else if(path==='/api/auth/login'){authResult=await campoPasswordLogin(request,env);if(authResult.ok)authResult.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery','',0));}
  else if(path==='/api/auth/password')authResult=await campoChangePassword(request,env,identity);
  else if(path==='/api/auth/status')authResult=await campoAuthStatus(request,env,identity,bootstrapAdmin||identity?.user.role==='admin');
  else if(path==='/api/auth/logout')authResult=await campoAuthLogout(request,env,identity);

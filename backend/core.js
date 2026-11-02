@@ -120,6 +120,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
+ if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(/^\/api\/(?:admin\/(?:universe|audit|presence)|team\/presence)(?:[/?]|$)/.test(url.pathname))return adminControlAPI(request,env);
  if(url.pathname==='/api/map/search')return mapAddressSearch(request,env);
  if(url.pathname.startsWith('/api/shared/'))return sharedAPI(request,env);

@@ -9,7 +9,7 @@ async function checkCentralNetwork(update=false){
  try{const saved=await req('meta','readonly',s=>s.get('gpkgConfig'));if(saved&&!saved.centralSource&&!update){centralStatus('Rede deste aparelho ativa. Para trocar pela rede central, toque em Baixar rede do Drive.');return;}const r=await fetchCentralManifest(),m=await r.json();if(!r.ok){throw Error(m.error||'Origem indisponível');}centralNetworkManifest=m;
  if(saved?.centralSource?.revision===m.revision){centralStatus('Rede do Drive atualizada · '+m.name+' · disponível offline.');return;}
  if(!update){centralStatus('Rede disponível no Drive · '+(m.size/1048576).toFixed(1)+' MB. Toque em Baixar rede do Drive para baixar e integrar automaticamente.');return;}
- packageReady=false;ensurePackageWorker();centralStatus('Baixando '+m.name+' · '+(m.size/1048576).toFixed(1)+' MB. Mantenha o aplicativo aberto. A preparação offline é automática.');packageWorker.postMessage({action:'import-remote',manifest:{...m,apiBase:window.CAMPO_CONFIG.apiBase}});workerStarted=true;
+ packageReady=false;ensurePackageWorker();centralStatus('Baixando '+m.name+' · '+(m.size/1048576).toFixed(1)+' MB. Mantenha o aplicativo aberto. A preparação offline é automática.');packageWorker.postMessage({action:'import-remote',manifest:{...m,apiBase:location.origin,adminSession:sessionStorage.getItem('campo-admin-session')||''}});workerStarted=true;
  }catch(e){centralStatus((e.name==='TimeoutError'?'A conexão com o Drive demorou demais. Toque novamente para tentar.':e.message)+' A base local e os cadastros foram preservados.');}
  finally{if(!workerStarted){centralNetworkBusy=false;centralButtons();}}
 }
@@ -26,6 +26,7 @@ function handleCentralPackageMessage(m){
 }
 $('updateCentralNetwork').onclick=()=>checkCentralNetwork(true);
 window.addEventListener('online',()=>checkCentralNetwork());
+window.addEventListener('campo-account-changed',()=>{if(window.CampoAccount?.verified?.())void checkCentralNetwork();});
 window.addEventListener('DOMContentLoaded',()=>{const quick=document.createElement('section');quick.className='central-network';quick.innerHTML='<button type="button" id="downloadNetworkOnMap" class="primary">Baixar rede do Drive</button><p id="quickCentralNetworkStatus" class="hint" role="status">Baixe a rede do diretório configurado para usar neste aparelho, inclusive offline.</p>';if($('mapMenu'))$('mapMenu').append(quick);$('downloadNetworkOnMap').onclick=()=>checkCentralNetwork(true);centralButtons();setTimeout(()=>{if(db)checkCentralNetwork();},1500);});
 
 function centralNetworkConfigured(config){if(typeof queueStreetPreparation==='function')queueStreetPreparation('GPKG preparado');if(!centralNetworkBusy){centralStatus('Rede deste aparelho preparada · '+config.count.toLocaleString('pt-BR')+' feições · disponível offline.');return;}centralNetworkBusy=false;centralButtons();centralStatus('Rede do Drive preparada · '+config.count.toLocaleString('pt-BR')+' feições · disponível offline.');}
