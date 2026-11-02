@@ -1,0 +1,29 @@
+// Base VERA corrigida: leitura restrita ao administrador; escrita só pelo envio local com VERA_SYNC_TOKEN.
+const VERA_GENERATION=/^[a-z0-9-]{8,40}$/,VERA_ID=/^[A-Za-z0-9_-]{1,40}$/,VERA_IMAGE=/^data:image\/jpeg;base64,[a-z0-9+/=]+$/i;
+const veraMissingTable=e=>/no such table/i.test(String(e?.message||e));
+async function veraMeta(db){const {results}=await db.prepare('SELECT key,value FROM vera_meta').all();return Object.fromEntries(results.map(r=>[r.key,r.value]));}
+async function veraAPI(request,env){try{
+ if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);if(request.method!=='GET')throw sharedError('Use GET para consultar a base VERA.',405);
+ const u=new URL(request.url),db=await adminDb(env);let meta;
+ try{meta=await veraMeta(db);}catch(e){if(veraMissingTable(e))return json({generation:null,updatedAt:null,total:0,trees:[]});throw e;}
+ const generation=meta.generation||null;
+ if(u.pathname==='/api/vera/meta')return json({generation,updatedAt:meta.updatedAt||null,total:Number(meta.total||0)});
+ if(u.pathname==='/api/vera/trees'){if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,updatedAt:meta.updatedAt||null,total:results.length,trees:results.map(r=>JSON.parse(r.data))});}
+ if(u.pathname==='/api/vera/photo'){const id=u.searchParams.get('id')||'';if(!VERA_ID.test(id))throw sharedError('ID inválido.');const row=await db.prepare('SELECT image FROM vera_thumbs WHERE id=?').bind(id).first();if(!row)throw sharedError('Miniatura indisponível.',404);return json({image:row.image});}
+ throw sharedError('Consulta não encontrada.',404);
+}catch(e){return json({error:e.status?e.message:'Base VERA temporariamente indisponível.'},e.status||503);}}
+// Troca atômica: as linhas novas entram numa geração própria e o painel só passa a vê-las no commit.
+async function veraSync(request,env){try{
+ if(request.method!=='POST')return json({error:'Use POST.'},405);
+ if(!env.VERA_SYNC_TOKEN||env.VERA_SYNC_TOKEN.length<32)return json({error:'Envio VERA não configurado no Worker.'},503);
+ if(!await equalSecret((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env.VERA_SYNC_TOKEN))return json({error:'Token de envio inválido.'},401);
+ if(Number(request.headers.get('content-length')||0)>9000000)return json({error:'Lote grande demais.'},413);
+ let body;try{body=await request.json();}catch{return json({error:'Solicitação inválida.'},400);}
+ const db=await adminDb(env),{action,generation}=body||{};
+ if(action==='thumb-ids'){const {results}=await db.prepare('SELECT id FROM vera_thumbs').all();return json({ids:results.map(r=>r.id)});}
+ if(action==='thumbs'){const items=body.items;if(!Array.isArray(items)||!items.length||items.length>40||!items.every(i=>VERA_ID.test(i?.id||'')&&typeof i.image==='string'&&i.image.length<300000&&VERA_IMAGE.test(i.image)))return json({error:'Miniaturas inválidas.'},400);await db.batch(items.map(i=>db.prepare('INSERT OR REPLACE INTO vera_thumbs(id,image) VALUES(?,?)').bind(i.id,i.image)));return json({saved:items.length});}
+ if(!VERA_GENERATION.test(generation||''))return json({error:'Geração inválida.'},400);
+ if(action==='rows'){const rows=body.rows;if(!Array.isArray(rows)||!rows.length||rows.length>500||!rows.every(r=>VERA_ID.test(r?.id||'')&&r.data&&typeof r.data==='object'))return json({error:'Linhas inválidas.'},400);const texts=rows.map(r=>JSON.stringify({...r.data,id:r.id}));if(texts.some(t=>t.length>16000))return json({error:'Linha grande demais.'},413);await db.batch(rows.map((r,i)=>db.prepare('INSERT OR REPLACE INTO vera_trees(generation,id,data) VALUES(?,?,?)').bind(generation,r.id,texts[i])));return json({saved:rows.length});}
+ if(action==='commit'){const total=Number(body.total),found=await db.prepare('SELECT COUNT(*) n FROM vera_trees WHERE generation=?').bind(generation).first();if(!Number.isSafeInteger(total)||total<1||found.n!==total)return json({error:'Envio incompleto: '+found.n+' de '+body.total+' linhas.'},409);const set=(k,v)=>db.prepare('INSERT OR REPLACE INTO vera_meta(key,value) VALUES(?,?)').bind(k,String(v)),now=new Date().toISOString();await db.batch([set('generation',generation),set('updatedAt',now),set('total',total),db.prepare('DELETE FROM vera_trees WHERE generation<>?').bind(generation),db.prepare('DELETE FROM vera_thumbs WHERE id NOT IN (SELECT id FROM vera_trees WHERE generation=?)').bind(generation)]);return json({generation,total,updatedAt:now});}
+ return json({error:'Ação desconhecida.'},400);
+}catch(e){if(veraMissingTable(e))return json({error:'Aplique backend/vera-schema.sql no D1 antes do primeiro envio.'},503);return json({error:e.status?e.message:'Envio VERA temporariamente indisponível.'},e.status||503);}}
