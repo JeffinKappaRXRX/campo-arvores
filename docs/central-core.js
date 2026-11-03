@@ -16,6 +16,7 @@ const Central=(()=>{
  const uteisDesde=(txt,agora=new Date())=>{const hoje=Date.UTC(agora.getFullYear(),agora.getMonth(),agora.getDate());let n=0;for(let d=Date.parse(String(txt).slice(0,10)+'T00:00:00Z')+DIA;d<=hoje;d+=DIA){const w=new Date(d).getUTCDay();if(w&&w<6)n++;}return n;};
  const rotina=(fontes,agora)=>(fontes||[]).map(s=>{const uteis=s.data?uteisDesde(s.data,agora):null,prazo=s.prazo??null,sit=!s.data?'Ausente':prazo==null?'Sem prazo':uteis<prazo?'Em dia':uteis<prazo*2?'Extrair':'Atrasada';return {...s,uteis,sit,pendente:sit==='Ausente'||sit==='Extrair'||sit==='Atrasada'};});
  async function api(p,sinal){const r=await fetch(p,{cache:'no-store',credentials:'same-origin',signal:sinal});let d;try{d=await r.json();}catch{throw Error('Resposta inválida do servidor.');}if(!r.ok)throw Object.assign(Error(d.error||'Consulta não concluída.'),{status:r.status});return d;}
+ async function apiPost(p,corpo){const r=await fetch(p,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)});let d;try{d=await r.json();}catch{throw Error('Resposta inválida do servidor.');}if(!r.ok)throw Object.assign(Error(d.error||'Não foi possível salvar.'),{status:r.status});return d;}
  // Cache por geração no navegador: os arquivos só são baixados de novo quando a base muda.
  function banco(){return new Promise((ok,er)=>{const q=indexedDB.open('campoCentralV1',1);q.onupgradeneeded=()=>q.result.createObjectStore('arq');q.onsuccess=()=>ok(q.result);q.onerror=()=>er(q.error);});}
  async function cacheLe(k){try{const b=await banco();return await new Promise(ok=>{const q=b.transaction('arq').objectStore('arq').get(k);q.onsuccess=()=>ok(q.result||null);q.onerror=()=>ok(null);});}catch{return null;}}
@@ -53,5 +54,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,carregar,linhas,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();

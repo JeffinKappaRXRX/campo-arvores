@@ -24,6 +24,15 @@ let m=(await call('/api/central/meta',undefined,auth)).data;assert.equal(m.gener
 // Geração 2: durante o envio segue a anterior; no commit a antiga sai; quem pede a antiga é avisado.
 await sync({action:'part',generation:'cen-20261103',name:'resumo',part:0,data:'CCCC'});assert.equal((await call('/api/central/meta',undefined,auth)).data.generation,'cen-20261102');
 await sync({action:'commit',generation:'cen-20261103',manifest:{resumo:{parts:1,bytes:4}}});assert.equal((await call('/api/central/meta',undefined,auth)).data.generation,'cen-20261103');assert.equal((await call('/api/central/data?name=resumo&part=0&generation=cen-20261102',undefined,auth)).status,409);assert.equal(sql.prepare('SELECT COUNT(*) n FROM central_parts').get().n,1);
+// Solicitação de material: só administrador, com validação no servidor; o envio diário não apaga.
+const pd={tipo:'PD',mesPd:'2027-02',situacao:'Rascunho',obs:'teste',itens:[{cod:90404,desc:'CRUZETA',un:'PC',qtd:10}]};
+assert.equal((await call('/api/central/solicitacoes',pd)).status,401);assert.equal((await call('/api/central/solicitacoes',pd,inspector)).status,403);assert.equal((await call('/api/central/solicitacoes',undefined,inspector)).status,403);assert.equal((await call('/api/central/solicitacoes',pd,{bearer:token})).status,401);
+for(const ruim of [{...pd,mesPd:'2027-13'},{...pd,mesPd:undefined},{...pd,tipo:'X'},{...pd,situacao:'X'},{...pd,itens:[]},{...pd,itens:[{cod:'abc',qtd:1}]},{...pd,itens:[{cod:1,qtd:0}]},{...pd,itens:[{cod:1,qtd:-1}]},{...pd,itens:[{cod:1,qtd:1},{cod:1,qtd:2}]},{...pd,id:"x' OR 1"}])assert.equal((await call('/api/central/solicitacoes',ruim,auth)).status,400,JSON.stringify(ruim));
+const novaS=await call('/api/central/solicitacoes',pd,auth);assert.equal(novaS.status,200);assert.equal((await call('/api/central/solicitacoes',{...pd,tipo:'AVULSA',mesPd:'lixo',itens:[{cod:5,qtd:1.5}]},auth)).status,200,'avulsa não usa mês');
+let ls=(await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoes;assert.equal(ls.length,2);assert.equal(ls.find(x=>x.tipo==='AVULSA').mesPd,null);assert.equal(ls.find(x=>x.tipo==='PD').itens[0].qtd,10);
+assert.equal((await call('/api/central/solicitacoes',{...pd,id:novaS.data.id,situacao:'Enviada',itens:[{cod:90404,qtd:20}]},auth)).status,200);ls=(await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoes;assert.equal(ls.find(x=>x.id===novaS.data.id).situacao,'Enviada');assert.equal(ls.find(x=>x.id===novaS.data.id).itens[0].qtd,20);
+assert.equal((await call('/api/central/solicitacoes',{...pd,id:'00000000-0000-4000-8000-000000000000'},auth)).status,404);
+await sync({action:'part',generation:'cen-20261104',name:'resumo',part:0,data:'DDDD'});await sync({action:'commit',generation:'cen-20261104',manifest:{resumo:{parts:1,bytes:4}}});assert.equal((await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoes.length,2);
 // O VERA não é tocado por este envio.
 assert.equal((await call('/api/vera/trees',undefined,auth)).status,200);
 console.log('central ok');
