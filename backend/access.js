@@ -14,6 +14,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<14||!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32||!env.LOGIN_GUARD)return response({error:'Configure administrador e LOGIN_GUARD no Worker.'},503);
  if(path==='/api/vera/sync'){const out=await veraSync(request,env);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
+ if(path==='/api/central/sync'){const out=await centralSync(request,env);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
  // The password is retained for initial administrator provisioning and recovery.
  if(url.pathname==='/api/admin/login'){
   if(request.method!=='POST')return response({error:'Use POST.'},405);if(Number(request.headers.get('content-length')||0)>2048)return response({error:'Solicitação grande demais.'},413);
