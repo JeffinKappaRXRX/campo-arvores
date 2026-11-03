@@ -16,3 +16,11 @@ id = "COLE_O_ID_DO_NAMESPACE_KV"
 binding = "SHARED_DB"
 database_name = "campo-arvores-compartilhadas"
 database_id = "COLE_O_ID_DO_BANCO_D1"
+
+[[durable_objects.bindings]]
+name = "CAMPO_REALTIME"
+class_name = "CampoRealtime"
+
+[exports.CampoRealtime]
+type = "durable-object"
+storage = "sqlite"
