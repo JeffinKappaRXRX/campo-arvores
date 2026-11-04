@@ -15,3 +15,4 @@ html.dark{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:
 .alerta{background:#f9edd9;border:1px solid #e5cd9c;color:#805b29;padding:9px 13px;border-radius:8px;font-size:11px;margin-bottom:8px;line-height:1.5}.dark .alerta{background:#40301c;color:#eed8ac;border-color:#685334}.alerta.info{background:var(--soft);border-color:var(--line);color:var(--muted)}
 .lista{display:flex;flex-wrap:wrap;gap:5px}.lista button{min-height:26px;padding:3px 8px;font-size:10px;font-weight:500}.vazio{font-size:12px;color:var(--muted);padding:12px 0}
 @media(max-width:1100px){.duas{grid-template-columns:1fr}}@media(max-width:850px){.central-rail{position:relative}.filtros{position:static}main{padding:16px}}
+.embutida .central-rail{display:none}.embutida main{margin-left:0;max-width:none}

@@ -201,9 +201,9 @@ A mesclagem não apaga nem reescreve as pastas antigas e não chama admin_delete
 Verificações: `node backend/verify-history.mjs`, `tests/tree-history-ui.cjs`, `tests/local-history.cjs`, suíte existente de CJS, verificadores de controle/autenticação/admin/VERA/compartilhamento, builds e sintaxe. Fixtures em SQLite/IndexedDB em memória e QA visual fictício. Nenhuma árvore real foi mesclada ou apagada para testar ou publicar.
 
 
-## Central de poda, manutenção e orçamento (novembro de 2026)
+## Telas de poda, manutenção e orçamento no painel de gestão (novembro de 2026)
 
-Publicada em `/central.html`, para administradores, com o mesmo login do painel de gestão. O app de campo não muda. A abertura direta sem sessão pede a entrada pelo painel.
+Abrem dentro de `/gestao.html`, para administradores, pelo menu Poda + VERA, Manutenção e Orçamento, em endereços como `gestao.html#c-parque`. A `central.html` roda num quadro da mesma origem (`gestao-central.js`), sem misturar scripts nem filtros com as abas do painel; aberta sozinha, ela encaminha para o painel. O app de campo não muda.
 
 - **Telas de Poda + VERA:** parque por ID de poste, mapa unificado, árvores e equipe de poda, limpeza de faixa e meta de poda.
 - **Telas de Manutenção:** monitor, carteira, carteira de programação, programação, produção, plano ideal, cruzetas T1 e T2, data marco e premissas, resumo de OS, poda e SS, plano de medidas, valor da OS, equipes, avanço por chave, SS e inspeção, SOMA, metas M42, trafos, carregamento, reincidentes, ganho e DEC.
@@ -211,8 +211,8 @@ Publicada em `/central.html`, para administradores, com o mesmo login do painel 
 - **Dados:** não ficam neste repositório, que é público. Uma rotina local consolida as bases e envia só os valores derivados para o D1; a leitura passa por `/api/central/*`, restrita a administradores. O GPKG nunca vai ao servidor.
 - **Premissas:** a tela `#marcos` grava em `central_premissas`. A tabela nasce no primeiro salvamento, então não há migração a aplicar antes.
 - **Filtros:** filtro de lista marca várias opções, na central e no painel de gestão (inspetor, alimentador, classificação e pendências). Dentro do filtro vale qualquer opção marcada; entre filtros, o cruzamento. O painel repete o parâmetro na URL (`feeder=A&feeder=B`), e o pedido antigo com uma opção continua aceito. A camada de rede do mapa acompanha o filtro só com um alimentador marcado.
-- **Endereço do GitHub Pages:** `github.io/campo-arvores/` serve a raiz do repositório, cujo `index.html` encaminha para a página inicial do app de campo. A central e o painel se abrem pelos endereços do `README.md`.
+- **Endereço do GitHub Pages:** `github.io/campo-arvores/` serve a raiz do repositório, cujo `index.html` encaminha para a página inicial do app de campo. O painel se abre pelo endereço do `README.md`.
 
 Publique API e Pages juntos, como nas demais versões. Enviar um commit ao GitHub não atualiza o site.
 
-Validação: `node backend/verify-central.mjs`, `node backend/verify-control.mjs`, `node backend/verify-admin.mjs` e `node tests/central-filtros.cjs`.
+Validação: `node backend/verify-central.mjs`, `node backend/verify-control.mjs`, `node backend/verify-admin.mjs`, `node tests/central-filtros.cjs` e `node tests/gestao-central.cjs`.
