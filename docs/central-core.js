@@ -34,6 +34,8 @@ const Central=(()=>{
  function setGlobalFilters(f={}){filtrosGlobais={plano:String(f.plano||''),polo:String(f.polo||''),localidade:String(f.localidade||'')};}
  function agrupa(rows,chave,soma){const m=new Map();for(const r of rows){const k=chave(r);let a=m.get(k);if(!a){a={_k:k,_n:0};m.set(k,a);}a._n++;soma?.(a,r);}return [...m.values()];}
  const add=(a,k,v)=>{a[k]=(a[k]||0)+(+v||0);};
+ // Filtro de várias opções: vazio é tudo; a linha passa se estiver em qualquer opção marcada. Chave de manobra vale para os dois alimentadores (A, B).
+ const lista=f=>f==null||f===''?[]:(Array.isArray(f)?f:[f]).map(String),em=(f,v)=>{const l=lista(f),s=String(v??'');return !l.length||l.includes(s)||(s.includes(', ')&&s.split(', ').some(p=>l.includes(p)));},tem=(f,v)=>lista(f).includes(String(v)),um=f=>{const l=lista(f);return l.length===1?l[0]:'';},bin=(f,cond,sim='1',nao='0')=>{const l=lista(f);return !l.length||(cond?l.includes(sim):l.includes(nao));};
  const unicos=rows=>[...new Set(rows)].filter(Boolean).sort((x,y)=>String(x).localeCompare(String(y),'pt-BR',{numeric:true}));
  // Tabela com ordenação, página e CSV.
  function tabela(el,cols,rows,op={}){const est={k:op.ord??null,d:op.dir??-1,p:0},tam=op.pagina||50;const val=(c,r)=>typeof c.k==='function'?c.k(r):r[c.k];
@@ -60,5 +62,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {lista,em,tem,um,bin,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();

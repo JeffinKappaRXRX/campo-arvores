@@ -1,30 +1,30 @@
 'use strict';
-let angleSamples=[],angleZero=0,angleCaptureQuality={},lastAngleAt=0,pendingAngleCapture=null,angleCaptureTimer=null;
+let angleSamples=[],angleZero=0,angleCaptureQuality={},lastAngleAt=0,pendingAngleCapture=null,angleCaptureTimer=null,displayAngle=null;
 function cancelAngleCapture(){if(angleCaptureTimer!==null)clearTimeout(angleCaptureTimer);angleCaptureTimer=null;if(pendingAngleCapture){const b=$(pendingAngleCapture.button);b.disabled=false;b.textContent=pendingAngleCapture.label;}pendingAngleCapture=null;}
-function resetAngleSamples(cancel=true){angleSamples=[];lastAngleAt=0;liveAngle=null;if(cancel)cancelAngleCapture();}
+function resetAngleSamples(cancel=true){angleSamples=[];lastAngleAt=0;liveAngle=null;displayAngle=null;if(cancel)cancelAngleCapture();}
 function median(values){return CampoClinometer.median(values);}
 function angleWindowQuality(samples,now=performance.now()){return CampoClinometer.quality(samples,now);}
 function commitAngleCapture(input,button,quality){
  const angle=quality.angle-angleZero;if(Math.abs(angle)>=85){cancelAngleCapture();$('sensorinfo').textContent='Inclinação excessiva. Afaste-se para reduzir o ângulo da visada.';return;}
  cancelAngleCapture();if(input==='baseangle')invalidateGroundDistance();$(input).value=angle.toFixed(2);angleCaptureQuality[input]={spread:quality.spread,samples:quality.samples,rejected:quality.rejected||0,zeroOffset:angleZero,capturedAt:new Date().toISOString()};
- $(button).textContent=(input==='baseangle'?'Base: ':'Topo: ')+angle.toFixed(2)+'° ✓';$('sensorinfo').textContent=(input==='baseangle'?'Base':'Topo')+' capturado. '+(input==='baseangle'?'Mire agora o topo.':'Confira o resultado.')+' Mantenha a mesma posição de medição.';resetAngleSamples();calc();
+ $(button).textContent=(input==='baseangle'?'Base: ':'Topo: ')+angle.toFixed(2)+'° ✓';$('sensorinfo').textContent=(input==='baseangle'?'Base':'Topo')+' capturado'+(quality.relaxed?' com estabilização assistida':'')+'. '+(input==='baseangle'?'Mire agora o topo.':'Confira o resultado.')+' Mantenha a mesma posição de medição.';resetAngleSamples();calc();
 }
 function processAngleSample(e){
  if(!Number.isFinite(e.beta)||!Number.isFinite(e.gamma))return;
  const direction=Number(screen.orientation?.angle??window.orientation??0),roll=CampoClinometer.screenRoll(e.beta,e.gamma,direction);
  if(roll===null||Math.abs(roll)>15){resetAngleSamples(false);$('anglelive').textContent='Nivele lateralmente a mira';return;}
  const raw=CampoClinometer.elevation(e.beta,e.gamma),now=performance.now();if(raw===null||angleSamples.length&&now-angleSamples.at(-1).at<35)return;
- angleSamples.push({value:raw,at:now});angleSamples=angleSamples.filter(s=>now-s.at<=1600);lastAngleAt=now;
- const quality=angleWindowQuality(angleSamples,now);liveAngle=quality?quality.angle-angleZero:null;
- $('anglelive').textContent=(quality?liveAngle:raw-angleZero).toFixed(2)+'° · '+(quality?'estável':'estabilizando a mira');
+ angleSamples.push({value:raw,at:now});angleSamples=angleSamples.filter(s=>now-s.at<=2600);lastAngleAt=now;
+ const quality=angleWindowQuality(angleSamples,now),instant=quality?quality.angle-angleZero:raw-angleZero;displayAngle=displayAngle===null?instant:displayAngle*.82+instant*.18;liveAngle=quality?quality.angle-angleZero:null;
+ $('anglelive').textContent=(quality?liveAngle:displayAngle).toFixed(2)+'° · '+(quality?'estável':'estabilizando a mira');
  $('sensorinfo').textContent=quality?'Mire na base ou no topo e capture. A ampliação ajuda a posicionar a mira.':'Segure a mira imóvel. Aceita aparelho em pé ou deitado, com a tela nivelada.';
- if(pendingAngleCapture){const pending=pendingAngleCapture,fresh=angleWindowQuality(angleSamples.filter(s=>s.at>=pending.started),now);$('sensorinfo').textContent='Capturando '+(pending.input==='baseangle'?'base':'topo')+'… mantenha a mira imóvel.';if(fresh)commitAngleCapture(pending.input,pending.button,fresh);}
+ if(pendingAngleCapture){const pending=pendingAngleCapture,window=angleSamples.filter(s=>s.at>=pending.started),fresh=angleWindowQuality(window,now)||now-pending.started>2200&&CampoClinometer.quality(window,now,true);$('sensorinfo').textContent='Capturando '+(pending.input==='baseangle'?'base':'topo')+'… mantenha a mira imóvel.';if(fresh)commitAngleCapture(pending.input,pending.button,fresh);}
 }
 function captureStableAngle(input,button){
  if(!stream){$('sensorinfo').textContent='Ative a câmera traseira para capturar a inclinação. Ângulos manuais continuam disponíveis.';return;}
  const quality=angleWindowQuality(angleSamples);if(quality){commitAngleCapture(input,button,quality);return;}
  cancelAngleCapture();pendingAngleCapture={input,button,label:$(button).textContent,started:performance.now()};$(button).disabled=true;$(button).textContent='Estabilizando…';$('sensorinfo').textContent='Mantenha a mira na '+(input==='baseangle'?'base':'copa')+'. A captura ocorrerá ao estabilizar.';
- angleCaptureTimer=setTimeout(()=>{cancelAngleCapture();$('sensorinfo').textContent='Não estabilizou a tempo. Apoie o aparelho, aproxime-se ou use ângulos manuais.';},5000);
+ angleCaptureTimer=setTimeout(()=>{cancelAngleCapture();$('sensorinfo').textContent='Não estabilizou a tempo. Apoie o aparelho, aproxime-se ou use ângulos manuais.';},8000);
 }
 function groundDistance(cameraHeight,baseAngle){if(!Number.isFinite(cameraHeight)||cameraHeight<.3||cameraHeight>3||!Number.isFinite(baseAngle)||baseAngle> -5||baseAngle< -75)return null;return cameraHeight/Math.tan(-baseAngle*Math.PI/180);}
 $('estimateGroundDistance').onclick=()=>{
