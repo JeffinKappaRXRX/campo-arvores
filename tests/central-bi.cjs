@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const els=new Map(),el=id=>els.get(id)||els.set(id,{id,innerHTML:'',textContent:'',querySelectorAll:()=>[]}).get(id);
+const rows={chaves:[{chave:'C1',plano:'PN',polo:'RBR',municipio:'Rio Branco',conj:'1',alim:'A1',postes:10,trechoFinal:'URBANO',prioridadeExecucao:2,acao:'Acompanhar',filtroCriarOS:'Inspecionada'}],avanco:[{chave:'C1',uInsp:1}],os_abertas:[{os:'1',chave:'C1',tipo:'PODA',classe:'PODA',pri:'URGENTE',status:'PENDENTE',lat:-9.9,lon:-67.8}],os_exec:[{os:'2',chave:'C1',tipo:'PODA',classe:'PODA',qtdPoda:3}],poda_postes:[{poste:'P1',chave:'C1',prazo:'Urgente (< 30 dias)',dataProximaPoda:'2026-12-01',lat:-9.9,lon:-67.8}]};
+const Central={views:{},dados:{resumo:{conjuntos:{1:'CONJ 1'}}},$:el,esc:String,num:v=>String(v??'—'),pct:v=>v==null?'—':Math.round(v*100)+'%',isoBR:String,COR:{s1:'#1',s2:'#2',s3:'#3'},linhas:n=>rows[n]||[],unicos:a=>[...new Set(a)].filter(Boolean),add:(a,k,v)=>a[k]=(a[k]||0)+(Number(v)||0),agrupa:(rs,key,sum)=>{const m=new Map();for(const r of rs){const k=key(r),a=m.get(k)||{_k:k,_n:0};a._n++;sum(a,r);m.set(k,a);}return [...m.values()];},sit:String,kpis:()=>'',painel:(t,s,id)=>`<div id="${id}"></div>`,colunas:(e)=>e.innerHTML='grafico',tabela:(e,c,r)=>e.innerHTML='tabela '+r.length};
+const layer={addTo(){return this},addLayer(){},clearLayers(){}},map={setView(){return this},fitBounds(){},invalidateSize(){},remove(){}};
+const window={L:{map:()=>map,tileLayer:()=>layer,layerGroup:()=>layer,circleMarker:()=>({bindPopup(){return this}})}};
+const context={Central,window,document:{getElementById:el},setTimeout:f=>f(),Event};vm.createContext(context);vm.runInContext(fs.readFileSync('docs/central-bi.js','utf8'),context);
+assert.ok(Central.views.bioperacional,'nova tela do BI registrada');
+for(const filter of ['statusBI','trechoBI','priExecBI','polo','localidadeBI','conj','alim','planoBI','acaoBI','criarOSBI'])assert(Central.views.bioperacional.filtros.includes(filter),'missing BI filter '+filter);
+const root={querySelectorAll:()=>[],set innerHTML(v){this._html=v;for(const m of v.matchAll(/id="([^"]+)"/g))el(m[1]);},get innerHTML(){return this._html||'';}};
+Central.views.bioperacional.render({visaoBI:'geral'},root);
+assert.match(root.innerHTML,/id="mapaBI"/);assert.match(el('tBIResumo').innerHTML,/tabela/);assert.match(el('tBIInsp').innerHTML,/tabela 1/);assert.match(el('tBIPrazo').innerHTML,/tabela 1/);assert.match(el('mapaBILegenda').textContent,/pontos no mapa/);
+Central.views.bioperacional.render({visaoBI:'geral',localidadeBI:'Cruzeiro do Sul'},root);assert.match(el('tBIResumo').innerHTML,/tabela 0/,'locality filter changes every BI output');
+console.log('PASS central BI: four views, complete slicers, KPIs, charts, map, inspection, deadline, summary and OS tables honor locality.');

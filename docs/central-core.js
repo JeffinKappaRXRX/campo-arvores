@@ -1,7 +1,7 @@
 'use strict';
 // Base das telas de manutenção e orçamento: leitura da API, tabela, gráficos e formatação.
 const Central=(()=>{
- const dados={},objetos={},BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);
+ const dados={},objetos={},BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);let filtrosGlobais={},dimensoesCache=null;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const num=(v,d=0)=>v==null||Number.isNaN(v)?'—':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
  const brl=v=>v==null||Number.isNaN(v)?'—':'R$ '+num(v);
@@ -24,8 +24,14 @@ const Central=(()=>{
  async function cacheLimpa(geracao){try{const b=await banco();await new Promise(ok=>{const t=b.transaction('arq','readwrite'),s=t.objectStore('arq'),q=s.getAllKeys();q.onsuccess=()=>{for(const k of q.result)if(!String(k).startsWith(geracao+':'))s.delete(k);};t.oncomplete=ok;t.onerror=ok;});}catch{}}
  function deBase64(s){const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
  async function baixar(nome,geracao,partes){const k=geracao+':'+nome;let bytes=await cacheLe(k);if(!bytes){const pedacos=[];for(let i=0;i<partes;i++)pedacos.push(deBase64((await api(`/api/central/data?name=${nome}&part=${i}&generation=${geracao}`)).body));bytes=await new Blob(pedacos).arrayBuffer();void cacheGrava(k,bytes);}const texto=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();return JSON.parse(texto);}
- async function carregar(meta,nomes,aviso){const faltam=nomes.filter(n=>!dados[n]&&meta.manifest[n]);await Promise.all(faltam.map(async n=>{aviso?.(n);dados[n]=await baixar(n,meta.generation,meta.manifest[n].parts);}));}
- function linhas(nome){if(objetos[nome])return objetos[nome];const t=dados[nome];if(!t)return [];const ch=Object.keys(t.c),cols=ch.map(c=>{const v=t.c[c];return Array.isArray(v)?v:v.i.map(i=>v.k[i]);}),o=new Array(t.n);for(let i=0;i<t.n;i++){const r={};for(let j=0;j<ch.length;j++)r[ch[j]]=cols[j][i];o[i]=r;}objetos[nome]=o;return o;}
+ async function carregar(meta,nomes,aviso){const faltam=nomes.filter(n=>!dados[n]&&meta.manifest[n]);await Promise.all(faltam.map(async n=>{aviso?.(n);dados[n]=await baixar(n,meta.generation,meta.manifest[n].parts);if(n==='chaves')dimensoesCache=null;}));}
+ function linhasRaw(nome){if(objetos[nome])return objetos[nome];const t=dados[nome];if(!t)return [];const ch=Object.keys(t.c),cols=ch.map(c=>{const v=t.c[c];return Array.isArray(v)?v:v.i.map(i=>v.k[i]);}),o=new Array(t.n);for(let i=0;i<t.n;i++){const r={};for(let j=0;j<ch.length;j++)r[ch[j]]=cols[j][i];o[i]=r;}objetos[nome]=o;return o;}
+ const norm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+ const primeiro=(r,ks)=>{for(const k of ks)if(r?.[k]!=null&&String(r[k]).trim()!=='')return r[k];return '';};
+ function indiceDimensoes(){if(dimensoesCache)return dimensoesCache;const porChave=new Map(),porAlim=new Map();for(const k of linhasRaw('chaves')){const chave=norm(primeiro(k,['chave','name','chaveOriginal','chave_original'])),alim=norm(primeiro(k,['alim','alimentador','alimentador_'])),d={plano:primeiro(k,['plano','planoConsolidado','plano_consolidado']),polo:primeiro(k,['polo','POLO']),localidade:primeiro(k,['localidade','municipio','município','mun'])};if(chave)porChave.set(chave,d);if(alim){let a=porAlim.get(alim);if(!a)porAlim.set(alim,a={plano:new Set(),polo:new Set(),localidade:new Set()});for(const x of ['plano','polo','localidade'])if(d[x])a[x].add(norm(d[x]));}}return dimensoesCache={porChave,porAlim};}
+ function valoresDimensao(r,dim,idx){const aliases={plano:['plano','planoConsolidado','plano_consolidado'],polo:['polo','POLO'],localidade:['localidade','municipio','município','mun']}[dim],direto=primeiro(r,aliases);if(direto)return new Set([norm(direto)]);const chave=norm(primeiro(r,['chave','name','chaveOriginal','chave_original'])),porChave=idx.porChave.get(chave);if(porChave?.[dim])return new Set([norm(porChave[dim])]);const alim=norm(primeiro(r,['alim','alimentador','alimentador_','ALIMENTADOR_']));return idx.porAlim.get(alim)?.[dim]||new Set();}
+ function linhas(nome){const rows=linhasRaw(nome),ativos=Object.entries(filtrosGlobais).filter(([,v])=>v);if(!ativos.length||nome==='chaves'&&!rows.length)return rows;const idx=indiceDimensoes();return rows.filter(r=>ativos.every(([dim,v])=>valoresDimensao(r,dim,idx).has(norm(v))));}
+ function setGlobalFilters(f={}){filtrosGlobais={plano:String(f.plano||''),polo:String(f.polo||''),localidade:String(f.localidade||'')};}
  function agrupa(rows,chave,soma){const m=new Map();for(const r of rows){const k=chave(r);let a=m.get(k);if(!a){a={_k:k,_n:0};m.set(k,a);}a._n++;soma?.(a,r);}return [...m.values()];}
  const add=(a,k,v)=>{a[k]=(a[k]||0)+(+v||0);};
  const unicos=rows=>[...new Set(rows)].filter(Boolean).sort((x,y)=>String(x).localeCompare(String(y),'pt-BR',{numeric:true}));
@@ -54,5 +60,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();

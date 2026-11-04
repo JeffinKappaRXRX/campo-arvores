@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const source=fs.readFileSync('docs/package-worker.js','utf8');
+const start=source.indexOf('async function importFile('),end=source.indexOf('\nlet remoteSource=',start),body=source.slice(start,end);
+assert(start>=0&&end>start,'importFile must exist');
+assert(body.indexOf('close();')<body.indexOf('pool.importDb('),'the previous SQLite handles must close before a streamed import');
+assert.match(body,/crypto\.randomUUID\(\)/,'temporary package names must not collide after a worker restart');
+assert.match(body,/sourceDb=new pool\.OpfsSAHPoolDb\(currentPath,'r'\)/,'a failed replacement must reopen the previous source');
+assert.match(body,/indexDb=new pool\.OpfsSAHPoolDb\(currentIndex,'r'\)/,'a failed replacement must reopen the previous spatial index');
+assert.match(source,/reserveMinimumCapacity\?\.\(12\)/,'existing OPFS pools must be enlarged for source, index and SQLite work files');
+console.log('PASS package open: closes old handles before import, collision-safe path, capacity reserve and previous-base recovery.');
