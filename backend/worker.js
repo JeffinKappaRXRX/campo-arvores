@@ -581,11 +581,26 @@ async function centralSolicitacoes(request,db){
  if(body.id!=null){if(!SOLIC_ID.test(String(body.id)))throw sharedError('Solicitação inválida.');const out=await db.prepare('UPDATE central_solicitacoes SET tipo=?,mes_pd=?,situacao=?,obs=?,itens=?,atualizado_em=? WHERE id=?').bind(s.tipo,s.mesPd,s.situacao,s.obs,JSON.stringify(s.itens),now,body.id).run();if(!out.meta?.changes)throw sharedError('Solicitação não encontrada.',404);return json({id:body.id,atualizadoEm:now});}
  const id=crypto.randomUUID();await db.prepare('INSERT INTO central_solicitacoes(id,tipo,mes_pd,situacao,obs,itens,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?)').bind(id,s.tipo,s.mesPd,s.situacao,s.obs,JSON.stringify(s.itens),now,now).run();return json({id,criadoEm:now});
 }
+// Data marco e premissas editadas na tela: sobrevivem ao envio diário e valem em qualquer computador.
+const PREM_CHAVE=/^[A-Za-z0-9_.\/ ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç-]{1,60}$/;
+async function centralPremissas(request,db){
+ if(request.method==='GET'){try{const {results}=await db.prepare('SELECT chave,valor,atualizado_em FROM central_premissas').all();return json({premissas:Object.fromEntries(results.map(r=>[r.chave,JSON.parse(r.valor)])),atualizadoEm:results.reduce((a,r)=>r.atualizado_em>a?r.atualizado_em:a,'')||null});}catch(e){if(centralMissingTable(e))return json({premissas:{},atualizadoEm:null});throw e;}}
+ if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
+ if(Number(request.headers.get('content-length')||0)>40000)throw sharedError('Premissas grandes demais.',413);
+ let body;try{body=await request.json();}catch{throw sharedError('Premissas inválidas.');}
+ const p=body?.premissas;if(!p||typeof p!=='object'||Array.isArray(p))throw sharedError('Premissas inválidas.');const itens=Object.entries(p);if(!itens.length||itens.length>200)throw sharedError('Envie de 1 a 200 premissas.');
+ for(const [k,v]of itens){if(!PREM_CHAVE.test(k))throw sharedError('Nome de premissa inválido.');if(v!==null&&!(typeof v==='number'&&Number.isFinite(v))&&!(typeof v==='string'&&v.length<=60))throw sharedError('Valor inválido em '+k+'.');}
+ // A tabela nasce no primeiro salvamento: não depende de aplicar o esquema à mão.
+ await db.prepare('CREATE TABLE IF NOT EXISTS central_premissas(chave TEXT PRIMARY KEY,valor TEXT NOT NULL,atualizado_em TEXT NOT NULL)').run();
+ const now=new Date().toISOString();await db.batch(itens.map(([k,v])=>v===null||v===''?db.prepare('DELETE FROM central_premissas WHERE chave=?').bind(k):db.prepare('INSERT OR REPLACE INTO central_premissas(chave,valor,atualizado_em) VALUES(?,?,?)').bind(k,JSON.stringify(v),now)));
+ return json({salvas:itens.length,atualizadoEm:now});
+}
 // Dados de gestão e orçamento: só administrador lê. Os arquivos vão comprimidos em partes e o navegador junta.
 async function centralAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
  const u=new URL(request.url),db=await adminDb(env);let meta;
  if(u.pathname==='/api/central/solicitacoes')return await centralSolicitacoes(request,db);
+ if(u.pathname==='/api/central/premissas')return await centralPremissas(request,db);
  if(request.method!=='GET')throw sharedError('Use GET.',405);
  try{meta=await centralMeta(db);}catch(e){if(centralMissingTable(e))return json({generation:null,updatedAt:null,manifest:{}});throw e;}
 

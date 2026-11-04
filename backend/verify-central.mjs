@@ -33,6 +33,13 @@ let ls=(await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoe
 assert.equal((await call('/api/central/solicitacoes',{...pd,id:novaS.data.id,situacao:'Enviada',itens:[{cod:90404,qtd:20}]},auth)).status,200);ls=(await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoes;assert.equal(ls.find(x=>x.id===novaS.data.id).situacao,'Enviada');assert.equal(ls.find(x=>x.id===novaS.data.id).itens[0].qtd,20);
 assert.equal((await call('/api/central/solicitacoes',{...pd,id:'00000000-0000-4000-8000-000000000000'},auth)).status,404);
 await sync({action:'part',generation:'cen-20261104',name:'resumo',part:0,data:'DDDD'});await sync({action:'commit',generation:'cen-20261104',manifest:{resumo:{parts:1,bytes:4}}});assert.equal((await call('/api/central/solicitacoes',undefined,auth)).data.solicitacoes.length,2);
+// Premissas: só administrador, valor inválido não entra e valor nulo apaga.
+assert.equal((await call('/api/central/premissas',{premissas:{a:1}})).status,401);assert.equal((await call('/api/central/premissas',{premissas:{a:1}},inspector)).status,403);
+assert.deepEqual((await call('/api/central/premissas',undefined,auth)).data.premissas,{});
+for(const ruim of [{},{premissas:[]},{premissas:{}},{premissas:{'x;drop':1}},{premissas:{a:{b:1}}},{premissas:{a:'x'.repeat(61)}}])assert.equal((await call('/api/central/premissas',ruim,auth)).status,400);
+assert.equal((await call('/api/central/premissas',{premissas:{marcoInsp:'2025-11-01',mesesNaoVera:6,'marco.CHAVE CRÍTICA':'2026-02-01'}},auth)).status,200);
+let pm=(await call('/api/central/premissas',undefined,auth)).data.premissas;assert.equal(pm.marcoInsp,'2025-11-01');assert.equal(pm.mesesNaoVera,6);assert.equal(pm['marco.CHAVE CRÍTICA'],'2026-02-01');
+await call('/api/central/premissas',{premissas:{marcoInsp:null}},auth);pm=(await call('/api/central/premissas',undefined,auth)).data.premissas;assert.equal(pm.marcoInsp,undefined);assert.equal(pm.mesesNaoVera,6);
 // O VERA não é tocado por este envio.
 assert.equal((await call('/api/vera/trees',undefined,auth)).status,200);
 console.log('central ok');
