@@ -2,6 +2,13 @@
 
 # Campo — inspeção de vegetação
 
+| Componente | Endereço |
+| --- | --- |
+| Aplicativo de inspeção | [Abrir app](https://mapeamento-arvores.pages.dev/) |
+| Painel de gestão | [Abrir painel](https://mapeamento-arvores.pages.dev/gestao.html) |
+| Central de poda, manutenção e orçamento | [Abrir central](https://mapeamento-arvores.pages.dev/central.html) |
+| Documentação técnica e publicações | [hosting/README.md](hosting/README.md) |
+
 Aplicativo para registro de árvores, mapa da rede, operação offline e sincronização.
 
 **Versão:** 4.1.0.

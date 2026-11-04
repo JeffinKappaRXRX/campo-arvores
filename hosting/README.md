@@ -199,3 +199,20 @@ O salvamento local usa uma transação records+meta no mesmo IndexedDB/versão j
 A mesclagem não apaga nem reescreve as pastas antigas e não chama admin_delete no receptor: permanecem arquivos históricos. O mapa, o painel e a prévia de risco consideram somente o ID ativo. Um consolidado/arquivo estático antigo no Drive pode continuar mostrando o registro antigo; ele não é a fonte da contagem ativa após mesclar. A versão atual criada pelo app de campo entra na fila normal de envio ao Drive, sujeita ao preenchimento exigido. Mesclar no painel altera a base central e seu histórico; não fabrica arquivos originais que estavam somente no aparelho do inspetor.
 
 Verificações: `node backend/verify-history.mjs`, `tests/tree-history-ui.cjs`, `tests/local-history.cjs`, suíte existente de CJS, verificadores de controle/autenticação/admin/VERA/compartilhamento, builds e sintaxe. Fixtures em SQLite/IndexedDB em memória e QA visual fictício. Nenhuma árvore real foi mesclada ou apagada para testar ou publicar.
+
+
+## Central de poda, manutenção e orçamento (novembro de 2026)
+
+Publicada em `/central.html`, para administradores, com o mesmo login do painel de gestão. O app de campo não muda. A abertura direta sem sessão pede a entrada pelo painel.
+
+- **Telas de Poda + VERA:** parque por ID de poste, mapa unificado, árvores e equipe de poda, limpeza de faixa e meta de poda.
+- **Telas de Manutenção:** monitor, carteira, carteira de programação, programação, produção, plano ideal, cruzetas T1 e T2, data marco e premissas, resumo de OS, poda e SS, plano de medidas, valor da OS, equipes, avanço por chave, SS e inspeção, SOMA, metas M42, trafos, carregamento, reincidentes, ganho e DEC.
+- **Telas de Orçamento e apoio:** SIGCO, riscos, OPEX, montador, preços, matriz, contratos, material e fontes.
+- **Dados:** não ficam neste repositório, que é público. Uma rotina local consolida as bases e envia só os valores derivados para o D1; a leitura passa por `/api/central/*`, restrita a administradores. O GPKG nunca vai ao servidor.
+- **Premissas:** a tela `#marcos` grava em `central_premissas`. A tabela nasce no primeiro salvamento, então não há migração a aplicar antes.
+- **Filtros:** filtro de lista marca várias opções, na central e no painel de gestão (inspetor, alimentador, classificação e pendências). Dentro do filtro vale qualquer opção marcada; entre filtros, o cruzamento. O painel repete o parâmetro na URL (`feeder=A&feeder=B`), e o pedido antigo com uma opção continua aceito. A camada de rede do mapa acompanha o filtro só com um alimentador marcado.
+- **Endereço do GitHub Pages:** `github.io/campo-arvores/` serve a raiz do repositório, cujo `index.html` encaminha para a página inicial do app de campo. A central e o painel se abrem pelos endereços do `README.md`.
+
+Publique API e Pages juntos, como nas demais versões. Enviar um commit ao GitHub não atualiza o site.
+
+Validação: `node backend/verify-central.mjs`, `node backend/verify-control.mjs`, `node backend/verify-admin.mjs` e `node tests/central-filtros.cjs`.
