@@ -21,6 +21,10 @@ database_id = "COLE_O_ID_DO_BANCO_D1"
 name = "CAMPO_REALTIME"
 class_name = "CampoRealtime"
 
+[[migrations]]
+tag = "campo-realtime-v1"
+new_sqlite_classes = ["CampoRealtime"]
+
 [exports.CampoRealtime]
 type = "durable-object"
 storage = "sqlite"
