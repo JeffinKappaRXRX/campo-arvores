@@ -278,21 +278,21 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
   <div class="wrap">
     <div class="hrow">
       <div class="brand">
-        <h1>Obras Estruturantes EAC 2026 — Avanço físico × Encerramento técnico</h1>
-        <p>Planejador de Obras (planilha) comparado aos cronogramas do MS Project (XML) · DCMD · <b>Encerramento técnico</b> = obra baixada no SIAGO depois da fiscalização e do TCI aprovados (último passo da obra)</p>
+        <h1>Obras Estruturantes EAC 2026</h1>
+        <p>Gestão integrada do avanço físico, dos prazos e do encerramento técnico do portfólio da DCMD.</p>
       </div>
       <div class="chips" id="chips"></div>
     </div>
     <div class="tabs" role="tablist">
-      <button class="tab" role="tab" aria-selected="true" data-tab="ger">Visão gerencial (Diretoria)</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="ana">Visão analítica (Planilha × XML e calibração)</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="adm">⚙ Administração</button>
+      <button class="tab" role="tab" aria-selected="true" data-tab="ger">Visão gerencial</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="ana">Visão analítica</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="adm">Gestão de escopo</button>
     </div>
     <div class="frow" id="gFilters">
       <label>Tipo de projeto <span class="seg" id="fTipo"><button data-v="ALL" aria-pressed="true">Todos</button><button data-v="PN" aria-pressed="false">PN</button><button data-v="OUTROS" aria-pressed="false">Outros</button></span></label>
       <label>GP <select id="fGp"><option value="">Todos</option></select></label>
       <label>Situação <select id="fVer"><option value="">Todas</option><option value="late">Vai extrapolar</option><option value="ideal">Só alcança com plano ideal</option><option value="ok">No prazo</option><option value="done">Encerrado</option></select></label>
-      <label>XML <select id="fXml"><option value="">Todos</option><option value="1">Com cronograma XML</option><option value="0">Sem cronograma XML</option></select></label>
+      <label>Project <select id="fXml"><option value="">Todos</option><option value="1">Com cronograma Project</option><option value="0">Sem cronograma Project</option></select></label>
       <input type="search" id="fQ" placeholder="Buscar SIGCO, projeto ou obra…">
       <button class="btn" id="btnReset">Limpar filtros</button>
       <button class="btn" id="btnTheme" title="Alternar tema">◐ Tema</button>
@@ -335,7 +335,7 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
   <section class="card">
     <div class="gh">
       <div><h2>Gantt por projeto — caminho até o encerramento técnico</h2>
-      <p class="sub">Cada linha mostra o que falta no projeto, puxado pela obra mais atrasada: <b>execução → fiscalização → encerramento técnico</b>. Barra que passa da linha vermelha (05/12) vai extrapolar. ◆ = data que o XML do Project ainda mostra.</p></div>
+      <p class="sub">Cada linha mostra o caminho crítico do projeto, considerando a obra mais atrasada: <b>execução → fiscalização → encerramento técnico</b>. Barras após a linha vermelha (05/12) indicam risco de extrapolação. ◆ = data registrada no Project.</p></div>
       <div class="seg" id="gOrd"><button data-v="risk" aria-pressed="true">Por risco</button><button data-v="date" aria-pressed="false">Por data</button><button data-v="gp" aria-pressed="false">Por GP</button></div>
     </div>
     <div class="legend">
@@ -343,9 +343,9 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
       <span><span class="sw" style="background:var(--c-fi)"></span>Fiscalização</span>
       <span><span class="sw" style="background:var(--c-en)"></span>Encerramento técnico (TCI + SIAGO)</span>
       <span><span class="sw" style="background:var(--crit)"></span>Obra suspensa/paralisada</span>
-      <span>◆ XML</span><span><b style="color:var(--accent)">▲</b> SIGPO previsto</span>
+      <span>◆ Project</span><span><b style="color:var(--accent)">▲</b> SIGPO previsto</span>
       <span><span class="sw" style="height:4px;vertical-align:2px;background:linear-gradient(90deg,var(--c-ex) 0 40%,var(--c-fi) 40% 70%,var(--c-en) 70%)"></span>faixa fina = plano ideal até 05/12</span>
-      <span class="muted">Recalibrar (etapa do XML): <span class="rc late">Exec.</span> término além do prazo ideal · <span class="rc warn">Fisc.</span> % ou data desatualizados · <span class="rc ok">XML ok</span></span>
+      <span class="muted">Recalibração do Project: <span class="rc late">Exec.</span> término além do prazo ideal · <span class="rc warn">Fisc.</span> avanço ou data desatualizados · <span class="rc ok">Project atualizado</span></span>
     </div>
     <div class="gantt" id="gantt"></div>
   </section>
@@ -367,21 +367,21 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
 
   <section>
     <h2>2 · Mapa de recalibração por etapa (MS Project)</h2>
-    <p class="sub">Uma linha por projeto, uma coluna por etapa. Cada célula diz o que digitar no Project: <b>% concluída</b> (XML → valor real da planilha) e <b>Término</b> (XML → prazo ideal). Clique na linha para ver o Gantt XML × recalibrado, os itens (WBS) e as obras.</p>
+    <p class="sub">Uma linha por projeto e uma coluna por etapa. Cada célula apresenta a atualização recomendada no Project: <b>% concluída</b> e <b>término</b>. Clique na linha para consultar o Gantt, os itens (WBS) e as obras.</p>
     <div class="gh">
       <div class="legend" style="margin:0">
         <span><span class="cl ok">✓</span> não mexer</span>
         <span><span class="cl warn">!</span> atualizar % ou término vencido</span>
         <span><span class="cl late">✕</span> término além do prazo ideal — antecipar</span>
-        <span><span class="cl na">—</span> etapa não existe no XML</span>
-        <span><b>Execução:</b> barra de baixo = <i>life</i> — físico da planilha (barra) × esperado hoje pelo XML (traço)</span>
+        <span><span class="cl na">—</span> etapa não existe no Project</span>
+        <span><b>Execução:</b> avanço físico realizado (barra) × esperado hoje no Project (traço)</span>
       </div>
       <div class="seg" id="fCal"><button data-v="" aria-pressed="true">Todos</button><button data-v="rec" aria-pressed="false">Precisa recalibrar</button><button data-v="late" aria-pressed="false">Prazo além do ideal</button></div>
     </div>
     <details class="inst"><summary><b>Como aplicar no Project</b> (4 passos)</summary>
       <ol>
         <li>Salve a linha de base atual (Linha de base 1) para manter a comparação com o plano original.</li>
-        <li>Projeto › Informações do projeto › <b>Data de status = 05/11/2026</b> (os XML estão com status de 31/08 a 30/09).</li>
+        <li>Projeto › Informações do projeto › atualize a <b>Data de status</b> para a data de referência do painel.</li>
         <li>Em cada célula amarela/vermelha, ajuste <b>% concluída</b> e <b>Término</b> nas tarefas da etapa (os WBS estão no detalhe do projeto).</li>
         <li>Na tarefa ENCERRAMENTO de cada obra, preencha <b>Data limite = 05/12/2026</b>.</li>
       </ol>
@@ -391,8 +391,8 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
   </section>
 
   <section>
-    <h2>3 · Comparação Planilha × XML por projeto</h2>
-    <p class="sub">Físico da planilha (regra da aba Avanço Gerencial) contra o % da etapa EXECUÇÃO do XML; encerramento técnico da planilha contra o % da etapa ENCERRAMENTO do XML; término previsto no XML contra a previsão recalculada com a situação real das obras.</p>
+    <h2>3 · Aderência do Project por projeto</h2>
+    <p class="sub">Compara o avanço físico, o encerramento técnico e os prazos registrados no Project com a situação atual das obras.</p>
     <div class="tw tall"><table id="tCmp"></table></div>
   </section>
 
@@ -401,7 +401,7 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
     <p class="sub" id="obSub"></p>
     <div class="card mancard">
       <h3>Lançar avanço físico manual</h3>
-      <p class="small" style="color:var(--text-2);margin:0">Digite o % físico na coluna <b>Físico manual</b> (obras não iniciadas, em execução, suspensas ou paralisadas — as demais já contam 100% pelo status SIAGO). O valor substitui a CURVA PROJEÇÃO da planilha, recalcula previsão, farol, visão gerencial e a calibração do Project, e fica guardado neste navegador até você clicar em <b>💾 Salvar alterações no arquivo</b> (no topo) — isso baixa o painel com os lançamentos gravados dentro dele; suba esse arquivo no SharePoint no lugar do anterior e todos passam a ver. Apague o campo para voltar ao valor da planilha. <b>⬇ Exportar planilha</b> gera o CSV com todas as obras para anexar.</p>
+      <p class="small" style="color:var(--text-2);margin:0">Informe o avanço físico das obras editáveis. O valor recalcula automaticamente as previsões, os indicadores gerenciais e a recomendação de atualização do Project. Apague o campo para voltar ao valor de origem.</p>
       <div class="frow">
         <label>Mostrar <select id="fMan"><option value="">Todas as obras</option><option value="ed">Só obras editáveis</option><option value="man">Só com lançamento manual</option></select></label>
         <span class="chip" id="manCount"></span>
@@ -415,8 +415,8 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
   </section>
 
   <section>
-    <h2>5 · Arquivos XML analisados</h2>
-    <p class="sub">Data de status, defasagem até hoje e SIGCOs encontrados em cada cronograma.</p>
+    <h2>5 · Cronogramas do Project</h2>
+    <p class="sub">Data de status, atualização e projetos relacionados a cada cronograma.</p>
     <div class="tw"><table id="tXml"></table></div>
     <p class="small" id="xmlOnly"></p>
   </section>
@@ -426,9 +426,9 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
     <ul class="note" id="method"></ul>
   </section>
 </div>
-<!-- ===================== ADMINISTRAÇÃO ===================== -->
+<!-- ===================== GESTÃO DE ESCOPO ===================== -->
 <div id="view-adm" class="hide">
-  <section class="card" id="srcCard" style="margin-bottom:18px">
+  <section class="card hide" id="srcCard" style="margin-bottom:18px">
     <h2>Fonte de dados — SIGPO e TCI (pasta de rede)</h2>
     <p class="small" style="color:var(--text-2);margin:4px 0 8px">O painel lê direto da pasta <b id="srcPath"></b> os arquivos <code>SIGPO_Obras_x_Status_C6-2-5.txt</code> (status da obra, datas previstas/realizadas, valores) e <code>SIAGO_TCI_por_Status_C5-2.txt</code> (apresentação, reapresentação, aprovação e reprovação do TCI). Conecte a pasta uma vez; nas próximas aberturas o painel relê sozinho os arquivos mais recentes. Se o navegador pedir, escolha <b>“Permitir em todas as visitas”</b>.</p>
     <div class="frow" style="padding:0">
@@ -445,32 +445,32 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
   </section>
 
   <section class="card mancard">
-    <h2>Administração — expurgar da contagem</h2>
-    <p class="small" style="color:var(--text-2);margin:4px 0 0">Projetos ou obras expurgados saem de <b>todas</b> as contas do painel: cartões, Gantt, prazos ideais, life, calibração e listas. Nada é apagado — a planilha e os XML continuam iguais, e o item volta com <b>Restaurar</b>. Os expurgos ficam neste navegador até você clicar em <b>💾 Salvar alterações no arquivo</b> no topo, que grava tudo dentro do HTML (suba esse arquivo no SharePoint). Esta aba não tem senha: quem abrir o arquivo consegue alterar.</p>
+    <h2>Gestão de escopo</h2>
+    <p class="small" style="color:var(--text-2);margin:4px 0 0">Projetos ou obras retirados do escopo deixam de compor os indicadores e análises do painel. Nenhum dado de origem é apagado e o item pode ser restaurado a qualquer momento.</p>
     <div class="frow">
       <span class="chip" id="exCount"></span>
-      <button class="btn" id="exExp">Exportar expurgos (CSV)</button>
+      <button class="btn" id="exExp">Exportar escopo (CSV)</button>
       <label class="btn" style="color:var(--text-2)">Importar CSV<input type="file" id="exImp" accept=".csv,text/csv" hidden></label>
       <button class="btn" id="exClr">Restaurar tudo</button>
     </div>
   </section>
 
   <section>
-    <h2>Expurgos ativos</h2>
-    <p class="sub">O que está fora da contagem agora, com motivo e data.</p>
+    <h2>Itens fora do escopo</h2>
+    <p class="sub">Projetos e obras que não compõem os indicadores atuais, com motivo e data.</p>
     <div class="tw"><table id="tExAct"></table></div>
   </section>
 
   <section>
     <h2>Projetos (SIGCO)</h2>
-    <p class="sub">Expurgar o projeto tira todas as obras dele da contagem.</p>
+    <p class="sub">Retirar um projeto do escopo remove todas as suas obras dos indicadores.</p>
     <div class="frow" style="padding-top:0"><input type="search" id="aQp" placeholder="Filtrar projeto, SIGCO ou GP…"></div>
     <div class="tw tall"><table id="tExProj"></table></div>
   </section>
 
   <section>
     <h2>Obras</h2>
-    <p class="sub">Para expurgar obras específicas (ex.: canceladas na prática, fora do escopo de 2026, duplicadas). Busque pelo número da obra, SIGCO, município ou status.</p>
+    <p class="sub">Use esta opção para obras específicas fora do escopo de 2026 ou duplicadas. Busque pelo número da obra, SIGCO, município ou status.</p>
     <div class="frow" style="padding-top:0"><input type="search" id="aQo" placeholder="Obra, SIGCO, município ou status…">
       <label>Mostrar <select id="aFo"><option value="">Todas</option><option value="nao">Não iniciadas</option><option value="blk">Suspensas / paralisadas</option><option value="late">Que vão extrapolar</option></select></label></div>
     <div class="tw tall"><table id="tExObra"></table></div>
@@ -480,7 +480,7 @@ input.exmot{font:inherit;font-size:12.5px;width:100%;min-width:160px;padding:5px
 </main>
 <div id="tip"></div><div id="toast" role="status"></div>
 
-<script id="estadoSalvo" type="application/json">{"man":{"112500276":{"v":50,"t":"2026-11-05T19:53:45.965Z"},"112500358":{"v":0,"t":"2026-11-05T19:53:34.809Z"},"112500360":{"v":55,"t":"2026-11-05T19:53:49.329Z"},"112500382":{"v":0,"t":"2026-11-05T19:53:42.013Z"},"112500391":{"v":100,"t":"2026-11-05T19:53:05.840Z"},"112500394":{"v":100,"t":"2026-11-05T19:53:11.490Z"},"112500410":{"v":100,"t":"2026-11-05T19:53:14.852Z"},"112500567":{"v":100,"t":"2026-11-05T19:53:20.351Z"},"112600009":{"v":80,"t":"2026-11-05T19:46:52.942Z"},"112600010":{"v":95,"t":"2026-11-05T19:55:47.343Z"},"112600015":{"v":40,"t":"2026-11-05T19:48:36.282Z"},"212503944":{"v":80,"t":"2026-11-05T16:50:31.812Z"},"212600447":{"v":100,"t":"2026-11-05T16:45:20.053Z"}},"ex":{"proj":{"29105":{"t":"2026-11-05T17:00:07.126Z","motivo":""},"29193":{"t":"2026-11-05T17:00:13.871Z","motivo":""},"29196":{"t":"2026-11-05T17:00:15.849Z","motivo":""},"29206":{"t":"2026-11-05T17:00:17.398Z","motivo":""},"29407":{"t":"2026-11-05T17:00:18.816Z","motivo":""},"29506":{"t":"2026-11-05T17:00:21.328Z","motivo":""},"31038":{"t":"2026-11-05T17:00:23.200Z","motivo":""},"37450":{"t":"2026-11-05T17:00:32.646Z","motivo":""},"37622":{"t":"2026-11-05T17:00:37.406Z","motivo":""},"37623":{"t":"2026-11-05T17:00:40.662Z","motivo":""},"40342":{"t":"2026-11-05T17:00:44.586Z","motivo":""},"48208":{"t":"2026-11-05T17:01:06.537Z","motivo":""},"52712":{"t":"2026-11-05T17:01:02.568Z","motivo":""},"55034":{"t":"2026-11-05T17:00:56.104Z","motivo":""},"63776":{"t":"2026-11-05T17:01:24.329Z","motivo":""},"78140":{"t":"2026-11-05T17:01:30.726Z","motivo":""},"78141":{"t":"2026-11-05T17:01:33.310Z","motivo":""},"80778":{"t":"2026-11-05T17:01:45.931Z","motivo":""}},"obra":{}},"src":null,"saved":"2026-11-05T22:46:31.808894+00:00"}</script>
+<script id="estadoSalvo" type="application/json">{"man":{"112500276":{"v":50,"t":"2026-11-05T19:53:45.965Z"},"112500358":{"v":0,"t":"2026-11-05T19:53:34.809Z"},"112500360":{"v":55,"t":"2026-11-05T19:53:49.329Z"},"112500382":{"v":0,"t":"2026-11-05T19:53:42.013Z"},"112500391":{"v":100,"t":"2026-11-05T19:53:05.840Z"},"112500394":{"v":100,"t":"2026-11-05T19:53:11.490Z"},"112500410":{"v":100,"t":"2026-11-05T19:53:14.852Z"},"112500567":{"v":100,"t":"2026-11-05T19:53:20.351Z"},"112600009":{"v":80,"t":"2026-11-05T19:46:52.942Z"},"112600010":{"v":95,"t":"2026-11-05T19:55:47.343Z"},"112600015":{"v":40,"t":"2026-11-05T19:48:36.282Z"},"212503944":{"v":80,"t":"2026-11-05T16:50:31.812Z"},"212600447":{"v":100,"t":"2026-11-05T16:45:20.053Z"}},"ex":{"proj":{"29105":{"t":"2026-11-05T17:00:07.126Z","motivo":""},"29193":{"t":"2026-11-05T17:00:13.871Z","motivo":""},"29196":{"t":"2026-11-05T17:00:15.849Z","motivo":""},"29206":{"t":"2026-11-05T17:00:17.398Z","motivo":""},"29407":{"t":"2026-11-05T17:00:18.816Z","motivo":""},"29506":{"t":"2026-11-05T17:00:21.328Z","motivo":""},"31038":{"t":"2026-11-05T17:00:23.200Z","motivo":""},"37450":{"t":"2026-11-05T17:00:32.646Z","motivo":""},"37622":{"t":"2026-11-05T17:00:37.406Z","motivo":""},"37623":{"t":"2026-11-05T17:00:40.662Z","motivo":""},"40342":{"t":"2026-11-05T17:00:44.586Z","motivo":""},"48208":{"t":"2026-11-05T17:01:06.537Z","motivo":""},"52712":{"t":"2026-11-05T17:01:02.568Z","motivo":""},"55034":{"t":"2026-11-05T17:00:56.104Z","motivo":""},"63776":{"t":"2026-11-05T17:01:24.329Z","motivo":""},"78140":{"t":"2026-11-05T17:01:30.726Z","motivo":""},"78141":{"t":"2026-11-05T17:01:33.310Z","motivo":""},"80778":{"t":"2026-11-05T17:01:45.931Z","motivo":""}},"obra":{}},"src":null,"saved":"2026-11-05T22:57:22.144550+00:00"}</script>
 <script>
 const EMB = (()=>{ try{ return JSON.parse(document.getElementById('estadoSalvo').textContent)||{}; }catch(e){ return {}; } })();
 const TSKEY='eac_obras_estruturantes_estado_ts_v1';
@@ -827,8 +827,8 @@ function exSummary(){
 }
 function chips(){
   const stale = D.programs.map(p=>p.stale);
-  const shChip = SHARED ? `<span class="chip savebtn on" data-tip="${SHARED.canWrite?'Cada lançamento de físico manual, expurgo ou atualização do SIGPO/TCI é gravado na hora e aparece para todos que estão com o painel aberto.':'Você está com acesso só de leitura: vê os lançamentos de todos em tempo real, mas não altera.'}">🟢 ${SHARED.canWrite?'Compartilhado · salva para todos em tempo real':'Compartilhado · só leitura'}</span>` : '';
-  const saveChip = SHARED ? '' : `<span class="chip savebtn on" data-tip="Lançamentos de físico e expurgos são gravados automaticamente neste navegador, sem precisar ligar ou baixar arquivo.">💾 Arquivo salvo automaticamente <b>${fmtDT(LAST_SAVED)}</b></span>`;
+  const shChip = SHARED ? `<span class="chip savebtn on" data-tip="${SHARED.canWrite?'Cada lançamento manual ou ajuste de escopo é gravado na hora e aparece para todos que estão com o painel aberto.':'Você está com acesso só de leitura: vê os lançamentos de todos em tempo real, mas não altera.'}">🟢 ${SHARED.canWrite?'Compartilhado · salva para todos em tempo real':'Compartilhado · só leitura'}</span>` : '';
+  const saveChip = SHARED ? '' : `<span class="chip savebtn on" data-tip="Lançamentos e ajustes de escopo são gravados automaticamente neste navegador.">💾 Arquivo salvo automaticamente <b>${fmtDT(LAST_SAVED)}</b></span>`;
   const exportChip = `<button class="chip savebtn" id="btnXls" data-tip="Planilha (CSV, abre no Excel) com todas as obras: status SIGPO, TCI, curva da planilha, físico manual, etapa, prazo ideal, previsão e veredito">⬇ Exportar planilha</button>`;
   const sourceChips = USE_SRC
     ? `<span class="chip srcbtn" data-tip="SIGPO incorporado automaticamente ao painel em ${fmtDT(SRC.meta.loaded)}">↻ SIGPO <b>${esc(SRC.meta.sigpo_mod)}</b></span><span class="chip srcbtn" data-tip="TCI incorporado automaticamente ao painel em ${fmtDT(SRC.meta.loaded)}">↻ TCI <b>${esc(SRC.meta.tci_mod)}</b></span>`
@@ -837,7 +837,7 @@ function chips(){
    <span class="chip">Data-base <b>${S.today}</b></span>
    <span class="chip alert">Meta encerramento técnico <b>${S.limite}</b></span>
    <span class="chip"><b>${S.wd_left}</b> dias úteis restantes</span>
-   <span class="chip">XML defasados <b>${Math.min(...stale)}–${Math.max(...stale)}</b> dias</span>${exSummary().n?`<span class="chip" style="background:var(--warn-bg);color:var(--warn-text)" data-tip="Ver aba Administração"><b>${exSummary().txt}</b> fora da contagem</span>`:''}${Object.keys(MAN).length?`<span class="chip" style="background:var(--s1-soft)"><b>${Object.keys(MAN).length}</b> lançamentos manuais de físico</span>`:''}`;
+   <span class="chip">Project desatualizado <b>${Math.min(...stale)}–${Math.max(...stale)}</b> dias</span>${exSummary().n?`<span class="chip" style="background:var(--warn-bg);color:var(--warn-text)" data-tip="Ver gestão de escopo"><b>${exSummary().txt}</b> fora do escopo</span>`:''}${Object.keys(MAN).length?`<span class="chip" style="background:var(--s1-soft)"><b>${Object.keys(MAN).length}</b> lançamentos manuais de físico</span>`:''}`;
 }
 
 // ---------- GERENCIAL ----------
@@ -860,7 +860,7 @@ function renderCards(ob, pr){
     card('late','<span class="dotst late">✕</span>','Vai extrapolar 05/12',cnt('late'),`projetos · ${oc('late')} obras`, gtxt?`Gargalo principal: ${gtxt}`:'—')+
     card('ideal','<span class="dotst ideal">!</span>','Em risco',cnt('ideal'),`projetos · ${oc('ideal')} obras`,`Só fecham se cada etapa cumprir o prazo ideal (execução ${S.ideal['EXECUÇÃO'].slice(0,5)}, fiscalização ${S.ideal['FISCALIZAÇÃO'].slice(0,5)})`)+
     card('ok','<span class="dotst ok">✓</span>','No prazo / encerrado',cnt('ok')+cnt('done'),`projetos · ${oc('ok')+oc('done')} obras`,`${oc('done')} obras já em encerramento técnico`)+
-    card('rec','<span class="dotst" style="background:var(--accent)">↻</span>','Recalibrar no Project',rc.length,`de ${wx.length} projetos com XML`,'Etapas com % ou término a ajustar:',
+    card('rec','<span class="dotst" style="background:var(--accent)">↻</span>','Recalibrar no Project',rc.length,`de ${wx.length} projetos com cronograma`,'Etapas com avanço ou término a ajustar:',
       `<div class="ch">${Object.entries(byK).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<span class="rc ${v.late?'late':'warn'}" data-tip="${v.n} projetos; ${v.late} com término além do ideal">${k} ${v.n}</span>`).join('')}</div>`);
 }
 document.addEventListener('click',e=>{ const c=e.target.closest('[data-card]'); if(!c) return; const v=c.dataset.card;
@@ -883,7 +883,7 @@ function renderTci(ob){
   const pool=ob.filter(o=>o.fis_done && !o.enc);
   const G=[['TCI PENDENTE','Pendente — não apresentado','var(--muted)'],['TCI APRESENTADO','Apresentado (em análise)','var(--ord4)'],['TCI REAPRESENTADO','Reapresentado (em análise)','var(--ord5)'],['TCI REPROVADO','Reprovado — corrigir','var(--crit)'],['TCI APROVADO','Aprovado — falta encerrar no SIAGO','var(--good)']];
   const c=G.map(g=>pool.filter(o=>o.tci===g[0]).length), sem=pool.filter(o=>!o.tci).length, mx=Math.max(1,...c);
-  $('#tciSub').innerHTML=`${pool.length} obras com físico concluído e ainda sem encerramento técnico · fonte: ${esc(SRC_FILES.tci)} (${esc(SRC.meta.tci_mod)})`;
+  $('#tciSub').innerHTML=`${pool.length} obras com avanço físico concluído e ainda sem encerramento técnico.`;
   $('#tciBars').innerHTML=G.map((g,i)=>`<div class="f" data-tip="${g[1]}: ${c[i]} obras"><span>${g[1]}</span><div class="bar"><i style="width:${c[i]/mx*100}%;background:${g[2]}"></i></div><span class="n">${c[i]}</span></div>`).join('')+(sem?`<p class="small">${sem} obra(s) sem registro de TCI.</p>`:'');
 }
 function renderPv(ob){
@@ -894,7 +894,7 @@ function renderPv(ob){
   const ini=ob.filter(o=>o.sg&&o.sg.ini).length, conc=ob.filter(o=>o.sg&&o.sg.conc).length;
   const orc=ob.reduce((a,o)=>a+((o.sg&&o.sg.orc)||0),0), real=ob.reduce((a,o)=>a+((o.sg&&o.sg.real)||0),0);
   const ch=ob.filter(o=>o.status_src==='SIGPO'&&o.status!==o.status_plan).length;
-  $('#pvSub').innerHTML=`Datas e valores do SIGPO para as obras ainda sem físico concluído · ${esc(SRC_FILES.sigpo)} (${esc(SRC.meta.sigpo_mod)})`;
+  $('#pvSub').innerHTML=`Prazos, realizações e valores das obras em andamento.`;
   const L=(k,v,s,c)=>`<div class="l" style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${k}${s?`<div class="small">${s}</div>`:''}</span><b style="font-variant-numeric:tabular-nums;${c?'color:'+c:''}">${v}</b></div>`;
   $('#pvBox').innerHTML=
     L('Término previsto já vencido e sem conclusão física',venc,`de ${pend.length} obras com previsão no SIGPO`,venc?'var(--crit-text)':'')+
@@ -930,9 +930,9 @@ function renderGantt(pr){
     if(end&&end>AX1) bars+=`<span class="endl" style="left:auto;right:-2px;color:var(--crit-text)">▸</span>`;
     if(p.verdict==='done') bars+=`<span class="endl" style="left:${xp(T)}%;color:var(--good-text)">✓ todas encerradas</span>`;
     if(p.sg_pfim){ const sdx=dParse(p.sg_pfim); if(sdx>=AX0) bars+=`<span class="xmlm" style="left:${xp(sdx)}%;color:var(--accent)" data-tip="SIGPO: término previsto da execução (obra mais tardia ainda sem físico concluído): ${p.sg_pfim}">▲</span>`; }
-    if(p.xml&&p.xml.enc_fin){ const xd=dParse(p.xml.enc_fin); if(xd>=AX0) bars+=`<span class="xmlm" style="left:${xp(xd)}%" data-tip="XML (Project) prevê encerramento em ${p.xml.enc_fin}<br>status do XML: ${p.xml.status}">◆</span>`; }
+    if(p.xml&&p.xml.enc_fin){ const xd=dParse(p.xml.enc_fin); if(xd>=AX0) bars+=`<span class="xmlm" style="left:${xp(xd)}%" data-tip="Project prevê encerramento em ${p.xml.enc_fin}<br>data de status: ${p.xml.status}">◆</span>`; }
     const gk=GARG_OF[p.garg];
-    const rec = !p.xml ? '<span class="rc na">sem XML</span>' : (p.recal.length? p.recal.map(r=>`<span class="rc ${r.cls}" data-tip="Recalibrar ${esc(r.lab)}:<br>${(r.acts||[]).map(esc).join('<br>')}">${r.sh}</span>`).join('') : '<span class="rc ok">XML ok</span>');
+    const rec = !p.xml ? '<span class="rc na">sem Project</span>' : (p.recal.length? p.recal.map(r=>`<span class="rc ${r.cls}" data-tip="Recalibrar ${esc(r.lab)}:<br>${(r.acts||[]).map(esc).join('<br>')}">${r.sh}</span>`).join('') : '<span class="rc ok">Project atualizado</span>');
     const pv=p.prev?dParse(p.prev):null;
     return `<div class="g-row" data-go="${p.sigco}">
       <div class="g-lab"><span class="dotst ${p.verdict}" aria-label="${VLAB[p.verdict]}">${VIC[p.verdict]}</span><div class="t"><b title="${esc(p.projeto)}">${p.sigco} · ${esc(p.projeto)}</b><small>${esc(p.gp)} · físico ${pct(p.fis_ger)} · encerradas ${p.enc}/${p.n}${(p.vc.late||0)?` · <span style="color:var(--crit-text);font-weight:650">${p.vc.late}/${p.n} obras extrapolam</span>`:(p.vc.ideal?` · <span style="color:var(--warn-text);font-weight:650">${p.vc.ideal}/${p.n} em risco</span>`:'')}</small></div></div>
@@ -975,7 +975,7 @@ function renderProjTable(pr){
     const prevLate = p.prev && dParse(p.prev) > LIM;
     return `<tr data-go="${p.sigco}" style="cursor:pointer">
       <td>${status(p.verdict)}</td><td class="n">${p.sigco}</td>
-      <td><div class="pname">${esc(p.projeto)}<small>${esc(p.gp)} · ${esc(p.tipo_proj)}${p.xml?'':' · sem XML'}</small></div></td>
+      <td><div class="pname">${esc(p.projeto)}<small>${esc(p.gp)} · ${esc(p.tipo_proj)}${p.xml?'':' · sem Project'}</small></div></td>
       <td class="n">${p.n}</td>
       <td>${mbar(p.fis_ger,'var(--s1)',`Avanço físico: ${pct(p.fis_ger)}<br>${p.fis_done} de ${p.n} obras com físico concluído`)}</td>
       <td>${mbar(p.enc_pct,'var(--s3)',`Encerramento técnico: ${p.enc} de ${p.n} obras`)}</td>
@@ -1005,15 +1005,15 @@ function renderGp(pr){
 // ---------- ANALÍTICA ----------
 function dcell(v){ if(v==null) return '<span class="delta z">—</span>'; const c=v<=-10?'neg':v>=10?'pos':'z'; return `<span class="delta ${c}">${v>0?'+':''}${v} p.p.</span>`; }
 function renderCmp(pr){
-  const cols=[{h:'SIGCO',k:'sigco'},{h:'Projeto (planilha) · GP',k:'projeto'},{h:'XML / status',k:'_stale'},{h:'Obras plan. / itens XML',k:'n',n:1},{h:'Físico plan.',k:'_fis',n:1},{h:'Execução XML',k:'_xe',n:1},{h:'Δ físico',k:'_d1',n:1},{h:'Encerradas (planilha)',k:'enc_pct',n:1},{h:'Encerr. XML',k:'_xc',n:1},{h:'Térm. encerr. XML',k:'_xf'},{h:'Térm. previsto SIGPO',k:'_sp'},{h:'Encerramento técnico previsto (real)',k:'prev_d'},{h:'Financeiro SIGPO',k:'_fin',n:1},{h:'Veredito',k:'_v'},{h:'Alertas',k:''}];
+  const cols=[{h:'SIGCO',k:'sigco'},{h:'Projeto · GP',k:'projeto'},{h:'Project / status',k:'_stale'},{h:'Obras / itens Project',k:'n',n:1},{h:'Avanço físico',k:'_fis',n:1},{h:'Execução Project',k:'_xe',n:1},{h:'Desvio físico',k:'_d1',n:1},{h:'Encerradas',k:'enc_pct',n:1},{h:'Encerr. Project',k:'_xc',n:1},{h:'Térm. encerr. Project',k:'_xf'},{h:'Térm. previsto SIGPO',k:'_sp'},{h:'Encerramento técnico previsto',k:'prev_d'},{h:'Financeiro SIGPO',k:'_fin',n:1},{h:'Situação',k:'_v'},{h:'Alertas',k:''}];
   let rows=pr.map(p=>{ const x=p.xml; return {...p,_stale:x?x.stale:null,_fis:p.fis_ger,_xe:x?x.exec_pct:null,_d1:(x&&x.exec_pct!=null&&p.fis_ger!=null)?Math.round(p.fis_ger*100)-x.exec_pct:null,_xc:x?x.enc_pct:null,_xf:x&&x.enc_fin?dParse(x.enc_fin).getTime():null,_sp:p.sg_pfim?dParse(p.sg_pfim).getTime():null,_fin:p.sg_orc?p.sg_real/p.sg_orc:null,_v:VORD[p.verdict]}; });
   const s=st.sort.tCmp; rows = s? sortRows(rows,s.k,s.d) : rows.sort((a,b)=>(b.xml?1:0)-(a.xml?1:0) || a._v-b._v || a.sigco-b.sigco);
   $('#tCmp').innerHTML=headers('tCmp',cols)+'<tbody>'+rows.map(p=>{ const x=p.xml; const fl=[];
-    if(!x) fl.push('<span class="flag y">Sem cronograma XML</span>');
-    if(x && x.stale>45) fl.push(`<span class="flag y">XML ${x.stale} dias sem atualizar</span>`);
-    if(p.name_div) fl.push(`<span class="flag r" data-tip="XML: ${esc(x.sig_name)}">Nome/alimentador diverge</span>`);
-    if(p._d1!=null && Math.abs(p._d1)>=20) fl.push(`<span class="flag r">Físico ≠ XML (${p._d1>0?'+':''}${p._d1} p.p.)</span>`);
-    if(x && x.enc_ok && p.verdict==='late') fl.push('<span class="flag r">XML diz que fecha; realidade não</span>');
+    if(!x) fl.push('<span class="flag y">Sem cronograma Project</span>');
+    if(x && x.stale>45) fl.push(`<span class="flag y">Project há ${x.stale} dias sem atualizar</span>`);
+    if(p.name_div) fl.push(`<span class="flag r" data-tip="Project: ${esc(x.sig_name)}">Nome/alimentador divergente</span>`);
+    if(p._d1!=null && Math.abs(p._d1)>=20) fl.push(`<span class="flag r">Físico ≠ Project (${p._d1>0?'+':''}${p._d1} p.p.)</span>`);
+    if(x && x.enc_ok && p.verdict==='late') fl.push('<span class="flag r">Project indica conclusão, mas a situação atual não</span>');
     if(p.desat) fl.push(`<span class="flag b">${p.desat} obra(s) curva 100% c/ SIAGO em construção</span>`);
     if(p.st_changed) fl.push(`<span class="flag y">${p.st_changed} obra(s) mudaram de status no SIGPO</span>`);
     if(p.blocked) fl.push(`<span class="flag r">${p.blocked} suspensa/paralisada</span>`);
@@ -1043,19 +1043,19 @@ function execLife(p){
   if(L.proj){ L.dXml=Math.round((L.proj-f)/864e5); L.dIdeal=Math.round((L.proj-ideal)/864e5); }
   const late = L.proj ? L.proj>f : (elR>0);
   if(real==null){ L.cls=late?'late':'na'; L.tag='Sem curva física na planilha'; }
-  else if(!late && L.gap>=-2){ L.cls='ok'; L.tag='Alcança o prazo do XML'; }
+  else if(!late && L.gap>=-2){ L.cls='ok'; L.tag='Alcança o prazo do Project'; }
   else if(!late || L.gap>=-10){ L.cls='warn'; L.tag='Atenção — abaixo do esperado'; }
-  else { L.cls='late'; L.tag = L.proj ? `Estoura o término do XML em ${L.dXml} dias` : 'Sem avanço — vai estourar o XML'; }
+  else { L.cls='late'; L.tag = L.proj ? `Ultrapassa o término do Project em ${L.dXml} dias` : 'Sem avanço — risco de ultrapassar o Project'; }
   const fd = d => (d-f)/864e5>365 ? `após ${fmtD(d)}` : fmtD(d);
   L.txt = (real==null?'Lance o físico manual das obras para medir o ritmo real. ':'') +
-    (L.proj ? `Previsão de fim da execução (obra mais atrasada, ritmo atual): <b>${fd(L.proj)}</b> — XML prevê ${s.finish}${L.dXml>0?` (<b style="color:var(--crit-text)">+${L.dXml} dias</b>)`:' ✓'} · prazo ideal ${S.ideal['EXECUÇÃO'].slice(0,5)}${L.dIdeal>0?` (+${L.dIdeal} dias)`:' ✓'}.`
-            : `O XML esperava ${esp}% hoje e não há avanço físico para projetar.`);
+    (L.proj ? `Previsão de fim da execução (obra mais atrasada, ritmo atual): <b>${fd(L.proj)}</b> — Project prevê ${s.finish}${L.dXml>0?` (<b style="color:var(--crit-text)">+${L.dXml} dias</b>)`:' ✓'} · prazo ideal ${S.ideal['EXECUÇÃO'].slice(0,5)}${L.dIdeal>0?` (+${L.dIdeal} dias)`:' ✓'}.`
+            : `O Project esperava ${esp}% hoje e não há avanço físico para projetar.`);
   return L;
 }
 function lifeBar(L,small){
   const r=L.real==null?0:Math.min(100,L.real);
   const col={ok:'var(--good)',warn:'var(--warn)',late:'var(--crit)',na:'var(--muted)'}[L.cls];
-  return `<div class="lb${small?' sm':''}" data-tip="Físico planilha: ${L.real==null?'sem curva':L.real+'%'}<br>Esperado pelo XML hoje: ${L.esp}%<br>% no XML: ${L.xmlpct}%${L.proj?`<br>Projeção término: ${fmtD(L.proj)}`:''}"><div class="lt"><i style="width:${r}%;background:${col}"></i><b style="left:${L.esp}%"></b></div></div>`;
+  return `<div class="lb${small?' sm':''}" data-tip="Avanço físico: ${L.real==null?'sem curva':L.real+'%'}<br>Esperado pelo Project hoje: ${L.esp}%<br>% no Project: ${L.xmlpct}%${L.proj?`<br>Projeção término: ${fmtD(L.proj)}`:''}"><div class="lt"><i style="width:${r}%;background:${col}"></i><b style="left:${L.esp}%"></b></div></div>`;
 }
 const IP_COLS=[['ex','Execução','var(--c-ex)'],['co','Comissionamento','var(--c-ex)'],['fi','Fiscalização aprovada','var(--c-fi)'],['tci','TCI aprovado','var(--c-en)'],['et','Encerramento técnico','var(--c-en)']];
 function ipCell(ip,key){ if(ip.done) return '<td class="n muted">✓</td>'; const x=ip.stages.find(s=>s.key===key); if(!x) return '<td class="n muted" title="Etapa já cumprida ou inexistente">—</td>';
@@ -1082,13 +1082,13 @@ function renderMatrix(pr){
   const head=`<div class="mx-h"><div>Projeto</div>${CGROUPS.map(c=>`<div>${c[2]}<span class="ideal">${c[0]==='INI'?'devem estar 100%':'até o prazo ideal do projeto'}</span></div>`).join('')}</div>`;
   const rows=ps.map(p=>{ const x=p.xml;
     return `<details class="mx-r" id="mx-${p.sigco}"><summary>
-      <div class="mx-p"><span class="car">▶</span><span class="dotst ${p.verdict}" title="${VLAB[p.verdict]}">${VIC[p.verdict]}</span><div><b>${p.sigco} · ${esc(p.projeto)}</b><small>${esc(p.gp)} · XML ${esc(x.code)} de ${sd(x.status)} · físico ${pct(p.fis_ger)} × XML ${x.exec_pct??'—'}%</small></div></div>
+      <div class="mx-p"><span class="car">▶</span><span class="dotst ${p.verdict}" title="${VLAB[p.verdict]}">${VIC[p.verdict]}</span><div><b>${p.sigco} · ${esc(p.projeto)}</b><small>${esc(p.gp)} · Project ${esc(x.code)} de ${sd(x.status)} · físico ${pct(p.fis_ger)} × Project ${x.exec_pct??'—'}%</small></div></div>
       ${CGROUPS.map(c=>{ const h=cellH(groupCell(p,c[0])); if(c[0]!=='EXECUÇÃO') return h; const L=execLife(p); if(!L) return h; return h.replace(/<\/div>$/, `<div class="lifemini"><span class="cl ${L.cls}" style="width:13px;height:13px;font-size:8px">${{ok:'✓',warn:'!',late:'✕',na:'—'}[L.cls]}</span>físico ${L.real==null?'—':L.real+'%'} × esperado ${L.esp}%</div>${lifeBar(L,true)}</div>`); }).join('')}</summary>
       <div class="mx-d">${detailHtml(p)}</div></details>`; }).join('');
-  $('#matrix').innerHTML=head+(rows||'<p class="muted" style="padding:12px">Nenhum projeto com XML neste filtro.</p>');
+  $('#matrix').innerHTML=head+(rows||'<p class="muted" style="padding:12px">Nenhum projeto com cronograma Project neste filtro.</p>');
   openIds.forEach(id=>{ const el=document.getElementById(id); if(el) el.open=true; });
   const noX=pr.filter(p=>!p.xml).map(p=>p.sigco);
-  $('#noXml').innerHTML=noX.length?`Sem cronograma XML na pasta (não entram no mapa): ${noX.join(', ')}.`:'';
+  $('#noXml').innerHTML=noX.length?`Sem cronograma Project disponível: ${noX.join(', ')}.`:'';
 }
 function detailHtml(p){
   const x=p.xml, ss=x.stages.filter(s=>s.stage!=='LICENÇAS'||true);
@@ -1099,29 +1099,29 @@ function detailHtml(p){
     let rs=s0; if(rf){ if(s.xml_pct<=0){ rs=new Date(rf.getTime()-(f-s0)); if(rs<TODAY) rs=new Date(TODAY); } if(rs>=rf) rs=new Date(rf.getTime()-864e5); }
     return `<div class="mg"><div><b>${s.stage}</b> <span class="cl ${ci.cls}" style="width:14px;height:14px;font-size:9px">${{ok:'✓',warn:'!',late:'✕'}[ci.cls]}</span><div class="small">${s.xml_pct}% → ${s.rec_pct}%</div></div>
       <div class="tr"><div class="vl meta" style="left:${X(LIM)}%"></div><div class="vl hoje" style="left:${X(TODAY)}%"></div>
-       <div class="xb" style="left:${X(s0)}%;width:${Math.max(0.5,X(f)-X(s0))}%" data-tip="XML: ${s.start} → ${s.finish} (${s.xml_pct}%)"></div>
+       <div class="xb" style="left:${X(s0)}%;width:${Math.max(0.5,X(f)-X(s0))}%" data-tip="Project: ${s.start} → ${s.finish} (${s.xml_pct}%)"></div>
        ${rf?`<div class="rb" style="left:${X(rs)}%;width:${Math.max(0.5,X(rf)-X(rs))}%;background:${col[s.stage]||'var(--muted)'}" data-tip="Recalibrado: término ${s.rec_fin}, ${s.rec_pct}%"></div>`:`<div class="rb" style="left:${X(s0)}%;width:${Math.max(0.5,X(f)-X(s0))}%;background:var(--good);opacity:.6" data-tip="Etapa concluída"></div>`}</div></div>`; }).join('');
   const acts=ss.map(s=>({s,c:cellInfo(s)})).filter(o=>o.c.cls!=='ok').map(o=>`<li><b>${o.s.stage}</b> (${o.s.n} tarefa${o.s.n>1?'s':''}): ${o.c.acts.map(esc).join('; ')}</li>`).join('');
   const stgCols=STG.filter(sg=>x.items.some(i=>i.stages[sg]));
   const itRows=x.items.filter(i=>Object.keys(i.stages).length).map(i=>`<tr><td class="n">${esc(i.wbs)}</td><td>${esc(i.item)}${i.obra?`<div class="small">obra ${i.obra}</div>`:''}</td>
-      ${stgCols.map(sg=>{ const v=i.stages[sg]; if(!v) return '<td class="n muted">—</td>'; return `<td class="n ${v.late?'cell-late':''}" data-tip="WBS ${esc(v.wbs)} · UID ${esc(v.uid)}<br>Término XML ${v.fin}<br>Prazo ideal ${v.ideal}">${v.pct}%<div class="small">${v.fin?sd(v.fin):''}</div></td>`; }).join('')}</tr>`).join('');
+      ${stgCols.map(sg=>{ const v=i.stages[sg]; if(!v) return '<td class="n muted">—</td>'; return `<td class="n ${v.late?'cell-late':''}" data-tip="WBS ${esc(v.wbs)} · UID ${esc(v.uid)}<br>Término Project ${v.fin}<br>Prazo ideal ${v.ideal}">${v.pct}%<div class="small">${v.fin?sd(v.fin):''}</div></td>`; }).join('')}</tr>`).join('');
   const ob=D.obras.filter(o=>o.sigco===p.sigco);
   const L=execLife(p);
   const life = L ? `<div class="life ${L.cls}"><div class="lh"><span class="cl ${L.cls}">${{ok:'✓',warn:'!',late:'✕',na:'—'}[L.cls]}</span><b>Life da execução — ${L.tag}</b></div>
      <div class="lg"><div><span class="k">Físico (planilha)</span><span class="v">${L.real==null?'—':L.real+'%'}</span></div>
-       <div><span class="k">Esperado hoje pelo XML</span><span class="v">${L.esp}%</span><span class="small">${L.s.start} → ${L.s.finish}</span></div>
+       <div><span class="k">Esperado hoje no Project</span><span class="v">${L.esp}%</span><span class="small">${L.s.start} → ${L.s.finish}</span></div>
        <div><span class="k">Desvio</span><span class="v" style="color:${L.gap==null?'inherit':L.gap<-10?'var(--crit-text)':L.gap<-2?'var(--warn-text)':'var(--good-text)'}">${L.gap==null?'—':(L.gap>0?'+':'')+L.gap+' p.p.'}</span></div>
-       <div><span class="k">% no XML hoje</span><span class="v">${L.xmlpct}%</span><span class="small">valor desatualizado</span></div></div>
-     ${lifeBar(L)}<div class="lleg small"><span><i style="background:${{ok:'var(--good)',warn:'var(--warn)',late:'var(--crit)',na:'var(--muted)'}[L.cls]}"></i>físico realizado</span><span><b></b>esperado pelo XML hoje</span></div>
+       <div><span class="k">% no Project hoje</span><span class="v">${L.xmlpct}%</span><span class="small">valor desatualizado</span></div></div>
+     ${lifeBar(L)}<div class="lleg small"><span><i style="background:${{ok:'var(--good)',warn:'var(--warn)',late:'var(--crit)',na:'var(--muted)'}[L.cls]}"></i>físico realizado</span><span><b></b>esperado no Project hoje</span></div>
      <p style="margin:6px 0 0;font-size:12.5px">${L.txt}</p></div>` : '';
   const ip=p.ip; const X0=TODAY, X1=nextWd(FIM), XI=d=>Math.max(0,Math.min(100,(d-X0)/(X1-X0)*100));
   const ideal = ip.done ? '' : `<div class="life ${ip.cls}"><div class="lh"><span class="cl ${ip.cls}">${{ok:'✓',warn:'!',late:'✕'}[ip.cls]}</span><b>Prazo ideal por etapa para fechar em 05/12</b></div>
     <p style="margin:6px 0 10px;font-size:12.5px">${esc(ip.txt)}</p>
     ${ip.stages.map(x=>{ const c=(IP_COLS.find(k=>k[0]===x.key)||[])[2]; return `<div class="mg"><div><b>${esc(x.lab)}</b><div class="small">${sd(fmtD(x.start))} → <b>${sd(fmtD(x.end))}</b> · ${x.alloc} d.u.${x.alloc<x.std-0.5?` (padrão ${Math.round(x.std)})`:''}</div></div><div class="tr"><div class="rb" style="top:6px;bottom:auto;height:10px;left:${XI(x.start)}%;width:${Math.max(0.8,XI(nextWd(x.end))-XI(x.start))}%;background:${c}"></div></div></div>`; }).join('')}
     <div class="small" style="display:flex;justify-content:space-between;margin-left:158px"><span>hoje ${S.today.slice(0,5)}</span><span>05/12</span></div></div>`;
-  return life+ideal+`<h4>XML atual × recalibrado</h4><p class="small" style="margin:0 0 6px">Barra cinza = como está no XML · barra colorida = término recomendado · linha vermelha = meta 05/12 · azul = hoje</p>${mg}
+  return life+ideal+`<h4>Project atual × recomendado</h4><p class="small" style="margin:0 0 6px">Barra cinza = planejamento atual · barra colorida = término recomendado · linha vermelha = meta 05/12 · azul = hoje</p>${mg}
     ${acts?`<h4>O que mudar no Project</h4><ul class="act" style="font-size:12.5px;padding-left:18px">${acts}<li>ENCERRAMENTO: Data limite 05/12/2026 · Data de status 05/11/2026</li></ul>`:'<p class="small">Nada a recalibrar além da data de status e da data limite 05/12.</p>'}
-    ${itRows?`<details class="sub"><summary>Itens do XML por WBS (${x.items.filter(i=>Object.keys(i.stages).length).length}) — vermelho = término após o ideal ou vencido</summary><div class="tw"><table><thead><tr><th class="n">WBS</th><th>Item / escopo</th>${stgCols.map(s=>`<th class="n">${s}</th>`).join('')}</tr></thead><tbody>${itRows}</tbody></table></div></details>`:''}
+    ${itRows?`<details class="sub"><summary>Itens do Project por WBS (${x.items.filter(i=>Object.keys(i.stages).length).length}) — vermelho = término após o ideal ou vencido</summary><div class="tw"><table><thead><tr><th class="n">WBS</th><th>Item / escopo</th>${stgCols.map(s=>`<th class="n">${s}</th>`).join('')}</tr></thead><tbody>${itRows}</tbody></table></div></details>`:''}
     <details class="sub" open><summary>Obras da planilha (${ob.length}) — lançar físico manual</summary><div class="tw"><table><thead><tr><th class="n">Obra</th><th>Status SIGPO</th><th class="n">Curva planilha</th><th class="n">Físico manual</th><th>TCI (SIAGO)</th><th class="n">Prev. SIGPO</th><th>Etapa atual</th><th class="n">Prazo ideal</th><th class="n">Encerramento técnico previsto</th><th>Veredito</th></tr></thead><tbody>
     ${ob.map(o=>`<tr><td class="n">${o.obra}</td><td>${stCell(o)}</td><td class="n">${o.curva_plan==null?'—':pct(o.curva_plan)}</td><td class="n">${manInput(o)}</td><td>${tciCell(o)}</td><td class="n">${pfimCell(o)}</td><td>${esc(o.etapa)}</td><td class="n">${o.prazo_ideal||'—'}</td><td class="n ${o.verdict==='late'||o.verdict==='ideal'?'cell-late':''}">${o.prev||'—'}</td><td>${status(o.verdict)}</td></tr>`).join('')}
     </tbody></table></div></details>`;
@@ -1134,7 +1134,7 @@ function renderObras(){
   let rows=ob.map(o=>({...o,_v:VORD[o.verdict],_man:o.manual?+o.manual.v:null,_pi:o.prazo_ideal?dParse(o.prazo_ideal).getTime():null,_cf:o.concl_fis?dParse(o.concl_fis).getTime():null,_spf:o.sg&&o.sg.pfim?dParse(o.sg.pfim).getTime():null,_pv:o.prev?dParse(o.prev).getTime():9e15}));
   const s=st.sort.tObras; rows= s? sortRows(rows,s.k,s.d) : rows.sort((a,b)=>a._v-b._v||b.fase-a.fase||a.sigco-b.sigco);
   const a=agg(ob);
-  $('#obSub').innerHTML=`${ob.length} obras (canceladas excluídas: ${S.n_cancel}). ${a.done+a.ok} no prazo, ${a.ideal} só com plano ideal, ${a.late} extrapolam. Previsão no ritmo dos cronogramas XML: fiscalização ${S.du.fisc} d.u., encerramento ${S.du.enc} d.u.`;
+  $('#obSub').innerHTML=`${ob.length} obras ativas. ${a.done+a.ok} no prazo, ${a.ideal} dependem do plano ideal e ${a.late} apresentam risco de extrapolação.`;
   $('#tObras').innerHTML=headers('tObras',cols)+'<tbody>'+rows.slice(0,st.obLimit).map(o=>`<tr>
     <td class="n">${o.obra}</td><td class="n">${o.sigco}</td><td>${esc(o.gp)}</td><td>${esc(o.regional||'')}<div class="small">${esc(o.municipio||'')}</div></td>
     <td>${stCell(o)}</td>
@@ -1149,43 +1149,43 @@ function renderXml(){
    D.programs.map(p=>`<tr><td>${p.code}</td><td>${esc(p.title)}</td><td class="n">${p.status}</td><td class="n ${p.stale>45?'cell-late':''}">${p.stale} dias</td><td class="n">${p.pct}%</td><td class="n ${p.finish_ok?'cell-ok':'cell-late'}">${p.finish}</td>
    <td>${p.sigcos.map(s=>`<span class="flag ${p.in_plan.includes(s)?'g':'y'}" data-tip="${p.in_plan.includes(s)?'Tem obras na planilha':'Sem obras na planilha'}">${s}</span>`).join('')}</td></tr>`).join('')+'</tbody>';
   const noXml=D.projects.filter(p=>!p.xml).map(p=>p.sigco);
-  $('#xmlOnly').innerHTML=`<span class="flag g">verde</span> SIGCO com obras na planilha · <span class="flag y">amarelo</span> SIGCO só no XML (sem obras na planilha): ${S.xml_only.join(', ')}.<br>SIGCOs da planilha sem cronograma XML na pasta: ${noXml.join(', ')}.`;
+  $('#xmlOnly').innerHTML=`<span class="flag g">verde</span> projetos com obras vinculadas · <span class="flag y">amarelo</span> cronogramas sem obras vinculadas: ${S.xml_only.join(', ')}.<br>Projetos sem cronograma Project disponível: ${noXml.join(', ')}.`;
 }
 function renderMethod(){
   $('#method').innerHTML=[
-   `<b>Escopo:</b> ${S.n_obras} obras da aba Planejador Obras (excluídas ${S.n_cancel} canceladas), ${S.n_sig} SIGCOs; GP, nome do projeto e tipo (PN/Outros) da aba GP. 16 cronogramas XML da pasta “dcmd mt”.`,
+   `<b>Escopo:</b> ${S.n_obras} obras ativas, ${S.n_sig} projetos e ${D.programs.length} cronogramas do Project.`,
    `<b>Avanço físico:</b> mesma regra da aba Avanço Gerencial — 100% para status SIAGO Conclusão física, Fiscalização aprovada/reprovada e Encerramento; demais usam a CURVA PROJEÇÃO (em branco fica fora da média).`,
    `<b>Encerramento técnico:</b> obras com status SIAGO “ENCERRAMENTO: ENCERRAMENTO TÉCNICO”. Meta: todas encerradas até 05/12/2026. Calendário de trabalho: segunda a sábado, sem os feriados de 17/11 (AC) e 20/11.`,
    `<b>Prazos ideais (trás para frente):</b> conclusão física ${S.ideal['EXECUÇÃO']}, comissionamento ${S.ideal['COMISSIONAMENTO']}, fiscalização aprovada ${S.ideal['FISCALIZAÇÃO']}, encerramento técnico ${S.ideal['ENCERRAMENTO']}. Projeto/licenças/planejamento deveriam estar concluídos (${S.ideal['PLANEJAMENTO']}). Feriados considerados: 17/11 (AC) e 20/11.`,
-   `<b>Previsão “no ritmo atual”:</b> usa as durações padrão dos XML — fiscalização ${S.du.fisc} d.u., encerramento ${S.du.enc} d.u. (${S.du.enc_tci} d.u. se TCI já aprovado), correção de reprovada ${S.du.corr} d.u. Para obras em execução: ritmo realizado (curva ÷ dias desde o início real da planilha); sem início real, duração de EXECUÇÃO do XML do SIGCO (geral ${S.global_exec} d.u.) × % restante.`,
+   `<b>Previsão no ritmo atual:</b> considera as durações de referência do Project — fiscalização ${S.du.fisc} d.u., encerramento ${S.du.enc} d.u. (${S.du.enc_tci} d.u. com TCI aprovado) e correção de reprovação ${S.du.corr} d.u.`,
    `<b>Veredito:</b> <i>No prazo</i> = previsão ≤ 05/12; <i>Só com plano ideal</i> = estoura no ritmo padrão mas cabe se cada etapa cumprir o prazo ideal; <i>Vai extrapolar</i> = não cabe nem com plano ideal (execução prevista após ${S.ideal['EXECUÇÃO'].slice(0,5)}, obra suspensa/paralisada ou não iniciada). O farol do projeto é o pior caso entre suas obras.`,
-   `<b>% recomendado por etapa (calibração):</b> média das obras do SIGCO — Execução = curva (100% a partir de Conclusão física); Fiscalização = 50% reprovada / 100% aprovada; Encerramento = TCI apresentado 50%, aprovado 75%, encerramento técnico 100%. O % do XML é ponderado pela duração dos itens.`,
-   `<b>Limites:</b> os XML estão 36–66 dias defasados; vários são programas mensais (sem itens por obra), então a comparação é feita por SIGCO. Itens com número de obra no nome (ex.: 112600037) foram ligados à obra correspondente.`
+   `<b>Atualização recomendada:</b> consolida o avanço das obras por projeto e indica os ajustes de percentual e término necessários no Project.`,
+   `<b>Leitura:</b> cronogramas desatualizados ou sem itens individualizados são analisados no nível do projeto.`
   ].map(x=>`<li>${x}</li>`).join('');
 }
 
-// ---------- ADMINISTRAÇÃO ----------
+// ---------- GESTÃO DE ESCOPO ----------
 st.aLimit=150;
 function exRow(kind,id,desc,sub,m){ return `<tr><td>${kind==='proj'?'<span class="flag b">Projeto</span>':'<span class="flag y">Obra</span>'}</td><td class="n"><b>${id}</b></td><td><div class="pname" style="font-weight:500">${esc(desc)}<small>${esc(sub)}</small></div></td>
   <td><input class="exmot" data-kind="${kind}" data-id="${id}" value="${esc(m.motivo||'')}" placeholder="motivo"></td><td class="n small">${fmtD(new Date(m.t))}</td>
   <td><button class="btn exbtn" data-act="res" data-kind="${kind}" data-id="${id}">Restaurar</button></td></tr>`; }
 function renderAdmin(){
   const s=exSummary();
-  $('#exCount').innerHTML = s.n ? `<b>${s.txt}</b> fora da contagem (${s.tot} obras no total)` : 'Nenhum expurgo ativo';
+  $('#exCount').innerHTML = s.n ? `<b>${s.txt}</b> fora do escopo (${s.tot} obras no total)` : 'Todos os projetos e obras estão no escopo';
   const act=[];
   Object.entries(EX.proj).forEach(([sig,m])=>{ const p=BASE_PROJECTS.find(x=>x.sigco==sig)||{}; act.push(exRow('proj',sig,p.projeto||'',`${p.gp||''} · ${BASE_OBRAS.filter(o=>o.sigco==sig).length} obras`,m)); });
-  Object.entries(EX.obra).forEach(([ob,m])=>{ const o=BASE_OBRAS.find(x=>x.obra==ob)||{}; act.push(exRow('obra',ob,`SIGCO ${o.sigco||'—'} · ${o.projeto||''}`,`${o.status||''} · ${o.municipio||''}${EX.proj[o.sigco]?' · projeto inteiro já expurgado':''}`,m)); });
-  $('#tExAct').innerHTML = act.length ? `<thead><tr><th>Tipo</th><th class="n">SIGCO / obra</th><th>Descrição</th><th>Motivo</th><th class="n">Expurgado em</th><th></th></tr></thead><tbody>${act.join('')}</tbody>` : '<tbody><tr><td class="muted" style="padding:14px">Nenhum projeto ou obra expurgado — o painel considera tudo.</td></tr></tbody>';
+  Object.entries(EX.obra).forEach(([ob,m])=>{ const o=BASE_OBRAS.find(x=>x.obra==ob)||{}; act.push(exRow('obra',ob,`SIGCO ${o.sigco||'—'} · ${o.projeto||''}`,`${o.status||''} · ${o.municipio||''}${EX.proj[o.sigco]?' · projeto inteiro fora do escopo':''}`,m)); });
+  $('#tExAct').innerHTML = act.length ? `<thead><tr><th>Tipo</th><th class="n">SIGCO / obra</th><th>Descrição</th><th>Motivo</th><th class="n">Retirado em</th><th></th></tr></thead><tbody>${act.join('')}</tbody>` : '<tbody><tr><td class="muted" style="padding:14px">Todos os projetos e obras estão no escopo do painel.</td></tr></tbody>';
   // projetos
   const qp=($('#aQp').value||'').toLowerCase();
   const VB={}; D.projects.forEach(p=>VB[p.sigco]=p);
   const ps=BASE_PROJECTS.filter(p=>!qp || (p.sigco+' '+p.projeto+' '+p.gp).toLowerCase().includes(qp));
   $('#tExProj').innerHTML=`<thead><tr><th class="n">SIGCO</th><th>Projeto · GP</th><th class="n">Obras</th><th>Situação hoje</th><th>Motivo</th><th></th></tr></thead><tbody>`+ps.map(bp=>{
     const ex=EX.proj[bp.sigco], p=VB[bp.sigco], n=BASE_OBRAS.filter(o=>o.sigco===bp.sigco).length, ne=BASE_OBRAS.filter(o=>o.sigco===bp.sigco&&EX.obra[o.obra]).length;
-    return `<tr style="${ex?'opacity:.6':''}"><td class="n">${bp.sigco}</td><td><div class="pname">${esc(bp.projeto)}<small>${esc(bp.gp)} · ${esc(bp.tipo_proj)}${bp.xml?'':' · sem XML'}</small></div></td>
-      <td class="n">${n}${ne&&!ex?`<div class="small">${ne} obra${ne>1?'s':''} expurgada${ne>1?'s':''}</div>`:''}</td><td>${ex?'<span class="flag y">expurgado</span>':(p?status(p.verdict):'<span class="flag y">todas as obras expurgadas</span>')}</td>
+    return `<tr style="${ex?'opacity:.6':''}"><td class="n">${bp.sigco}</td><td><div class="pname">${esc(bp.projeto)}<small>${esc(bp.gp)} · ${esc(bp.tipo_proj)}${bp.xml?'':' · sem Project'}</small></div></td>
+      <td class="n">${n}${ne&&!ex?`<div class="small">${ne} obra${ne>1?'s':''} fora do escopo</div>`:''}</td><td>${ex?'<span class="flag y">fora do escopo</span>':(p?status(p.verdict):'<span class="flag y">todas as obras fora do escopo</span>')}</td>
       <td><input class="exmot" data-kind="proj" data-id="${bp.sigco}" value="${esc(ex?ex.motivo||'':'')}" placeholder="motivo (opcional)"></td>
-      <td>${ex?`<button class="btn exbtn" data-act="res" data-kind="proj" data-id="${bp.sigco}">Restaurar</button>`:`<button class="btn exbtn" data-act="ex" data-kind="proj" data-id="${bp.sigco}" style="color:var(--crit-text)">Expurgar projeto</button>`}</td></tr>`; }).join('')+'</tbody>';
+      <td>${ex?`<button class="btn exbtn" data-act="res" data-kind="proj" data-id="${bp.sigco}">Restaurar</button>`:`<button class="btn exbtn" data-act="ex" data-kind="proj" data-id="${bp.sigco}" style="color:var(--crit-text)">Retirar do escopo</button>`}</td></tr>`; }).join('')+'</tbody>';
   // obras
   const qo=($('#aQo').value||'').toLowerCase(), fo=$('#aFo').value;
   const VO={}; D.obras.forEach(o=>VO[o.obra]=o);
@@ -1194,14 +1194,14 @@ function renderAdmin(){
   $('#tExObra').innerHTML=`<thead><tr><th class="n">Obra</th><th class="n">SIGCO</th><th>Status SIAGO · município</th><th>Etapa</th><th>Situação</th><th>Motivo</th><th></th></tr></thead><tbody>`+os.slice(0,st.aLimit).map(o=>{
     const exP=EX.proj[o.sigco], exO=EX.obra[o.obra], v=VO[o.obra];
     return `<tr style="${exP||exO?'opacity:.6':''}"><td class="n">${o.obra}</td><td class="n">${o.sigco}</td><td>${esc(o.status)}<div class="small">${esc(o.municipio||'')} · ${esc(o.gp)}</div></td><td>${esc(FASES[o.fase])}</td>
-      <td>${exP?'<span class="flag y">projeto expurgado</span>':exO?'<span class="flag y">expurgada</span>':status(v.verdict)}</td>
+      <td>${exP?'<span class="flag y">projeto fora do escopo</span>':exO?'<span class="flag y">fora do escopo</span>':status(v.verdict)}</td>
       <td>${exP?'':`<input class="exmot" data-kind="obra" data-id="${o.obra}" value="${esc(exO?exO.motivo||'':'')}" placeholder="motivo (opcional)">`}</td>
-      <td>${exP?'':exO?`<button class="btn exbtn" data-act="res" data-kind="obra" data-id="${o.obra}">Restaurar</button>`:`<button class="btn exbtn" data-act="ex" data-kind="obra" data-id="${o.obra}" style="color:var(--crit-text)">Expurgar</button>`}</td></tr>`; }).join('')+'</tbody>';
+      <td>${exP?'':exO?`<button class="btn exbtn" data-act="res" data-kind="obra" data-id="${o.obra}">Restaurar</button>`:`<button class="btn exbtn" data-act="ex" data-kind="obra" data-id="${o.obra}" style="color:var(--crit-text)">Retirar do escopo</button>`}</td></tr>`; }).join('')+'</tbody>';
   $('#aMore').classList.toggle('hide', os.length<=st.aLimit); $('#aMore').textContent=`Mostrar mais obras (${Math.min(os.length,st.aLimit)} de ${os.length})`;
 }
 function exApply(msg){ const ok=saveEx(); recompute(); render(); toast(ok?msg:'Atenção: o navegador bloqueou o salvamento — exporte o CSV'); }
 document.addEventListener('click',e=>{ const b=e.target.closest('.exbtn'); if(!b) return; const k=b.dataset.kind, id=b.dataset.id;
-  if(b.dataset.act==='ex'){ const inp=document.querySelector(`input.exmot[data-kind="${k}"][data-id="${id}"]`); EX[k][id]={t:new Date().toISOString(), motivo:inp?inp.value.trim():''}; exApply(`${k==='proj'?'Projeto':'Obra'} ${id} fora da contagem`); }
+  if(b.dataset.act==='ex'){ const inp=document.querySelector(`input.exmot[data-kind="${k}"][data-id="${id}"]`); EX[k][id]={t:new Date().toISOString(), motivo:inp?inp.value.trim():''}; exApply(`${k==='proj'?'Projeto':'Obra'} ${id} retirado do escopo`); }
   else { delete EX[k][id]; exApply(`${k==='proj'?'Projeto':'Obra'} ${id} restaurado na contagem`); } });
 document.addEventListener('change',e=>{ const i=e.target.closest('input.exmot'); if(!i) return; const k=i.dataset.kind, id=i.dataset.id; if(EX[k][id]){ EX[k][id].motivo=i.value.trim(); saveEx(); toast('Motivo salvo'); } });
 // ---------- conexão com a pasta (File System Access API) ----------
@@ -1265,13 +1265,13 @@ async function srcRefresh(interactive){
     if(perm!=='granted'){ if(!interactive){ showSrcBanner(); srcLog('Pasta conectada, mas o navegador precisa de um clique para liberar a leitura nesta abertura.'); return; } perm=await dir.requestPermission({mode:'read'}); }
     if(perm!=='granted'){ srcLog('Permissão de leitura negada.','err'); return; }
     await loadFromDir(dir); hideSrcBanner();
-  }catch(e){ if(e.name==='AbortError') srcLog('Seleção de pasta cancelada.'); else { srcLog(explain(e),'err'); toast('Não carregou — veja o motivo em Administração › Fonte de dados'); } }
+  }catch(e){ if(e.name==='AbortError') srcLog('Seleção de pasta cancelada.'); else { srcLog(explain(e),'err'); toast('Não foi possível atualizar os dados de origem'); } }
   finally{ SRC_BUSY=false; }
 }
 async function srcConnect(){
   const env=srcEnv(); if(env.inFrame || !env.api){ srcLog(env.issues[0]||'Conexão de pasta indisponível.','err'); return; }
   try{ srcLog('Escolha a pasta EXTRAÇÕES BI - COPC na janela que abriu (Rede › fs-bi.scl.corp › EAC › DTEC › DCMD).'); const dir=await window.showDirectoryPicker({id:'copc',mode:'read'}); await idbSet('dirCOPC',dir); SRC_BUSY=true; await loadFromDir(dir); hideSrcBanner(); }
-  catch(e){ if(e.name==='AbortError') srcLog('Seleção de pasta cancelada.'); else { srcLog(explain(e),'err'); toast('Não carregou — veja o motivo em Administração › Fonte de dados'); } }
+  catch(e){ if(e.name==='AbortError') srcLog('Seleção de pasta cancelada.'); else { srcLog(explain(e),'err'); toast('Não foi possível atualizar os dados de origem'); } }
   finally{ SRC_BUSY=false; } }
 async function ingestFiles(list,origem){
   const fs=[...list]; const fS=fs.find(f=>/sigpo/i.test(f.name)), fT=fs.find(f=>/tci/i.test(f.name));
@@ -1370,7 +1370,7 @@ function render(){
   if(st.tab==='ger'){ renderCards(ob,pr); renderVs(ob); renderFunnel(ob); renderTci(ob); renderPv(ob); renderGantt(pr); renderGp(pr); }
   else if(st.tab==='ana'){ renderIdeal(pr); renderMatrix(pr); renderCmp(pr); renderObras(); renderXml(); renderMethod(); }
   else { renderSrc(); renderAdmin(); }
-  const es=exSummary(); $('#exNote').innerHTML = es.n ? `<div class="gapnote" style="background:var(--warn-bg);color:var(--warn-text);margin:0 0 12px">Contagem sem <b>${es.txt}</b> expurgados pela Administração.</div>` : '';
+  const es=exSummary(); $('#exNote').innerHTML = es.n ? `<div class="gapnote" style="background:var(--warn-bg);color:var(--warn-text);margin:0 0 12px"><b>${es.txt}</b> estão fora do escopo desta análise.</div>` : '';
 }
 // ---------- modo compartilhado (painel publicado): base em tempo real para todos ----------
 let DL=null, SH_RENDER_T=null, SH_PENDING=false;
