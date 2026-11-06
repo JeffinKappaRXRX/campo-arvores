@@ -15,3 +15,5 @@ CREATE TABLE IF NOT EXISTS shared_merges(source_id TEXT PRIMARY KEY,target_id TE
 CREATE INDEX IF NOT EXISTS shared_merges_target ON shared_merges(target_id,source_id);
 CREATE TABLE IF NOT EXISTS shared_local_history(seq INTEGER PRIMARY KEY AUTOINCREMENT,tree_id TEXT NOT NULL,local_version TEXT NOT NULL,data TEXT NOT NULL,received_at TEXT NOT NULL,actor TEXT NOT NULL,UNIQUE(tree_id,local_version));
 CREATE INDEX IF NOT EXISTS shared_local_history_tree ON shared_local_history(tree_id,seq);
+-- Relações compactas da rede privada. O conteúdo só é servido depois da autenticação de campo.
+CREATE TABLE IF NOT EXISTS campo_network_lookup(id TEXT PRIMARY KEY,revision TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL);

@@ -216,3 +216,11 @@ Abrem dentro de `/gestao.html`, para administradores, pelo menu Poda + VERA, Man
 Publique API e Pages juntos, como nas demais versões. Enviar um commit ao GitHub não atualiza o site.
 
 Validação: `node backend/verify-central.mjs`, `node backend/verify-control.mjs`, `node backend/verify-admin.mjs`, `node tests/central-filtros.cjs` e `node tests/gestao-central.cjs`.
+
+## Conciliação de alimentador da BT (novembro de 2026)
+
+A camada leve `18_Vaos_BT_secundario` preserva `Id` e `NAME BLOCO`, mas não precisa repetir a coluna `Alimentador`. `build-bt-feeder-lookup.mjs` lê o GPKG operacional fora do repositório, aceita somente alimentadores no padrão operacional e gera a carga privada em `.wrangler/`. A relação compacta fica em `campo_network_lookup`, protegida pela mesma autenticação do campo; o repositório e os arquivos públicos não contêm os pares da rede.
+
+No aparelho autenticado, `bt-feeder-lookup.js` baixa a relação e mantém uma cópia offline privada. Tocar em um vão BT passa a preencher ID e alimentador como na MT; a indexação de uma base nova também associa o alimentador ao vão. Valores SOG e vazios não são promovidos a alimentador. Se não houver relação inequívoca, o app mantém o alimentador atual e não inventa dado.
+
+Fonte conciliada em 06/11/2026: 114.535 vãos BT, 95.510 com alimentador operacional inequívoco, representados por 11.660 blocos e 20 IDs diretos. Outros 19.025 registros da origem estavam sem alimentador confiável e permanecem sem preenchimento automático. A varredura central corrigiu 10 cadastros exclusivamente BT com divergência, gerando nova versão e evento de sincronização para cada um; cadastros MT/BT não foram alterados pelo ID de vão MT.

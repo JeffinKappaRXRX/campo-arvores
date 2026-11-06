@@ -87,6 +87,11 @@ async function centralNetwork(request,env){
   const binary=atob(data.base64),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);return new Response(bytes,{headers:{'Content-Type':'application/octet-stream','Cache-Control':'no-store'}});
  }catch{return json({error:'Rede central indisponível. Confira a implantação do receptor; a base local continua disponível.'},502);}finally{clearTimeout(timer);releaseDriveRequest();}
 }
+async function networkBtFeeders(request,env){
+ if(request.method!=='GET')return json({error:'Use GET.'},405);
+ if(!env.SHARED_DB)return json({error:'Relação BT indisponível.'},503);
+ try{const row=await env.SHARED_DB.prepare("SELECT data,revision FROM campo_network_lookup WHERE id='bt-feeder'").first();if(!row)return json({error:'Relação BT ainda não preparada.'},503);const body=atob(row.data);JSON.parse(body);return new Response(body,{headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','ETag':'"'+String(row.revision).replace(/[^a-zA-Z0-9._:-]/g,'')+'"','X-Content-Type-Options':'nosniff'}});}catch{return json({error:'Relação BT indisponível.'},503);}
+}
 async function identify(request,env){
  if(request.method!=='POST')return json({error:'Use POST.'},405);
  const origin=request.headers.get('Origin');if(origin&&origin!==new URL(request.url).origin)return json({error:'Origem não autorizada.'},403);
@@ -127,6 +132,7 @@ const internalApp={async fetch(request,env){
  if(url.pathname==='/api/map/search')return mapAddressSearch(request,env);
  if(url.pathname.startsWith('/api/shared/'))return sharedAPI(request,env);
  if(url.pathname==='/api/network/manifest'||url.pathname==='/api/network/chunk')return centralNetwork(request,env);
+ if(url.pathname==='/api/network/bt-feeders')return networkBtFeeders(request,env);
  if(url.pathname==='/api/access')return request.method==='GET'?json({admin:isAdministrator(request,env)}):json({error:'Use GET.'},405);
  if(url.pathname==='/api/admin/drive/status'){
   if(!isAdministrator(request,env))return json({error:'Acesso restrito ao administrador.'},403);
