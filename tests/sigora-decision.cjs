@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('node:assert/strict');
+const D=require('../docs/sigora-decision.js');
+const a={id:'A',cost:100,budgetType:'OPEX',expectedRiskReduction:5,expectedDecReduction:4,expectedFecReduction:3,technicalFeasible:true};
+const b={...a,id:'B',cost:120,expectedRiskReduction:4};
+const c={...a,id:'C',cost:70,expectedRiskReduction:2,expectedDecReduction:1};
+assert.equal(D.assess(a).status,'ELIGIBLE');
+assert.equal(D.assess({...a,id:'X',safetyBlocked:true}).status,'BLOCKED');
+assert.equal(D.assess({...a,id:'X',cost:null}).status,'INSUFFICIENT_DATA');
+assert.equal(D.assess({...a,id:'X',expectedDecReduction:undefined}).status,'INSUFFICIENT_DATA');
+assert.equal(D.dominates(a,b),true);
+assert.deepEqual(D.frontier([a,b,c]).nondominated,['A','C']);
+assert.deepEqual(D.frontier([a,b,c]).dominated,['B']);
+assert.throws(()=>D.frontier([a,a]),/duplicado/);
+console.log('PASS SIGORA decision: bloqueios, dados ausentes, dominância e fronteira de Pareto.');
