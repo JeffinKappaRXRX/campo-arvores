@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {evaluate}=require('../docs/sigora-backtest.js');
+const row={assetId:'A',assetClass:'CHAVE',trainingEnd:'2025-12-31',cutoff:'2026-01-01',horizonEnd:'2026-03-31',observedThrough:'2026-04-01',predictedEvents:0.8,observedEvents:1,probabilityAtLeastOne:0.6};
+const result=evaluate([row,{...row,assetId:'B',observedEvents:0,probabilityAtLeastOne:0.2,predictedEvents:0.3}]);
+assert.equal(result.count,2);assert.ok(Math.abs(result.brier-0.1)<1e-12);assert.ok(Math.abs(result.mae-0.25)<1e-12);
+assert.equal(result.byClass.CHAVE.count,2);
+assert.throws(()=>evaluate([{...row,trainingEnd:'2026-01-02'}]),/Vazamento/);
+assert.throws(()=>evaluate([{...row,observedThrough:'2026-03-01'}]),/Vazamento/);
+assert.throws(()=>evaluate([row,row]),/duplicada/);
+assert.throws(()=>evaluate([{...row,probabilityAtLeastOne:1.5}]),/invalidas/);
+console.log('PASS SIGORA backtest: corte temporal, horizonte, Brier, MAE, duplicidade e estratificacao.');

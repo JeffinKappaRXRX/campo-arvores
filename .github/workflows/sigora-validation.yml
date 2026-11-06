@@ -1,0 +1,30 @@
+name: SIGORA validation
+on:
+  pull_request:
+    paths:
+      - 'docs/sigora-*.js'
+      - 'tests/sigora-*.cjs'
+      - '.github/workflows/sigora-validation.yml'
+  push:
+    branches: [feature/sigora-foundation]
+    paths:
+      - 'docs/sigora-*.js'
+      - 'tests/sigora-*.cjs'
+      - '.github/workflows/sigora-validation.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run SIGORA unit tests
+        run: |
+          set -eu
+          for test in tests/sigora-*.cjs; do
+            echo "Running $test"
+            node "$test"
+          done

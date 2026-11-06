@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {extract}=require('../docs/sigora-events.js');
+const rows=[{chave:'RBR1',dia:2200,tipo:'N',fam:'VEGETACAO',dec:0.5},{chave:'RBR1',dia:2200,tipo:'N',dec:0.5},{chave:'RBR2',dia:2300},{chave:'',dia:2000}];
+const x=extract(rows,{cutoffDay:2250,generation:'cen-202611060000'});
+assert.equal(x.accepted.length,2);
+assert.equal(x.rejected.length,2);
+assert.notEqual(x.accepted[0].eventId,x.accepted[1].eventId);
+assert.equal(x.accepted[0].decHours,0.5);
+assert.equal(x.accepted[0].source.rowIndex,0);
+assert.throws(()=>extract(rows),/Corte temporal/);
+assert.equal(extract([{chave:'X',dia:0}],{cutoffDay:0}).accepted[0].date,'2020-01-01');
+console.log('PASS SIGORA events: corte, rastreabilidade, rejeicao e preservacao de eventos semelhantes.');
