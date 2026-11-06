@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {adaptChaves}=require('../docs/sigora-central-bridge.js');
+const a=adaptChaves([{chave:'RBR123',occ90:3,cli:140,chi12:22,decProj:1.2},{chave:'RBR124',occ90:null,cli:0,chi12:0,decProj:0}],{generation:'cen-202611060000'});
+assert.equal(a.records.length,2);
+assert.equal(a.records[0].observations.occurrences90,3);
+assert.equal(a.records[0].lineage.sourceGeneration,'cen-202611060000');
+assert.equal(a.records[1].observations.occurrences90,null);
+assert.equal(a.records[1].predictionReady,false);
+assert.equal(a.records[0].interventionBenefit,null);
+assert.equal(adaptChaves([{chave:'X'},{chave:'X'}]).rejected.length,1);
+assert.equal(adaptChaves([{chave:'X',occ90:'3'}]).records[0].observations.occurrences90,null);
+console.log('PASS SIGORA central bridge: granularidade, linhagem, ausencias e duplicidade.');
