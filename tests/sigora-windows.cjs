@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {aggregate}=require('../docs/sigora-windows.js');
+const events=[{eventId:'1',assetId:'A',date:'2026-01-02'},{eventId:'2',assetId:'A',date:'2026-02-02'},{eventId:'3',assetId:'X',date:'2026-01-03'}];
+const assets=[{assetId:'A',assetClass:'CHAVE',exposureDays:31,exposureEvidence:'cadastro-vigente'},{assetId:'B',assetClass:'CHAVE',exposureDays:31,exposureEvidence:'cadastro-vigente'},{assetId:'C',assetClass:'CHAVE',exposureDays:31}];
+const r=aggregate(events,assets,{start:'2026-01-01',end:'2026-01-31'});
+assert.equal(r.observations.length,2);
+assert.equal(r.observations[0].events,1);
+assert.equal(r.observations[1].events,0);
+assert.equal(r.rejected.length,1);
+assert.deepEqual(r.unknownAssets,['X']);
+assert.equal(aggregate(events,[{assetId:'A',assetClass:'CHAVE',exposureDays:32,exposureEvidence:'x'}],{start:'2026-01-01',end:'2026-01-31'}).rejected.length,1);
+assert.throws(()=>aggregate([events[0],events[0]],assets,{start:'2026-01-01',end:'2026-01-31'}),/duplicado/);
+console.log('PASS SIGORA windows: exposicao, zero observado, janela, duplicidade e ativos desconhecidos.');
