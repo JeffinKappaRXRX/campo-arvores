@@ -1,5 +1,14 @@
-import fs from 'node:fs/promises';import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';import assert from 'node:assert/strict';import vm from 'node:vm';
 const load=async file=>(await import('data:text/javascript;base64,'+Buffer.from(await fs.readFile(new URL(file,import.meta.url),'utf8')).toString('base64'))).default;
 const gateway=await load('worker.js'),pages=await load('../hosting/pages-worker.js');const origin='https://mapeamento-arvores.pages.dev';const env={FIELD_AUTH_REQUIRED:'false',APP_ORIGIN:'https://jeffinkapparxrx.github.io',APP_ADDITIONAL_ORIGINS:origin,FIELD_ACCESS_TOKEN:'x'.repeat(40),ADMIN_PASSWORD:'example-password-long',ADMIN_SESSION_SECRET:'s'.repeat(40),LOGIN_GUARD:{get:async()=>null,put:async()=>{}},SHARED_DB:{}};const bound={CAMPO_API:{fetch:r=>gateway.fetch(r,env)}};
 let r=await pages.fetch(new Request(origin+'/api/shared/generation',{headers:{'X-Campo-Access':env.FIELD_ACCESS_TOKEN}}),bound);assert.equal(r.status,200);assert.equal((await r.json()).id,null);
 r=await pages.fetch(new Request(origin+'/api/access',{headers:{Origin:origin,'X-Campo-Access':env.FIELD_ACCESS_TOKEN}}),bound);assert.equal((await r.json()).admin,false);r=await pages.fetch(new Request(origin+'/api/access',{headers:{Origin:'https://evil.test','X-Campo-Access':env.FIELD_ACCESS_TOKEN}}),bound);assert.equal(r.status,403);r=await pages.fetch(new Request(origin+'/api/access'),bound);assert.equal(r.status,200);r=await pages.fetch(new Request(origin+'/config.js'),bound);assert((await r.text()).includes('apiBase:location.origin'));console.log('PASS Pages official URL, service binding, same-origin GET, inspector access without code and cross-origin rejection.');
+
+const client=await fs.readFile(new URL('../docs/api-client.js',import.meta.url),'utf8');
+const window={fetch:(url,options)=>pages.fetch(new Request(url,options),bound)};
+vm.runInNewContext(client,{window,location:new URL(origin),URL,URLSearchParams,Headers,sessionStorage:{getItem:()=>null}});
+r=await window.fetch('/api/admin/login');
+assert.equal(r.status,405,'Without config.js the admin endpoint must still be reachable');
+r=await window.fetch('/api/auth/status');
+assert.equal(r.status,200,'The inspector session check must also use the same-origin API');
+console.log('PASS Pages login routes without config.js.');

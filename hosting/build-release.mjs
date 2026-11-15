@@ -2,7 +2,11 @@ import fs from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const docs=new URL('../docs/',import.meta.url);
 const files=(await fs.readdir(docs)).filter(file=>/\.(?:js|css|html|json|csv|txt)$/.test(file)&&file!=='config.js').sort();
-const assets=Object.fromEntries(await Promise.all(files.map(async file=>['/'+file,await fs.readFile(new URL(file,docs),'utf8')])));
+const assets=Object.fromEntries(await Promise.all(files.map(async file=>{
+ const source=await fs.readFile(new URL(file,docs),'utf8');
+ // Pages serves the API on the same origin. Only the GitHub mirror needs config.js.
+ return ['/'+file,file.endsWith('.html')?source.replace('<script src="config.js"></script>',''):source];
+})));
 // A changed application asset always changes sw.js, even if a version bump is forgotten.
 const canonical={...assets,'/sw.js':assets['/sw.js'].replace(/const CACHE='[^']+';/,"const CACHE='campo-app-build';")};
 const build=createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0,20);

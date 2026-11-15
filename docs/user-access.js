@@ -1,7 +1,7 @@
 'use strict';
 // Only display data is remembered here; the credential is a Secure HttpOnly cookie.
 (()=>{
- const profileKey='campo-account-profile';let account=null,verified=false,refreshing=false,required=true,bootstrap=false,checked=false,networkFailed=false,authEpoch=0;
+ const profileKey='campo-account-profile';let account=null,verified=false,required=true,bootstrap=false,checked=false,networkFailed=false,authEpoch=0,refreshRequest=null;
  try{const raw=JSON.parse(localStorage.getItem(profileKey)||'null');if(raw?.id&&raw?.email&&raw?.name)account=raw;}catch{}
  const panel=document.createElement('aside');panel.id='accountPanel';panel.className='account-panel';panel.innerHTML='<div class="account-heading"><strong id="accountTitle">Acesso da equipe</strong><button type="button" id="accountLogout" class="secondary" hidden>Sair / trocar usuário</button></div><p id="accountDescription"></p><form id="accountLogin"><label>Usuário ou e-mail<input id="accountLoginUsername" required maxlength="254" autocomplete="username" autocapitalize="none" spellcheck="false"></label><label>Senha<input id="accountLoginPassword" type="password" required maxlength="128" autocomplete="current-password"></label><button type="submit" id="accountLoginSubmit">Entrar</button><button type="button" class="secondary" id="accountLoginShow" aria-controls="accountLoginPassword" aria-pressed="false">Mostrar senha</button><p id="accountLoginFeedback" role="status" aria-live="polite"></p><small>Sua sessão permanece após fechar ou atualizar o app. Sair da conta ou limpar os dados do navegador exige novo login.</small></form><button type="button" class="secondary" id="accountChangePassword" hidden>Alterar minha senha</button><small id="accountPrivacy">Durante o uso do app, sua identidade e a última posição GPS disponível são compartilhadas somente com a Administração, quando a localização estiver autorizada no navegador. O GPS não funciona como rastreamento contínuo com o app fechado.</small>';
  document.querySelector('nav').after(panel);
@@ -23,7 +23,27 @@
  }
 
  function changed(){paint();window.dispatchEvent(new Event('campo-account-changed'));}
- async function refresh(){if(refreshing||!navigator.onLine){checked=true;paint();return;}refreshing=true;try{const r=await fetch('/api/auth/status',{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error||'Acesso indisponível.');networkFailed=false;checked=true;required=d.required!==false;bootstrap=d.admin===true;verified=d.authenticated===true;account=verified?d.user:null;if(account)localStorage.setItem(profileKey,JSON.stringify(account));else localStorage.removeItem(profileKey);changed();await initFieldAccess();if(account&&typeof sharedPull==='function')void sharedPull();}catch{networkFailed=true;checked=true;verified=false;paint();$('accountDescription').textContent=account?'Acesso offline lembrado. Cadastros locais preservados; a sincronização exige conexão e sessão válida.':'Não foi possível conferir o acesso. Reconecte para entrar; seus cadastros locais foram preservados.';}finally{refreshing=false;}}
+ async function refresh(){
+  if(!navigator.onLine){checked=true;paint();return;}
+  const epoch=authEpoch;
+  if(refreshRequest?.epoch===epoch)return refreshRequest.promise;
+  const promise=(async()=>{
+   try{
+    const r=await fetch('/api/auth/status',{cache:'no-store',signal:AbortSignal.timeout?.(15000)}),d=await r.json();
+    if(epoch!==authEpoch)return;
+    if(!r.ok)throw Error(d.error||'Acesso indisponível.');
+    networkFailed=false;checked=true;required=d.required!==false;bootstrap=d.admin===true;verified=d.authenticated===true;account=verified?d.user:null;
+    if(account)localStorage.setItem(profileKey,JSON.stringify(account));else localStorage.removeItem(profileKey);
+    changed();await initFieldAccess();if(epoch===authEpoch&&account&&typeof sharedPull==='function')void sharedPull();
+   }catch{
+    if(epoch!==authEpoch)return;
+    networkFailed=true;checked=true;verified=false;paint();
+    $('accountDescription').textContent=account?'Acesso offline lembrado. Cadastros locais preservados; a sincronização exige conexão e sessão válida.':'Não foi possível conferir o acesso. Reconecte para entrar; seus cadastros locais foram preservados.';
+   }
+  })();
+  refreshRequest={epoch,promise};
+  try{await promise;}finally{if(refreshRequest?.promise===promise)refreshRequest=null;}
+ }
 
  async function logout(){if(navigator.onLine){try{const r=await fetch('/api/auth/logout',{method:'POST'});if(!r.ok)throw Error();}catch{tell('Não foi possível encerrar no servidor. Confira a conexão e tente novamente.');return;}}else{tell('Reconecte para encerrar esta sessão no servidor. Seus cadastros continuam salvos.');return;}authEpoch++;sessionStorage.removeItem('campo-admin-session');localStorage.removeItem(profileKey);account=null;verified=false;bootstrap=false;changed();await initFieldAccess();}
  $('accountLogout').onclick=()=>void logout();
@@ -40,7 +60,7 @@
  async function save(body){if(busy||!adminAllowed)return;busy=true;$('accountUserSave').disabled=true;try{const r=await fetch('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();if(!r.ok)throw Error(d.error||'Não foi possível salvar.');$('accountUserFeedback').textContent=body.action==='delete'?'Usuário excluído e aparelhos desconectados. Inspeções, fotos e histórico foram preservados.':body.action==='restore'?'Conta restaurada com nova senha. As sessões antigas continuam revogadas.':body.action==='revoke'?'Sessões encerradas. Cadastros locais preservados.':body.blocked?'Conta bloqueada. O servidor recusará novos acessos, sincronizações e edições.':'Conta salva. O acesso agora é por usuário e senha. Se você redefiniu a senha, os aparelhos anteriores foram desconectados.';clearEditor();await loadUsers();}catch(e){$('accountUserFeedback').textContent=e.message;}finally{busy=false;$('accountUserSave').disabled=false;}}
  $('accountUserSave').onclick=()=>void save({id:editing?.id,revision:editing?.revision,action:editing?.deleted_at?'restore':undefined,name:$('accountUserName').value,email:$('accountUserEmail').value,username:$('accountUserUsername').value,password:$('accountUserPassword').value,phone:$('accountUserPhone').value,role:$('accountUserRole').value,blocked:$('accountUserBlocked').checked});$('accountUserCancel').onclick=clearEditor;$('accountUserSearch').oninput=paintUsers;$('accountUserFilter').onchange=paintUsers;$('accountUsersRefresh').onclick=()=>void loadUsers();
  const previousView=view;view=function(name){if(!allowed())return;previousView(name);users.hidden=!adminAllowed;if(name==='admin'&&adminAllowed){void loadUsers();void loadAccessRequests();}};const previousAccess=initFieldAccess;initFieldAccess=async function(){await previousAccess();bootstrap=adminAllowed;users.hidden=!adminAllowed;if(!adminAllowed){allUsers=[];$('accountUsersList').textContent='';}paint();if(adminAllowed){void loadAccessRequests();openNotificationTarget();}else hideAccessRequests();};
- const priorLogout=$('externalAdminLogout').onclick;$('externalAdminLogout').onclick=async()=>{if(account)return logout();await priorLogout();bootstrap=false;paint();hideAccessRequests();};$('externalAccessFeedback').textContent='Primeiro acesso do administrador: use a senha administrativa atual aqui e cadastre sua própria conta com usuário e senha. Esse acesso também serve para recuperação.';
+ const priorLogout=$('externalAdminLogout').onclick;$('externalAdminLogout').onclick=async()=>{if(account)return logout();if(await priorLogout()===false)return;authEpoch++;bootstrap=false;paint();hideAccessRequests();};$('externalAccessFeedback').textContent='Primeiro acesso do administrador: use a senha administrativa atual aqui e cadastre sua própria conta com usuário e senha. Esse acesso também serve para recuperação.';
  
  const deletionDialog=document.createElement('dialog');deletionDialog.id='accountUserDeleteDialog';deletionDialog.innerHTML='<form id="accountUserDeleteForm"><h3>Excluir usuário?</h3><p id="accountUserDeleteName"></p><p>A conta perderá o acesso e todos os aparelhos serão desconectados ao se conectarem ao servidor. As inspeções, fotos e o histórico serão mantidos. Você poderá restaurar a conta definindo uma nova senha.</p><label>Digite EXCLUIR para confirmar<input id="accountUserDeleteConfirmation" autocomplete="off" spellcheck="false"></label><p id="accountUserDeleteFeedback" role="status"></p><div class="account-user-actions"><button type="button" id="accountUserDeleteCancel" class="secondary">Cancelar</button><button type="submit" id="accountUserDeleteConfirm" disabled>Excluir usuário</button></div></form>';document.body.append(deletionDialog);let deletingUser=null;
  function openUserDeletion(id){if(!adminAllowed)return;const user=allUsers.find(u=>u.id===id&&!u.deleted_at);if(!user)return;deletingUser=user;$('accountUserDeleteName').textContent=user.name+' · '+(user.username||user.email);$('accountUserDeleteConfirmation').value='';$('accountUserDeleteFeedback').textContent='';$('accountUserDeleteConfirm').disabled=true;deletionDialog.showModal();}
