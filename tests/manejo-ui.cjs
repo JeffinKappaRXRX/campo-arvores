@@ -1,0 +1,16 @@
+const vm=require('node:vm'),{JSDOM}=require('jsdom'),fs=require('node:fs'),assert=require('node:assert/strict');
+const dom=new JSDOM('<div id="view"></div>',{url:'https://campo.test',runScripts:'outside-only'}),w=dom.window;
+for(const f of ['central-core.js','manejo-core.js'])vm.runInContext(fs.readFileSync('docs/'+f,'utf8'),dom.getInternalVMContext());
+const C=vm.runInContext('Central',dom.getInternalVMContext());C.views={};C.prem=k=>({antecedencia:60,mesesNaoVera:6,urgente:30}[k]);C.dados.resumo={hoje:'2026-11-04'};
+const table=rows=>({n:rows.length,c:Object.fromEntries([...new Set(rows.flatMap(Object.keys))].map(k=>[k,rows.map(r=>r[k]??null)]))});
+C.dados.chaves=table([{chave:'C1',trecho:1,polo:'RBR',alim:'A1',plano:'P1'},{chave:'C2',trecho:2,polo:'CZS',alim:'A2',plano:'P2'}]);C.dados.parque_postes=table([{id:'p1',tr:1,chave:'C1'},{id:'p2',tr:2,chave:'C2',base:2000,arvE:8},{id:'p3',tr:2,chave:'C2'}]);C.dados.vera_prev=table([{id:'a',poste:'p1',chave:'C1',polo:'RBR',diasToque:-300,especie:'<img src=x onerror=alert(1)>',equipeIT:'Linha viva ou desligamento'}]);
+vm.runInContext(fs.readFileSync('docs/central-manejo.js','utf8'),dom.getInternalVMContext());const el=w.document.getElementById('view');C.views.manejo.render({},el);
+assert.equal(el.querySelectorAll('img').length,0);assert(el.textContent.includes('Linha viva ou desligamento'),'DCMD includes all overdue, not LM only');
+assert.equal(el.querySelectorAll('#manejoDcmd tbody tr[data-l]').length,2);assert.equal(el.querySelectorAll('#manejoPending tbody tr[data-l]').length,1);
+let exportCount=0,blob;w.URL.createObjectURL=b=>{exportCount++;blob=b;return 'blob:test';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
+el.querySelector('#manejoDcmdExport').click();assert.equal(exportCount,1);assert(blob.size>100);
+el.querySelector('[name=pruning]').value='50';el.querySelector('#manejoScenario').dispatchEvent(new w.Event('submit',{cancelable:true}));assert(el.querySelector('#manejoScenarioStatus').textContent.includes('Poda simulada'));
+C.setGlobalFilters({plano:'P1'});C.views.manejo.render({},el);assert.equal(el.querySelectorAll('#manejoDcmd tbody tr[data-l]').length,1,'global filters honored after changing view');
+C.setGlobalFilters({plano:'P2'});C.views.manejo.render({},el);assert.equal(el.querySelectorAll('#manejoDcmd tbody tr[data-l]').length,1);assert(el.querySelector('#manejoDcmd').textContent.includes('p2'));
+delete C.dados.vera_prev;C.views.manejo.render({},el);assert(el.textContent.includes('Consolidado incompleto'));assert.equal(el.querySelector('#manejoDcmdExport'),null);
+dom.window.close();console.log('PASS manejo UI: filtros, pendências, todas as equipes na triagem, exportação, simulação, HTML escapado e base ausente.');

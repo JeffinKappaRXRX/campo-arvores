@@ -1,5 +1,15 @@
 # Publicação no endereço oficial
 
+## Manejo especial T1/T2 — 15/11/2026
+
+O painel oferece `gestao.html#c-manejo` para as entregas 9, 10 e 11 do Plano de Ação Manejo Vegetal Especial. A tela reúne cronograma proposto, carteira DEOP (todos os prazos calculáveis) e triagem LM/DCMD (todos os atrasados T1/T2, sem restringir a indicação de equipe). Cada lista tem CSV próprio. Preparar/exportar não marca a ação de Jefferson como concluída nem encaminha mensagens à Operação.
+
+Usa o consolidado existente (`parque_postes`, `vera_prev`, `chaves`), com data-base visível. Dias relativos do VERA são ancorados na data do consolidado; o atraso é comparado ao dia atual de Rio Branco. Não substitui a atualização das fontes nem representa inspeções ainda não consolidadas. Árvores VERA e postes do histórico ficam identificados separadamente; um poste já representado pelas árvores não entra novamente como estimativa. Trecho ausente e prazo não calculável vão para conferência. Poda posterior à data-base invalida a previsão antiga daquela árvore.
+
+O cronograma é uma simulação da sessão: 1 inspetor, meta de 100 árvores/dia (70 como referência mínima), segunda a sexta sem feriados. Postes históricos usam quantidade estimada explícita; sem quantidade não recebem data. A capacidade de poda começa sem valor e precisa ser informada. O CSV compara a data sugerida de poda com o prazo. Não cria OS, autorização, apontamento de execução nem alterações de cadastro. O campo de projeção do app já existe e foi preservado.
+
+Validação: `node tests/manejo.cjs`, `node tests/manejo-ui.cjs` (jsdom), testes existentes de filtros/central/parque/acesso, `node hosting/build-release.mjs` e `node backend/verify-pages.mjs`. `node tests/preview-manejo.mjs` abre uma prévia local somente com dados fictícios.
+
 O endereço fixo é https://mapeamento-arvores.pages.dev/.
 
 Na versão 4.2.0, a entrega direta contém os arquivos alterados da interface. Os demais recursos continuam no GitHub Pages. A API usa o service binding CAMPO_API, sem credenciais na interface.
