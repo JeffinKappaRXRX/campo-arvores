@@ -20,7 +20,7 @@ $('externalAdminForm').onsubmit=async event=>{
   if(!adminAllowed)throw Error('Não foi possível confirmar a sessão. Tente novamente.');
   view('admin');feedback.textContent='Administrador conectado. Sessão válida por até 8 horas nesta aba.';
  }catch(error){
-  feedback.textContent=['TypeError','TimeoutError','AbortError'].includes(error.name)?'Não foi possível acessar o servidor. Confira a conexão e tente novamente.':error.message;
+  feedback.textContent=['TypeError','TimeoutError','AbortError'].includes(error.name)?'Não foi possível acessar o servidor. Confira a conexão e tente novamente. Se funcionar nos dados móveis, a falha está no caminho da rede Wi-Fi até o serviço. Seus cadastros locais foram preservados.':error.message;
  }finally{
   password.value='';password.type='password';window.CampoPasswordVisibility?.reset(accessPanel);button.disabled=false;
  }

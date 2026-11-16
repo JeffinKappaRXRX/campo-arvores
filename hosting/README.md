@@ -1,5 +1,17 @@
 # Publicação no endereço oficial
 
+## Edição administrativa e produtividade — 16/11/2026
+
+No painel, abra uma árvore e use **Editar árvore / anexar fotos do PC**. A edição usa o mesmo ID central, exige administrador e confere a versão novamente no salvamento. Preserva autoria, data e tempo do levantamento, metadados, fotos e versões anteriores. Uma correção de árvore VERA sem data original não é registrada como um novo levantamento de hoje. Conflitos e revisões de exclusão bloqueiam a gravação, sem descartar o formulário. Um envio sem confirmação pode ser repetido com o mesmo identificador, sem duplicar fotos ou versões.
+
+JPEG, PNG e WebP de até 20 MB são convertidos em cópias JPEG de até 1.280 px. O limite existente é de 12 fotos atuais por árvore, incluindo as anteriores. Os originais do PC continuam sob responsabilidade do usuário. Fotos antigas não são removidas. Cadastros legados exclusivos do Drive são conferidos novamente antes da primeira edição central e recebem uma cópia histórica de origem. As alterações ficam na base central compartilhada e nas exportações do painel; esta ação não reescreve os arquivos legados do Drive.
+
+A produtividade considera 1 inspetor, mínimo de referência de 70 e meta de 100 cadastros por dia. O resultado diário respeita os filtros visíveis e o horário de Rio Branco. Vegetação agrupada continua contando como um cadastro. A projeção mostra horas ativas pela média/mediana medida e equivalência em dias de trabalho (jornada padrão de 8 h, ajustável), meses de 22 dias e anos de 264 dias. O prazo pela meta de 100 e pela referência de 70 aparece separadamente. São equivalências de esforço, sem promessa de data de conclusão; deslocamento, pausas, feriados e sincronização não entram no tempo ativo.
+
+Conexão: em 16/11 o usuário confirmou que o celular abriu nos dados móveis, embora falhasse no Wi-Fi. Não foi necessário excluir dados nem trocar credenciais. `/acesso.html` segue disponível para carregar os arquivos atuais na mesma origem. Não limpar armazenamento/desinstalar para tentar resolver rede: pode haver levantamentos offline. A mensagem de falha administrativa explica a comparação entre redes; o login individual tem espera limitada a 15 s. Logs e traces do Worker são habilitados com amostragem de 10%, preservando os vínculos e segredos existentes. Isso auxilia diagnóstico e não constitui garantia de disponibilidade integral nem monitoramento com alertas.
+
+Validação isolada: `backend/verify-control-edit.mjs`, `tests/management-edit-ui.cjs`, controle/paginação, histórico, compartilhamento, autenticação, acesso à rede, atualizações e rascunhos. Conferência visual com `tests/preview-control.mjs`, somente dados fictícios. Não há migração destrutiva nem necessidade de alterar contas ou registros reais para publicar. Publicar a API antes do painel; executar o build final para renovar o service worker. Preservar D1, KV, Durable Object e todos os segredos do Worker. O `wrangler.toml` contém IDs de exemplo e não deve substituir os vínculos de produção.
+
 ## Manejo especial T1/T2 — 15/11/2026
 
 O painel oferece `gestao.html#c-manejo` para as entregas 9, 10 e 11 do Plano de Ação Manejo Vegetal Especial. A tela reúne cronograma proposto, carteira DEOP (todos os prazos calculáveis) e triagem LM/DCMD (todos os atrasados T1/T2, sem restringir a indicação de equipe). Cada lista tem CSV próprio. Preparar/exportar não marca a ação de Jefferson como concluída nem encaminha mensagens à Operação.

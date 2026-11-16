@@ -3,6 +3,18 @@ main = "worker.js"
 compatibility_date = "2026-10-13"
 workers_dev = true
 
+[observability]
+enabled = true
+head_sampling_rate = 0.1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
+
 [vars]
 APP_ORIGIN = "https://jeffinkapparxrx.github.io"
 CAMPO_ADMIN_EMAIL = "administrador@campo.local"
