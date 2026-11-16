@@ -89,12 +89,77 @@
    tabela($('tSt'),[{t:'Situação',k:'_k'},{t:'Chaves',k:'_n',n:1,f:v=>num(v)},{t:'Reincidiu até 15 dias',k:'r15',n:1,f:v=>num(v)},{t:'16 a 30 dias',k:'r30',n:1,f:v=>num(v)},{t:'31 a 60 dias',k:'r60',n:1,f:v=>num(v)},{t:'Acima de 60 dias',k:'r99',n:1,f:v=>num(v)}],agrupa(l,x=>x.sit||'—',(a,x)=>{const m=String(x.marco);if(m.includes('15'))add(a,'r15',1);else if(m.includes('16'))add(a,'r30',1);else if(m.includes('31'))add(a,'r60',1);else if(m.includes('acima'))add(a,'r99',1);}),{ord:1,pagina:8});
    tabela($('tCk'),[{t:'Chave',k:'chave'},{t:'Frente',k:'frente'},{t:'Plano',k:'plano'},{t:'Trecho',k:'trT'},{t:'Polo',k:'polo'},{t:'Conjunto',k:'nConj'},{t:'Alimentador',k:'alim'},{t:'Postes',k:'postes',n:1,f:v=>num(v)},{t:'Marco',k:'mk',f:isoBR},{t:'Inspeção',k:'criar',h:v=>sit(v,v==='Criar OS'?'seri':'bom')},{t:'Última inspeção',k:'ui',f:dBR},{t:'Dias',k:'diasInsp',n:1,f:v=>num(v)},{t:'Manut. feitas',k:'me',n:1},{t:'Manut. abertas',k:'mp',n:1},{t:'Podas feitas',k:'qe',n:1,f:v=>num(v)},{t:'OS de poda abertas',k:'pp',n:1},{t:'Podas pendentes',k:'qp',n:1,f:v=>num(v)},{t:'Situação',k:'sit'},{t:'Marco OS × atuação',k:'marco'},{t:'Dias de inspeção',k:'dias',n:1,d:'Postes ÷ (capacidade × inspetores do polo)'},{t:'Prazo',k:'viab'},{t:'Reincidente',k:'reinc3',f:v=>v?'Sim':''}],l,{pagina:25,csv:'avanco_por_marco'});}};
  // ---------- Mapa unificado.
- let mapa=null,visao=null;const camadas={vera:1,nv:1,ab:1,ss:1,est:0,crz:0,rei:0,fx:0,lic:0},ROT={vera:['Árvores VERA',cor.bom],nv:['Postes com poda sem VERA',cor.azul],ab:['Poste com OS aberta sem VERA',cor.lar],ss:['Poste só com SS',cor.rox],est:['Estruturas do plano ideal',cor.amb],crz:['Cruzetas T1 e T2',cor.ver],rei:['Reativo (reincidente)',cor.ros],fx:['Limpeza de faixa',cor.lim],lic:['Licença ambiental',cor.ve2]};
- V.mapa={mod:'poda',eyebrow:'PODA + VERA',titulo:'Mapa unificado',precisa:['parque_postes','vera_prev','os_abertas','faixa','chaves'],filtros:['polo','conj','alim','trP','prazoP','chave'],render(F,el){if(mapa){visao={c:mapa.getCenter(),z:mapa.getZoom()};mapa.remove();mapa=null;}const P=filtraP(parque(),F),fc=semAc(F.chave).trim(),ok=x=>(!F.polo||C.em(F.polo,x.polo))&&(!F.conj||C.em(F.conj,x.conj))&&(!F.alim||C.em(F.alim,x.alim))&&(!F.trP||C.em(F.trP,x.trT))&&(!fc||semAc(x.chave).includes(fc)),a=prem('antecedencia'),h=hoje(),u=prem('urgente'),prazoDe=d=>d==null?'Sem dados':d<0?'Fora do prazo':d<u?`Urgente (< ${u} dias)`:'Dentro do prazo',dentroPrazo=d=>!F.prazoP||C.em(F.prazoP,prazoDe(d))||(C.tem(F.prazoP,'Urgente')&&prazoDe(d).startsWith('Urgente')),T=L('vera_prev').filter(x=>x.lat!=null&&(!F.polo||C.em(F.polo,x.polo))&&(!F.conj||C.em(F.conj,x.conj))&&(!F.alim||C.em(F.alim,x.alim))&&(!fc||semAc(x.chave).includes(fc))&&dentroPrazo(x.diasToque==null?null:x.diasToque-a)),pl=plano().filter(o=>o.lat!=null&&ok(o)),fx=faixa().l.filter(x=>x.lat!=null&&x.sitF!=='Monitorar'&&ok(x)),lic=(R().parque?.licencas||[]).filter(x=>!F.alim||C.em(F.alim,x.alim));
-   const grupos={vera:T.map(x=>({lat:x.lat,lon:x.lon,fora:x.diasToque!=null&&x.diasToque-a<0,html:`<b>Árvore ${esc(x.id)}</b><br>${esc(x.especie)}<br>Poste 226-${esc(x.poste)}<br>Encosta: ${x.diasToque==null?'—':dBR(h+x.diasToque)}<br>Data ideal: ${x.diasToque==null?'—':dBR(h+x.diasToque-a)}<br>${esc(x.equipeIT)}`})),nv:[],ab:[],ss:[],est:pl.filter(o=>o.origemP.startsWith('Ideal')&&o.sitP==='No plano').map(o=>({lat:o.lat,lon:o.lon,html:`<b>${esc(o.classe)}</b><br>${esc(o.os)}<br>${esc(o.frente)} · ${esc(o.trT)}<br>Mês ${o.mesP?mesTxt(o.mesP):'—'}<br>${brl(o.val)}`})),crz:pl.filter(eCruzT).map(o=>({lat:o.lat,lon:o.lon,html:`<b>Cruzeta ${esc(o.crzT)} ${o.mad?'(madeira)':''}</b><br>${esc(o.os)}<br>${esc(o.trT)} · ${esc(o.pri)}<br>Mês ${o.mesP?mesTxt(o.mesP):'—'}`})),rei:pl.filter(o=>o.origemP.startsWith('Reativo')).map(o=>({lat:o.lat,lon:o.lon,html:`<b>Reincidente: ${esc(o.classe)}</b><br>${esc(o.os)}<br>Chave ${esc(o.chave)}<br>Mês ${o.mesP?mesTxt(o.mesP):'sem orçamento'}`})),fx:fx.map(x=>({lat:x.lat,lon:x.lon,html:`<b>Limpeza ${esc(x.chave)}</b><br>${esc(x.sitF)} · ${esc(x.eq||'sem equipe')}<br>Última: ${dBR(x.ultLF)}<br>Ocorrências: ${num(x.occ)}`})),lic:lic.map(x=>({lat:x.lat,lon:x.lon,html:`<b>${esc(x.pasta)}</b><br>${esc(x.mun)} · ${esc(x.alim)} · ${esc(x.per)}`}))};
-   for(const x of P){if(x.vera>0||x.lat==null)continue;const g=x.cat==='OS executada'?'nv':x.cat==='Só SS'?'ss':'ab';grupos[g].push({lat:x.lat,lon:x.lon,fora:x.prazo==='Fora do prazo',html:`<b>Poste 226-${esc(x.id)}</b><br>${esc(x.cat)} · ${esc(x.trT)}<br>Última poda: ${dBR(x.ult)}<br>Próxima: ${dBR(x.prox)}<br>${esc(x.por)}<br>OS abertas: ${num(x.nAb)} · SS: ${num(x.nSS)}`});}
-   el.innerHTML=`<article class="panel"><div class="filtros" id="mpCam">${Object.entries(ROT).map(([k,[t,c]])=>`<label class="mapa-cam" style="display:flex;align-items:center;flex-direction:row"><input type="checkbox" style="width:16px;height:16px;flex:none" data-cam="${k}" ${camadas[k]?'checked':''}><i style="background:${c};display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 4px"></i>${esc(t)} (${num(grupos[k].length)})</label>`).join('')}</div><div id="mapaU" style="height:68vh;border-radius:8px"></div><p class="nota">Borda vermelha: já passou da data de poda. Clique no ponto para ver o detalhe. ${num(P.filter(x=>x.lat==null).length)} postes sem coordenada não aparecem.</p></article>`;
-   mapa=window.L.map('mapaU',{preferCanvas:true}).setView(visao?.c||[-9.9,-69],visao?.z||7);window.L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',{subdomains:['mt0','mt1','mt2','mt3'],maxZoom:20,attribution:'Google'}).addTo(mapa);const rend=window.L.canvas({padding:.3}),cam={};const desenhaCam=k=>{if(cam[k]){cam[k].remove();cam[k]=null;}if(!camadas[k])return;const g=window.L.layerGroup();for(const p of grupos[k]){const m=window.L.circleMarker([p.lat,p.lon],{renderer:rend,radius:k==='vera'?4:k==='lic'?5:3,fillColor:ROT[k][1],fillOpacity:.9,color:p.fora?'#b3261e':'#ffffff',weight:p.fora?1:.4});m.bindPopup(p.html);g.addLayer(m);}g.addTo(mapa);cam[k]=g;};Object.keys(ROT).forEach(desenhaCam);$('mpCam').querySelectorAll('[data-cam]').forEach(c=>c.onchange=()=>{camadas[c.dataset.cam]=c.checked?1:0;desenhaCam(c.dataset.cam);});setTimeout(()=>mapa&&mapa.invalidateSize(),60);}};
+ let mapa=null,visao=null,unifiedTimer=null;
+ const camadas={vera:1,campo:1,nv:1,ab:1,ss:1,est:0,crz:0,rei:0,fx:1,lic:0,rede:1};
+ const ROT={vera:['Árvores VERA',cor.bom],campo:['Inspeções de campo',cor.ve2],nv:['Postes com poda sem VERA',cor.azul],
+  ab:['Postes com OS sem VERA',cor.lar],ss:['Postes só com SS',cor.rox],est:['Estruturas do plano ideal',cor.amb],
+  crz:['Cruzetas T1 e T2',cor.ver],rei:['Reativo (reincidente)',cor.ros],fx:['Limpeza de faixa',cor.lim],lic:['Licença ambiental',cor.ve2],rede:['Rede elétrica local',cor.azul]};
+ C.closeUnifiedMap=()=>{clearTimeout(unifiedTimer);if(mapa){visao={c:mapa.getCenter(),z:mapa.getZoom()};mapa.remove();mapa=null;}};
+ V.mapa={mod:'poda',eyebrow:'PODA + VERA',titulo:'Mapa unificado e plano de poda por ciclo',
+  precisa:['parque_postes','vera_prev','os_abertas','faixa','chaves'],filtros:['polo','conj','alim','trP','prazoP','mes','chave','buscaT','cycleRisk','cycleProjection','cyclePoda'],
+  render(F,el){
+   C.closeUnifiedMap();
+   const cycle=C.cycleMap,model=cycle.prepare(F),groups={vera:[],campo:[],nv:[],ab:[],ss:[],est:[],crz:[],rei:[],fx:[],lic:[]};
+   for(const row of model.rows)if(cycle.point(row))groups[row.layer].push(row);
+   const extra=(layer,r,caption,details)=>{const row={...r,caption,status:r.status,kind:ROT[layer][0],id:r.os||r.id||r.chave||r.pasta,especie:caption,basis:details};if(cycle.point(row)&&model.other(row))groups[layer].push(row);};
+   for(const r of plano()){
+    const detail='OS '+(r.os||'—')+' · mês '+(r.mesP?mesTxt(r.mesP):'sem programação')+' · '+brl(r.val);
+    if(r.origemP.startsWith('Ideal')&&r.sitP==='No plano')extra('est',r,r.classe,detail);
+    if(eCruzT(r))extra('crz',r,'Cruzeta '+(r.crzT||''),detail);
+    if(r.origemP.startsWith('Reativo'))extra('rei',r,r.classe,detail);
+   }
+   for(const r of faixa().l)if(r.sitF!=='Monitorar')extra('fx',r,r.sitF,'Última limpeza: '+dBR(r.ultLF)+' · '+(r.eq||'equipe a definir'));
+   for(const r of R().parque?.licencas||[])extra('lic',r,r.pasta,[r.mun,r.alim,r.per].filter(Boolean).join(' · '));
+   el.innerHTML='<article class="panel"><div class="filtros" id="mpCam"></div><div class="acoes"><button type="button" id="unifiedFit">Enquadrar pontos filtrados</button><a href="gestao.html#mapa">Instalar ou atualizar a rede local</a></div><div id="mapaU" style="height:65vh;border-radius:8px"></div><p id="unifiedNetworkStatus" class="nota" role="status"></p><p class="nota">Borda vermelha indica poda fora do prazo. Aproxime para abrir os pontos de um grupo. Os filtros de prazo e mês selecionam previsões de poda. Outras camadas sem essa informação ficam fora do recorte.</p></article><article class="panel" id="cycleList"></article>';
+   const current=mapa=window.L.map('mapaU',{preferCanvas:true}).setView(visao?.c||[-9.9,-69],visao?.z||7);
+   window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(current);
+   current.createPane('unifiedNetwork').style.zIndex='390';
+   const rend=window.L.canvas({padding:.3}),net=window.L.geoJSON(null,{pane:'unifiedNetwork',style:()=>({color:'#327bd1',weight:2,opacity:.8}),pointToLayer:(_f,p)=>window.L.circleMarker(p,{pane:'unifiedNetwork',radius:3,color:'#327bd1',weight:1})}).addTo(current);
+   const visible={};
+   const show=r=>{current.setView([r.lat,r.lon],17);window.L.popup().setLatLng([r.lat,r.lon]).setContent(cycle.popup(r)).openOn(current);};
+   function paintLayer(k){
+    visible[k]?.remove();delete visible[k];
+    if(!camadas[k])return;
+    const layer=window.L.layerGroup();
+    const bounds=current.getBounds().pad(.1),inView=groups[k].filter(r=>bounds.contains([r.lat,r.lon]));
+    if(inView.length>700){
+     const bins=new Map();const size=Math.max(42,Math.ceil(Math.sqrt(inView.length/700)*42));
+     for(const row of inView){const p=current.latLngToContainerPoint([row.lat,row.lon]),key=Math.floor(p.x/size)+':'+Math.floor(p.y/size);let b=bins.get(key);if(!b){b={count:0,bounds:window.L.latLngBounds([]),first:row};bins.set(key,b);}b.count++;b.bounds.extend([row.lat,row.lon]);}
+     for(const b of bins.values()){const marker=window.L.circleMarker(b.bounds.getCenter(),{renderer:rend,radius:b.count===1?4:Math.min(14,5+Math.log2(b.count)),color:ROT[k][1],fillOpacity:.75}).addTo(layer);if(b.count===1)marker.bindPopup(()=>cycle.popup(b.first));else marker.bindTooltip(num(b.count)+' pontos · '+ROT[k][0]).on('click',()=>{if(current.getZoom()<19)current.fitBounds(b.bounds,{maxZoom:Math.min(19,current.getZoom()+3),padding:[24,24]});else marker.bindPopup(()=>cycle.popup(b.first)).openPopup();});}
+    }else for(const row of inView){
+     const late=row.days!=null&&row.days<0;
+     const marker=window.L.circleMarker([row.lat,row.lon],{renderer:rend,radius:k==='campo'||k==='vera'?5:4,fillColor:ROT[k][1],fillOpacity:.9,color:late?'#b3261e':'#fff',weight:late?2:1});
+     marker.bindPopup(()=>cycle.popup(row));marker.addTo(layer);
+    }
+    layer.addTo(current);visible[k]=layer;
+   }
+   function paintList(){cycle.list($('cycleList'),model.rows.filter(r=>camadas[r.layer]),model.source,model.now,show);}
+   let networkSerial=0;
+   async function paintNetwork(){
+    const token=++networkSerial,status=$('unifiedNetworkStatus');if(current!==mapa||!status)return;
+    if(!camadas.rede){net.clearLayers();status.textContent='Rede local oculta.';return;}
+    try{
+     const read=parent!==window?parent.CampoControlMap?.unifiedNetwork:null;
+     if(!read)throw Error('Abra pelo painel de gestão para carregar a rede local.');
+     const b=current.getBounds(),territory=['planoGlobal','poloGlobal','localidadeGlobal','polo','conj','alim','trP','chave'].some(k=>F[k]);
+     const feeders=territory?[...new Set(model.networkFeeders())]:[];
+     if(territory&&!feeders.length){net.clearLayers();status.textContent='Nenhum alimentador identificado neste recorte da rede.';return;}
+     const data=await read({west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()},current.getZoom(),feeders);
+     if(token!==networkSerial||current!==mapa)return;
+     net.clearLayers();net.addData(data.collection);
+     status.textContent=num(data.collection.features.length)+' feições da rede neste enquadramento'+(feeders.length?' · alimentadores selecionados':'')+(data.capped?' · aproxime para ver mais.':'.');
+    }catch(e){if(token===networkSerial&&current===mapa){net.clearLayers();status.textContent=e.message;}}
+   }
+   const fit=()=>{const b=window.L.latLngBounds([]);for(const [key,rows]of Object.entries(groups))if(camadas[key])for(const r of rows)b.extend([r.lat,r.lon]);if(b.isValid())current.fitBounds(b,{padding:[22,22],maxZoom:17});};
+   $('unifiedFit').onclick=fit;
+   $('mpCam').innerHTML=Object.entries(ROT).map(([key,[name,color]])=>`<label class="mapa-cam" style="display:flex;align-items:center;flex-direction:row"><input type="checkbox" style="width:16px;height:16px;flex:none" data-cam="${key}" ${camadas[key]?'checked':''}><i style="background:${color};display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 4px"></i>${esc(name)}${groups[key]?' ('+num(groups[key].length)+')':''}</label>`).join('');
+   for(const key of Object.keys(groups))paintLayer(key);
+   $('mpCam').querySelectorAll('[data-cam]').forEach(input=>{input.onchange=()=>{const key=input.dataset.cam;camadas[key]=input.checked?1:0;if(key==='rede')void paintNetwork();else{paintLayer(key);paintList();}};});
+   paintList();if(!visao)fit();
+   current.on('moveend',()=>{clearTimeout(unifiedTimer);unifiedTimer=setTimeout(()=>{for(const key of Object.keys(groups))paintLayer(key);void paintNetwork();},250);});
+   setTimeout(()=>{if(mapa===current){current.invalidateSize();void paintNetwork();}},60);
+  }};
+
  // ---------- Resumo no formato dos BIs: OS, poda e SS abertos pelo mesmo corte.
  V.resumo={mod:'man',eyebrow:'MANUTENÇÃO',titulo:'Resumo de OS, poda e SS',precisa:['os_exec','os_abertas','ss_resumo','chaves'],filtros:['anoR','polo','conj','alim','dimR'],padrao:()=>({anoR:String(dataDe(diaDe(new Date().toISOString().slice(0,10))).getUTCFullYear()),dimR:'pri'}),render(F,el){const dim=F.dimR||'pri',ok=x=>(!F.polo||C.em(F.polo,x.polo))&&(!F.conj||C.em(F.conj,x.conj))&&(!F.alim||C.em(F.alim,x.alim)),ch=new Map(L('chaves').map(k=>[k.chave,k])),val=x=>dim==='conj'?nomeConj(x.conj):dim==='trecho'?(ch.get(x.chave)?.trecho?'T'+ch.get(x.chave).trecho:'Sem trecho'):(x[dim]||'—'),E=L('os_exec').filter(x=>ok(x)&&x.dia!=null&&C.em(F.anoR,dataDe(x.dia).getUTCFullYear())&&x.tipo!=='INSPEÇÃO'),A=L('os_abertas').filter(x=>ok(x)&&x.tipo!=='INSPEÇÃO'),S=L('ss_resumo').filter(x=>C.em(F.anoR,x.ano)&&(!F.polo||C.em(F.polo,x.polo))&&(!F.conj||C.em(F.conj,x.conj))),poda=E.filter(x=>x.tipo==='PODA'),faixaE=E.filter(x=>x.tipo==='LIMPEZA DE FAIXA'),prop=x=>String(x.eq).startsWith('EAC'),sEs=e=>S.filter(x=>x.estado===e).reduce((a,x)=>a+x.n,0),totS=S.reduce((a,x)=>a+x.n,0);
    el.innerHTML=kpis([['OS executadas',num(E.length),brl(E.reduce((a,x)=>a+(x.custo||0),0))],['OS abertas',num(A.length),brl(A.reduce((a,x)=>a+(x.mat||0)+(x.mo||0),0))],['Podas apontadas',num(poda.reduce((a,x)=>a+(x.qtdPoda||0),0)),num(poda.length)+' OS; própria '+num(poda.filter(prop).length)+', terceira '+num(poda.length-poda.filter(prop).length)],['Limpeza de faixa',num(faixaE.length),'OS executadas'],['SS abertas no ano',num(totS),num(sEs('SS ATENDIDA'))+' atendidas'],['SS fora do prazo',pct(totS?S.filter(x=>x.prazoSS==='Fora do prazo').reduce((a,x)=>a+x.n,0)/totS:0),'do total aberto no ano']])+painel('OS executadas e abertas','POR '+({pri:'CRITICIDADE',trecho:'TRECHO',polo:'POLO',conj:'CONJUNTO',tipo:'TIPO',frente:'FRENTE'}[dim]),'tDim')+`<div class="duas">${painel('Execução por mês','MANUTENÇÃO, PODA E LIMPEZA','gMes')}${painel('Valor executado por mês','R$','gVal')}</div><div class="duas">${painel('SS por estado e prazo','NO ANO','tSs')}${painel('SS por origem','MAIORES','tOr')}</div>`;

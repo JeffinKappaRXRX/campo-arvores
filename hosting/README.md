@@ -1,5 +1,13 @@
 # Publicação no endereço oficial
 
+## Mapa unificado e plano de poda por ciclo — 16/11/2026
+
+O painel em `gestao.html#c-mapa` reúne VERA, inspeções compartilhadas, parque por poste, OS e SS, limpeza de faixa, licenças, camadas de manutenção e rede elétrica preparada no PC. O mapa, a tabela e o CSV do ciclo usam o mesmo recorte e as mesmas camadas de poda ativadas. O cadastro e as fotos podem ser abertos a partir do ponto. A rede é uma camada de referência consultada pela área visível e pelos alimentadores do recorte territorial. A instalação continua disponível no menu de rede do painel.
+
+O ciclo usa a previsão VERA ancorada na data do consolidado, descontando a antecedência configurada. Para postes sem essa previsão, a última poda registrada mais o ciclo histórico em dias tem prioridade. Na ausência desse histórico, a data-base e a premissa de meses geram uma estimativa identificada. Sem prazo calculável, o registro vai para conferência. Pontos sem coordenada permanecem no plano e no CSV. Uma poda posterior ao consolidado invalida a previsão de crescimento anterior. O cálculo de atraso usa a data corrente em Rio Branco.
+
+Correções de campo vinculadas ao ID VERA atualizam o mesmo ponto. Cadastro recente sem previsão vinculada entra no mapa e, se marcado para poda, na lista de conferência. Identifique pendências no consolidado antes de usar a carteira para programar equipes. O cronograma T1/T2 continua disponível com a meta de 100 levantamentos/dia, referência mínima de 70 e capacidade de poda informada pelo operador.
+
 ## Edição administrativa e produtividade — 16/11/2026
 
 No painel, abra uma árvore e use **Editar árvore / anexar fotos do PC**. A edição usa o mesmo ID central, exige administrador e confere a versão novamente no salvamento. Preserva autoria, data e tempo do levantamento, metadados, fotos e versões anteriores. Uma correção de árvore VERA sem data original não é registrada como um novo levantamento de hoje. Conflitos e revisões de exclusão bloqueiam a gravação, sem descartar o formulário. Um envio sem confirmação pode ser repetido com o mesmo identificador, sem duplicar fotos ou versões.
