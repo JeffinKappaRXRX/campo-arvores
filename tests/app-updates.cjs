@@ -4,6 +4,15 @@ async function worker(keys){const events={},calls=[],cache={addAll:async request
 (async()=>{
  let w=await worker(['campo-app-old','offline-streets']);await w.fire('install');assert.deepEqual(w.calls,['cached']);await w.fire('message',{data:{type:'SKIP_WAITING'}});assert.deepEqual(w.calls,['cached','activate']);await w.fire('activate');assert(w.calls.includes('delete campo-app-old'));assert(!w.calls.includes('delete offline-streets'));assert(w.calls.includes('claim'));
  w=await worker(['campo-github-v4-2-2']);await w.fire('install');assert.deepEqual(w.calls,['cached','activate']);
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'campo-release-test-'));try{fs.cpSync(path.join(root,'hosting'),path.join(dir,'hosting'),{recursive:true,filter:p=>!p.includes('/dist')});fs.mkdirSync(path.join(dir,'docs'));fs.writeFileSync(path.join(dir,'docs/sw.js'),source);fs.writeFileSync(path.join(dir,'docs/index.html'),'<html>one</html>');fs.writeFileSync(path.join(dir,'docs/app.js'),'one');const build=()=>{execFileSync(process.execPath,[path.join(dir,'hosting/build-release.mjs')]);return fs.readFileSync(path.join(dir,'docs/sw.js'),'utf8').match(/const CACHE='([^']+)'/)[1]};const first=build();assert.equal(build(),first);fs.writeFileSync(path.join(dir,'docs/app.js'),'two');assert.notEqual(build(),first);}finally{fs.rmSync(dir,{recursive:true,force:true})}
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'campo-release-test-'));try{fs.cpSync(path.join(root,'hosting'),path.join(dir,'hosting'),{recursive:true,filter:p=>!p.includes('/dist')});fs.mkdirSync(path.join(dir,'docs'));fs.writeFileSync(path.join(dir,'docs/sw.js'),source);fs.writeFileSync(path.join(dir,'docs/index.html'),'<html><script src="config.js"></script><script src="app.js"></script></html>');fs.writeFileSync(path.join(dir,'docs/app.js'),'one');const build=()=>{execFileSync(process.execPath,[path.join(dir,'hosting/build-release.mjs')]);return fs.readFileSync(path.join(dir,'docs/sw.js'),'utf8').match(/const CACHE='([^']+)'/)[1]};const first=build();assert.equal(build(),first);fs.writeFileSync(path.join(dir,'docs/app.js'),'two');assert.notEqual(build(),first);
+ const output=fs.readFileSync(path.join(dir,'hosting/dist/_worker.js'));
+ const release=(await import('data:text/javascript;base64,'+output.toString('base64'))).default;
+ const page=await release.fetch(new Request('https://mapeamento-arvores.pages.dev/acesso'),{});
+ assert.equal(page.status,200);
+ const html=await page.text();
+ assert(!html.includes('config.js'));
+ const pinned=html.match(/src="(app[.]js[?]v=[0-9a-f]{20})"/)[1];
+ const app=await release.fetch(new Request('https://mapeamento-arvores.pages.dev/'+pinned),{});
+ assert.equal(await app.text(),'two','Recovery uses release assets under new request URLs');}finally{fs.rmSync(dir,{recursive:true,force:true})}
  console.log('PASS: cache-ready before activation, explicit activation, legacy bootstrap, unrelated caches preserved, deterministic build, changed asset generates new update.');
 })().catch(e=>{console.error(e);process.exitCode=1});

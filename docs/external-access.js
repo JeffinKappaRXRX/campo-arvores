@@ -1,6 +1,7 @@
 'use strict';
 const accessPanel=document.createElement('details');accessPanel.className='external-access';accessPanel.innerHTML='<summary>Administração</summary><form id="externalAdminForm"><label>Senha do administrador<input id="externalAdminPassword" type="password" autocomplete="current-password" required></label><button type="submit" id="externalAdminLogin" class="secondary">Entrar na Administração</button><button type="button" id="externalAdminLogout" class="secondary">Sair da Administração</button><p id="externalAccessFeedback" role="status" class="hint"></p></form>';$('setup').append(accessPanel);
 $('externalAccessFeedback').textContent='O inspetor entra com seu usuário e senha. Este acesso é para cadastro inicial e recuperação do administrador.';
+if(location.pathname==='/acesso')accessPanel.open=true;
 $('externalAdminForm').onsubmit=async event=>{
  event.preventDefault();
  const button=$('externalAdminLogin'),password=$('externalAdminPassword'),feedback=$('externalAccessFeedback');

@@ -11,6 +11,8 @@ const assets=Object.fromEntries(await Promise.all(files.map(async file=>{
 const canonical={...assets,'/sw.js':assets['/sw.js'].replace(/const CACHE='[^']+';/,"const CACHE='campo-app-build';")};
 const build=createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0,20);
 assets['/sw.js']=canonical['/sw.js'].replace("const CACHE='campo-app-build';","const CACHE='campo-app-"+build+"';");
+// Use distinct request URLs even when the browser is still controlled by an older worker.
+assets['/acesso.html']=assets['/index.html'].replace(/((?:src|href)=")([\w./-]+\.(?:js|css))"/g,'$1$2?v='+build+'"');
 await fs.writeFile(new URL('sw.js',docs),assets['/sw.js']);
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');
 const route=" if(Object.prototype.hasOwnProperty.call(RELEASE_ASSETS,path)){const mime=path.endsWith('.css')?'text/css':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.csv')?'text/csv':path.endsWith('.txt')?'text/plain':'application/javascript';return new Response(request.method==='HEAD'?null:RELEASE_ASSETS[path],{headers:{'Content-Type':mime+'; charset=utf-8','Cache-Control':'no-cache'}});}\n const upstream=new URL(";
