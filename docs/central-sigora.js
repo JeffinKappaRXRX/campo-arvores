@@ -11,11 +11,13 @@
   function budget() {
     const orc = C.dados.resumo?.orc;
     const opex = C.linhasRaw('opex').filter(r => r.ano === orc?.ano);
+    const opexYtd=opex.filter(row=>row.mes<=orc?.ultMes);
     return {year:orc?.ano, lines:[
-      {key:'capex', title:'CAPEX', source:'Obras por SIGCO', planned:sum(orc?.sigcos||[],'anual'), forecast:sum(orc?.sigcos||[],'forecast')},
-      {key:'opex', title:'OPEX', source:'OPEX por frente · SIACO', planned:sum(opex,'o'), forecast:sum(opex,'f')}
+      {key:'capex', title:'CAPEX', source:'Obras por SIGCO', planned:sum(orc?.sigcos||[],'anual'), forecast:sum(orc?.sigcos||[],'forecast'), actual:sum(orc?.sigcos||[],'ytdReal')},
+      {key:'opex', title:'OPEX', source:'OPEX por frente · SIACO', planned:sum(opex,'o'), forecast:sum(opex,'f'), actual:sum(opexYtd,'r')}
     ]};
   }
+  C.sigoraBudget=budget;
   function maintenance(filters) {
     return C.linhas('os_abertas').filter(row=>!row.expurgo && row.tipo!=='INSPEÇÃO' && C.em(filters.alim,row.alim) && C.em(filters.pri,row.pri));
   }
@@ -51,7 +53,7 @@
       const hasOrders=Boolean(C.dados.os_abertas);
       el.innerHTML =
         '<section class="sigora-hero"><span class="eyebrow">MANUTENÇÃO E ORÇAMENTO</span><h2>Da carteira à programação</h2><p>Acompanhe as ordens de serviço, o orçamento e os dados de vegetação que apoiam a manutenção da rede.</p>'+
-        '<div class="sigora-actions">'+nav('carteira','Abrir carteira')+nav('programacao','Ver programação')+nav('simular','Simular carteira')+'</div></section>'+
+        '<div class="sigora-actions">'+nav('gerencial','Reunião de manutenção')+nav('mapa','Controle de poda e estruturas')+nav('simular','Simular carteira')+'</div></section>'+
         kpis([
           ['OS abertas no recorte',num(hasOrders?rows.length:null),'Sem inspeções e registros de expurgo'],
           ['OS de poda e limpeza',num(hasOrders?vegetation.length:null),'Dentro das OS do recorte'],

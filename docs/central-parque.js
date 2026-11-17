@@ -5,24 +5,44 @@
  const MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'],mesTxt=m=>m?MES[+m.slice(5,7)-1]+'/'+m.slice(2,4):'—';
  // ---------- Premissas editáveis: valem em qualquer computador porque ficam no servidor.
  const PADRAO={mesesNaoVera:6,antecedencia:60,urgente:30,dtC:2,ritmoVera:0,marcoInsp:'2025-11-01',marcoExec:'2025-11-01',marcoPoda:'2026-01-01',semMC:1,reincOcc3m:4,reincCli:50,capEst:100,capPoda:130,tecRBR:3,tecBRA:1,tecCZS:1,diasUteis:313,reservaInsp:10,reservaReativo:20,alocCapex:100,alocOpex:100,alocPoda:100,anoPlano:2027,metaKm:855,cicloFaixa:24,pChi:50,pOcc:20,pTempo:20,pOS:10,kmPadrao:.5,'passadas.INTERMUNICIPAL':1,'passadas.CHAVE REINCIDENTE':1,'passadas.CHAVE CRÍTICA':1,'passadas.T1/T2':2,'passadas.PLANO T2':1,'passadas.PLANO CONJUNTOS':1,'passadas.T3 URBANO':1};
- let valores={},salvoEm=null,memoP=null,memoPl=null,memoFx=null,memoEx=null;
- const prem=k=>valores[k]??PADRAO[k],limpaMemo=()=>{memoP=memoPl=memoFx=null;};
+ let valores={},salvoEm=null,memoPl=null,memoFx=null,memoEx=null;
+ const prem=k=>valores[k]??PADRAO[k],limpaMemo=()=>{memoPl=memoFx=null;};
  C.prem=prem;C.premCarrega=async()=>{try{const r=await api('/api/central/premissas');valores=r.premissas||{};salvoEm=r.atualizadoEm;}catch{valores={};}limpaMemo();};
  const maisMeses=(d,m)=>{const x=dataDe(d);x.setUTCMonth(x.getUTCMonth()+m);return diaDe(x.toISOString().slice(0,10));};
  const cor={bom:'#176348',azul:'#2a78d6',lar:'#eb6834',rox:'#6250d6',amb:'#eda100',ver:'#b3261e',ros:'#e87ba4',ve2:'#1baf7a',lim:'#008300'};
  const coord=(a,o)=>a==null||o==null?'':a.toFixed(6)+', '+o.toFixed(6),linkCoord=t=>t?`<a href="https://www.google.com/maps?q=${esc(t.replace(' ',''))}" target="_blank" rel="noopener">${esc(t)}</a>`:'—';
  const corPrazo=v=>v==='Fora do prazo'?'crit':String(v).startsWith('Urgente')?'aten':v==='Sem dados'?'neut':'bom';
  // ---------- Parque: a data da próxima poda é calculada aqui para a premissa de meses valer na hora.
- function parque(){const m=prem('mesesNaoVera'),a=prem('antecedencia'),u=prem('urgente'),ch=m+'|'+a+'|'+u;if(memoP?.ch===ch)return memoP.l;const h=hoje(),urg=`Urgente (< ${u} dias)`,l=L('parque_postes').map(x=>{let prox=null,por='';if(x.toque!=null){prox=x.toque-a;por='Crescimento da árvore (VERA)';}else if(x.base!=null){prox=maisMeses(x.base,m);por=m+' meses após '+String(x.baseF).toLowerCase();}const dias=prox==null?null:prox-h;return {...x,prox,proxI:prox==null?null:iso(prox),por,dias,prazo:dias==null?'Sem dados':dias<0?'Fora do prazo':dias<u?urg:'Dentro do prazo',exata:x.toque!=null?1:0,trT:x.tr?'T'+x.tr:'Sem trecho',nConj:nomeConj(x.conj)};});memoP={ch,l};return l;}
+ function parque(){
+  const lead=prem('antecedencia'),urgent=prem('urgente'),ref=CampoManejo.day(R().hoje),date=CampoManejo.today(),now=CampoManejo.day(date);
+  const {historicById}=C.cycleMap.pruningRecords(date);
+  const trees=new Map();
+  for(const tree of C.linhasRaw('vera_prev')){
+   const id=C.cycleMap.post(tree.poste);
+   if(!id)continue;
+   if(!trees.has(id))trees.set(id,[]);
+   trees.get(id).push(tree);
+  }
+  return L('parque_postes').map(row=>{
+   const id=C.cycleMap.post(row.id),post=historicById.get(id)||row,options={ref,now,lead,months:6};
+   const forecasts=(trees.get(id)||[]).map(tree=>CampoManejo.pruningForecast(tree,post,options));
+   const forecast=forecasts.filter(x=>x.due!=null).sort((a,b)=>a.due-b.due)[0]||forecasts[0]||
+    CampoManejo.pruningForecast(null,post,options);
+   const prox=forecast.due,dias=prox==null?null:prox-now;
+   return {...row,ult:post.ult,prox,proxI:CampoManejo.iso(prox),por:forecast.basis,dias,
+    prazo:dias==null?'Sem dados':dias<0?'Fora do prazo':dias<urgent?'Urgente (< '+urgent+' dias)':'Dentro do prazo',
+    exata:forecasts.length>0&&prox!=null,trT:row.tr?'T'+row.tr:'Sem trecho',nConj:nomeConj(row.conj)};
+  });
+ }
  C.parqueLinhas=parque;
  const FONTE_P={vera:x=>x.vera>0,nv:x=>!x.vera,ex:x=>x.nEx>0,ab:x=>x.nAb>0,sem:x=>x.nSem>0,ss:x=>x.nSS>0,ssa:x=>x.ssAb>0,sso:x=>x.ssSem>0};
  const filtraP=(l,F)=>{const fl=semAc(F.logr).trim(),fb=semAc(F.bairro).trim(),fc=semAc(F.chave).trim(),fi=String(F.buscaT||'').replace(/\D/g,'');return l.filter(x=>(!F.polo||C.em(F.polo,x.polo))&&(!F.conj||C.em(F.conj,x.conj))&&(!F.alim||C.em(F.alim,x.alim))&&(!F.frente||C.em(F.frente,x.frente))&&(!F.catP||C.em(F.catP,x.cat))&&(!F.fonteP||C.lista(F.fonteP).some(k=>FONTE_P[k](x)))&&(!F.trP||C.em(F.trP,x.trT))&&(!F.prazoP||C.em(F.prazoP,x.prazo)||(C.tem(F.prazoP,'Urgente')&&x.prazo.startsWith('Urgente')))&&C.bin(F.licP,!!x.lic)&&C.bin(F.restrP,!!x.restr)&&(!F.mes||x.proxI?.slice(0,7)===F.mes)&&(!fl||semAc(x.log).includes(fl))&&(!fb||semAc(x.bairro).includes(fb))&&(!fc||semAc(x.chave).includes(fc))&&(!fi||x.id.includes(fi)));};
  function ritmoMapa(polo){if(prem('ritmoVera')>0)return prem('ritmoVera');const h=dataDe(hoje()),ini=new Date(Date.UTC(h.getUTCFullYear()-1,h.getUTCMonth(),1)).toISOString().slice(0,7);const n=(R().parque?.ritmo||[]).filter(x=>x.mes>=ini&&C.em(polo,x.polo)).reduce((a,x)=>a+x.postes,0);return n/12;}
  const previsao=(falta,ritmo)=>{if(!falta)return 'Concluído';if(!ritmo)return '—';const m=Math.ceil(falta/ritmo),d=dataDe(hoje());d.setUTCMonth(d.getUTCMonth()+m);const fim=d.toISOString().slice(0,7);return MES[+fim.slice(5,7)-1]+'/'+fim.slice(0,4)+' ('+num(m/12,1)+' anos)';};
- function detPoste(x){const tr=L('vera_prev').filter(a=>a.poste===x.id),os=L('os_abertas').filter(o=>o.poste===x.id&&(o.tipo==='PODA'||o.tipo==='LIMPEZA DE FAIXA')),a=prem('antecedencia'),h=hoje(),dt=prem('dtC'),datas=(x.datas||'').split(';').filter(Boolean).map(Number);
-  abre('POSTE '+x.trT+' · '+x.cat,'226-'+x.id,kpis([['Próxima poda',dBR(x.prox),x.por],['Situação',x.prazo,x.dias==null?'':num(x.dias)+' dias'],['OS executadas',num(x.nEx),x.ult==null?'nenhuma':'última em '+dBR(x.ult)],['OS abertas',num(x.nAb),num(x.nSem)+' criadas sem execução'],['SS',num(x.nSS),num(x.ssSem)+' pendentes sem OS']])+`<p>${esc(x.log||'')} ${esc(x.bairro||'')} ${esc(x.mun||'')} · Chave ${esc(x.chave)} · ${esc(x.alim)} · ${esc(x.nConj)}${x.lic?' · Licença '+esc(x.lic):''}${x.restr?' · '+esc(x.restr):''}</p><p>Podas neste poste: ${datas.length?datas.map(dBR).join(', '):'nenhuma registrada'}.</p>`+(tr.length?`<h3>Árvores levantadas no VERA</h3><div class="table-wrap"><table><thead><tr><th>Árvore</th><th>Espécie</th><th class="num">Dist. hoje</th><th class="num">Dist. pelo fluxo</th><th>Encosta na rede</th><th>Data ideal de poda</th><th>Elegível (dt ≤ ${esc(dt)} m)</th><th>Equipe indicada</th></tr></thead><tbody>${tr.map(t=>{const toq=t.diasToque==null?null:h+t.diasToque;return `<tr><td>${esc(t.id)}</td><td>${esc(t.especie)}${t.conf?' (provável)':''}</td><td class="num">${num(t.dHoje,2)} m</td><td class="num">${t.dtF==null?'—':num(t.dtF,2)+' m'}</td><td>${toq==null?'—':dBR(toq)}</td><td>${toq==null?'—':dBR(toq-a)}</td><td>${t.dHoje<=dt?'Sim':'Não'}</td><td>${esc(t.equipeIT)}</td></tr>`;}).join('')}</tbody></table></div>`:'<p class="nota">Poste ainda sem árvore no VERA: a data vem da premissa de meses, não do crescimento.</p>')+(os.length?`<h3>OS abertas</h3><ul>${os.map(o=>`<li>${esc(o.os)} · ${esc(o.status)} · ${esc(o.pri)} · ${esc(o.origem)}</li>`).join('')}</ul>`:''));}
- V.parque={mod:'poda',eyebrow:'PODA + VERA',titulo:'Parque de poda',precisa:['parque_postes','vera_prev','os_abertas','chaves'],filtros:['polo','conj','alim','frente','catP','fonteP','trP','prazoP','licP','restrP','mes','logr','bairro','chave','buscaT'],render(F,el){const r=R().parque||{},l=filtraP(parque(),F),nV=l.filter(x=>x.vera>0),falta=l.length-nV.length,soma=(k,s=l)=>s.reduce((a,x)=>a+(x[k]||0),0),ritmo=ritmoMapa(F.polo),q=t=>l.filter(x=>x.prazo.startsWith(t)).length;
-   el.innerHTML=kpis([['Postes no parque',num(l.length),'com alguma poda, OS, SS ou árvore'],['Árvores (estimativa)',num(soma('arvE')),'VERA conta; o resto é estimado pela OS'],['Mapeado no VERA',pct(l.length?nV.length/l.length:0,1),num(nV.length)+' postes e '+num(soma('vera'))+' árvores'],['Falta mapear',num(falta),'postes'],['Fora do prazo',num(q('Fora do prazo')),num(q('Urgente'))+' vencem logo'],['Data exata',num(l.filter(x=>x.exata).length),'postes pelo crescimento; os demais a cada '+prem('mesesNaoVera')+' meses'],['OS de poda abertas',num(soma('nAb')),num(soma('nSem'))+' criadas sem execução'],['SS sem OS',num(soma('ssSem')),num(soma('ssAb'))+' SS abertas no total']])+`<div class="duas">${painel('O que existe em cada poste','VERA, OS E SS: CADA POSTE ENTRA UMA VEZ, NA FONTE MAIS FORTE','tCat')}${painel('Próxima poda por mês','VERA PELO CRESCIMENTO, NÃO VERA PELA PREMISSA','gPx')}</div>`+painel('Até onde o VERA chegou, por trecho','SEQUÊNCIA T1, T2 E T3 NO RITMO ATUAL DE '+num(ritmo,0)+' POSTES POR MÊS'+(prem('ritmoVera')>0?' (DEFINIDO NA DATA MARCO)':' (MÉDIA DOS ÚLTIMOS 12 MESES)'),'tTr')+painel('Mapeamento por chave','ORDEM: TRECHO E O QUE MAIS FALTA','tCh')+painel('Todos os postes','CLIQUE PARA VER ÁRVORES, DATAS E OS','tPo')+`<p class="nota"><a href="#mapa">Ver no mapa</a> · O histórico vem de ${esc(r.desde||'2021')}. ${num(r.semId||0)} OS sem ID de poste não entram no parque. A quantidade da OS não conta árvores: pelo acordo a OS vai a 8 podas, por isso o total é estimativa.</p>`;
+ function detPoste(x){const tr=L('vera_prev').filter(a=>C.cycleMap.post(a.poste)===C.cycleMap.post(x.id)),os=L('os_abertas').filter(o=>C.cycleMap.post(o.poste)===C.cycleMap.post(x.id)&&(o.tipo==='PODA'||o.tipo==='LIMPEZA DE FAIXA')),a=prem('antecedencia'),h=hoje(),dt=prem('dtC'),datas=(x.datas||'').split(';').filter(Boolean).map(Number);
+  abre('POSTE '+x.trT+' · '+x.cat,'226-'+x.id,kpis([['Próxima poda',dBR(x.prox),x.por],['Situação',x.prazo,x.dias==null?'':num(x.dias)+' dias'],['OS executadas',num(x.nEx),x.ult==null?'nenhuma':'última em '+dBR(x.ult)],['OS abertas',num(x.nAb),num(x.nSem)+' criadas sem execução'],['SS',num(x.nSS),num(x.ssSem)+' pendentes sem OS']])+`<p>${esc(x.log||'')} ${esc(x.bairro||'')} ${esc(x.mun||'')} · Chave ${esc(x.chave)} · ${esc(x.alim)} · ${esc(x.nConj)}${x.lic?' · Licença '+esc(x.lic):''}${x.restr?' · '+esc(x.restr):''}</p><p>Podas neste poste: ${datas.length?datas.map(dBR).join(', '):'nenhuma registrada'}.</p>`+(tr.length?`<h3>Árvores levantadas no VERA</h3><div class="table-wrap"><table><thead><tr><th>Árvore</th><th>Espécie</th><th class="num">Dist. hoje</th><th class="num">Dist. pelo fluxo</th><th>Encosta na rede</th><th>Data ideal de poda</th><th>Elegível (dt ≤ ${esc(dt)} m)</th><th>Equipe indicada</th></tr></thead><tbody>${tr.map(t=>{const forecast=CampoManejo.pruningForecast(t,x,{ref:CampoManejo.day(R().hoje),now:CampoManejo.day(CampoManejo.today()),lead:a,months:6});const toq=forecast.due==null?null:forecast.due+a;return `<tr><td>${esc(t.id)}</td><td>${esc(t.especie)}${t.conf?' (provável)':''}</td><td class="num">${num(t.dHoje,2)} m</td><td class="num">${t.dtF==null?'—':num(t.dtF,2)+' m'}</td><td>${toq==null?'—':dBR(toq)}</td><td>${forecast.due==null?'—':dBR(forecast.due)}</td><td>${t.dHoje<=dt?'Sim':'Não'}</td><td>${esc(t.equipeIT)}</td></tr>`;}).join('')}</tbody></table></div>`:'<p class="nota">Poste ainda sem árvore no VERA: a data vem da premissa de meses, não do crescimento.</p>')+(os.length?`<h3>OS abertas</h3><ul>${os.map(o=>`<li>${esc(o.os)} · ${esc(o.status)} · ${esc(o.pri)} · ${esc(o.origem)}</li>`).join('')}</ul>`:''));}
+ V.parque={mod:'poda',eyebrow:'PODA + VERA',titulo:'Parque de poda',precisa:['parque_postes','vera_prev','os_abertas','os_exec','chaves'],filtros:['polo','conj','alim','frente','catP','fonteP','trP','prazoP','licP','restrP','mes','logr','bairro','chave','buscaT'],render(F,el){const r=R().parque||{},l=filtraP(parque(),F),nV=l.filter(x=>x.vera>0),falta=l.length-nV.length,soma=(k,s=l)=>s.reduce((a,x)=>a+(x[k]||0),0),ritmo=ritmoMapa(F.polo),q=t=>l.filter(x=>x.prazo.startsWith(t)).length;
+   el.innerHTML=kpis([['Postes no parque',num(l.length),'com alguma poda, OS, SS ou árvore'],['Árvores (estimativa)',num(soma('arvE')),'VERA conta; o resto é estimado pela OS'],['Mapeado no VERA',pct(l.length?nV.length/l.length:0,1),num(nV.length)+' postes e '+num(soma('vera'))+' árvores'],['Falta mapear',num(falta),'postes'],['Fora do prazo',num(q('Fora do prazo')),num(q('Urgente'))+' vencem logo'],['Previsão VERA',num(l.filter(x=>x.exata).length),'Postes com prazo pelo crescimento. Sem VERA, ciclo de seis meses.'],['OS de poda abertas',num(soma('nAb')),num(soma('nSem'))+' criadas sem execução'],['SS sem OS',num(soma('ssSem')),num(soma('ssAb'))+' SS abertas no total']])+`<div class="duas">${painel('O que existe em cada poste','VERA, OS E SS: CADA POSTE ENTRA UMA VEZ, NA FONTE MAIS FORTE','tCat')}${painel('Próxima poda por mês','VERA PELO CRESCIMENTO, NÃO VERA PELA PREMISSA','gPx')}</div>`+painel('Até onde o VERA chegou, por trecho','SEQUÊNCIA T1, T2 E T3 NO RITMO ATUAL DE '+num(ritmo,0)+' POSTES POR MÊS'+(prem('ritmoVera')>0?' (DEFINIDO NA DATA MARCO)':' (MÉDIA DOS ÚLTIMOS 12 MESES)'),'tTr')+painel('Mapeamento por chave','ORDEM: TRECHO E O QUE MAIS FALTA','tCh')+painel('Todos os postes','CLIQUE PARA VER ÁRVORES, DATAS E OS','tPo')+`<p class="nota"><a href="#mapa">Ver no mapa</a> · O histórico vem de ${esc(r.desde||'2021')}. ${num(r.semId||0)} OS sem ID de poste não entram no parque. A quantidade da OS não conta árvores: pelo acordo a OS vai a 8 podas, por isso o total é estimativa.</p>`;
    const cats=['VERA','OS executada','OS aberta','OS sem execução','Só SS'];
    tabela($('tCat'),[{t:'Situação do poste',k:'_k'},{t:'Postes',k:'_n',n:1,f:v=>num(v)},{t:'%',k:x=>l.length?x._n/l.length:0,n:1,f:v=>pct(v,1)},{t:'Árvores est.',k:'a',n:1,f:v=>num(v)},{t:'Fora do prazo',k:'f',n:1,f:v=>num(v)},{t:'Vencem logo',k:'u',n:1,f:v=>num(v)}],agrupa(l,x=>x.cat,(a,x)=>{add(a,'a',x.arvE);if(x.prazo==='Fora do prazo')add(a,'f',1);if(x.prazo.startsWith('Urgente'))add(a,'u',1);}).sort((a,b)=>cats.indexOf(a._k)-cats.indexOf(b._k)),{pagina:6});
    const h=hoje(),base=dataDe(h),meses=[];for(let i=0;i<12;i++)meses.push(new Date(Date.UTC(base.getUTCFullYear(),base.getUTCMonth()+i,1)).toISOString().slice(0,7));const conta=(f)=>meses.map((m,i)=>l.filter(x=>f(x)&&x.proxI&&(i===0?x.proxI.slice(0,7)<=m:x.proxI.slice(0,7)===m)).length);colunas($('gPx'),meses.map(mesTxt),[{nome:'VERA',cor:COR.s3,v:conta(x=>x.exata)},{nome:'Não VERA',cor:COR.s1,v:conta(x=>!x.exata)}],{h:190,pilha:true,titulo:'Próxima poda por mês',rotulos:12});$('gPx').insertAdjacentHTML('beforeend','<p class="nota">O primeiro mês soma tudo o que já venceu.</p>');
@@ -90,16 +110,16 @@
    tabela($('tCk'),[{t:'Chave',k:'chave'},{t:'Frente',k:'frente'},{t:'Plano',k:'plano'},{t:'Trecho',k:'trT'},{t:'Polo',k:'polo'},{t:'Conjunto',k:'nConj'},{t:'Alimentador',k:'alim'},{t:'Postes',k:'postes',n:1,f:v=>num(v)},{t:'Marco',k:'mk',f:isoBR},{t:'Inspeção',k:'criar',h:v=>sit(v,v==='Criar OS'?'seri':'bom')},{t:'Última inspeção',k:'ui',f:dBR},{t:'Dias',k:'diasInsp',n:1,f:v=>num(v)},{t:'Manut. feitas',k:'me',n:1},{t:'Manut. abertas',k:'mp',n:1},{t:'Podas feitas',k:'qe',n:1,f:v=>num(v)},{t:'OS de poda abertas',k:'pp',n:1},{t:'Podas pendentes',k:'qp',n:1,f:v=>num(v)},{t:'Situação',k:'sit'},{t:'Marco OS × atuação',k:'marco'},{t:'Dias de inspeção',k:'dias',n:1,d:'Postes ÷ (capacidade × inspetores do polo)'},{t:'Prazo',k:'viab'},{t:'Reincidente',k:'reinc3',f:v=>v?'Sim':''}],l,{pagina:25,csv:'avanco_por_marco'});}};
  // ---------- Mapa unificado.
  let mapa=null,visao=null,unifiedTimer=null;
- const camadas={vera:1,campo:1,nv:1,ab:1,ss:1,est:0,crz:0,rei:0,fx:1,lic:0,rede:1};
+ const camadas={vera:1,campo:1,nv:1,ab:1,ss:1,pend:1,est:1,crz:0,rei:0,fx:1,lic:0,rede:1};
  const ROT={vera:['Árvores VERA',cor.bom],campo:['Inspeções de campo',cor.ve2],nv:['Postes com poda sem VERA',cor.azul],
-  ab:['Postes com OS sem VERA',cor.lar],ss:['Postes só com SS',cor.rox],est:['Estruturas do plano ideal',cor.amb],
+  ab:['Postes com OS sem VERA',cor.lar],ss:['Postes só com SS',cor.rox],pend:['OS de poda pendentes','#a02ca7'],est:['Estruturas do plano ideal',cor.amb],
   crz:['Cruzetas T1 e T2',cor.ver],rei:['Reativo (reincidente)',cor.ros],fx:['Limpeza de faixa',cor.lim],lic:['Licença ambiental',cor.ve2],rede:['Rede elétrica local',cor.azul]};
  C.closeUnifiedMap=()=>{clearTimeout(unifiedTimer);if(mapa){visao={c:mapa.getCenter(),z:mapa.getZoom()};mapa.remove();mapa=null;}};
- V.mapa={mod:'poda',eyebrow:'PODA + VERA',titulo:'Mapa unificado e plano de poda por ciclo',
-  precisa:['parque_postes','vera_prev','os_abertas','faixa','chaves'],filtros:['polo','conj','alim','trP','prazoP','mes','chave','buscaT','cycleRisk','cycleProjection','cyclePoda'],
+ V.mapa={mod:'poda',eyebrow:'SIGORA · VEGETAÇÃO',titulo:'Controle de poda e estruturas',
+  precisa:['parque_postes','vera_prev','os_abertas','os_exec','faixa','chaves'],filtros:['polo','conj','alim','trP','cycleStage','cycleDate','mes','chave','buscaT','cycleRisk','cycleProjection','cyclePoda'],unico:['cycleDate'],padrao:()=>({cycleDate:'prevista'}),
   render(F,el){
    C.closeUnifiedMap();
-   const cycle=C.cycleMap,model=cycle.prepare(F),groups={vera:[],campo:[],nv:[],ab:[],ss:[],est:[],crz:[],rei:[],fx:[],lic:[]};
+   const cycle=C.cycleMap,model=cycle.prepare(F),groups={vera:[],campo:[],nv:[],ab:[],ss:[],pend:[],est:[],crz:[],rei:[],fx:[],lic:[]};
    for(const row of model.rows)if(cycle.point(row))groups[row.layer].push(row);
    const extra=(layer,r,caption,details)=>{const row={...r,caption,status:r.status,kind:ROT[layer][0],id:r.os||r.id||r.chave||r.pasta,especie:caption,basis:details};if(cycle.point(row)&&model.other(row))groups[layer].push(row);};
    for(const r of plano()){
@@ -110,9 +130,30 @@
    }
    for(const r of faixa().l)if(r.sitF!=='Monitorar')extra('fx',r,r.sitF,'Última limpeza: '+dBR(r.ultLF)+' · '+(r.eq||'equipe a definir'));
    for(const r of R().parque?.licencas||[])extra('lic',r,r.pasta,[r.mun,r.alim,r.per].filter(Boolean).join(' · '));
-   el.innerHTML='<article class="panel"><div class="filtros" id="mpCam"></div><div class="acoes"><button type="button" id="unifiedFit">Enquadrar pontos filtrados</button><a href="gestao.html#mapa">Instalar ou atualizar a rede local</a></div><div id="mapaU" style="height:65vh;border-radius:8px"></div><p id="unifiedNetworkStatus" class="nota" role="status"></p><p class="nota">Borda vermelha indica poda fora do prazo. Aproxime para abrir os pontos de um grupo. Os filtros de prazo e mês selecionam previsões de poda. Outras camadas sem essa informação ficam fora do recorte.</p></article><article class="panel" id="cycleList"></article>';
+   el.innerHTML='<article class="panel" id="cycleCalendar"></article><article class="panel" id="unifiedMapPanel"><div class="panel-head"><h3>Mapa de poda, estruturas e rede</h3><button type="button" id="unifiedExpand" aria-pressed="false">Ampliar mapa</button></div><div class="acoes"><button type="button" id="unifiedFit">Enquadrar pontos filtrados</button><label>Fundo do mapa <select id="unifiedBasemap"><option value="hybrid">Satélite híbrido</option><option value="streets">Ruas</option><option value="local">Só rede e pontos</option></select></label><a href="gestao.html#mapa">Instalar ou atualizar a rede local</a></div><details class="sigora-map-layers"><summary>Camadas do mapa</summary><div class="filtros" id="mpCam"></div></details><div id="mapaU" class="sigora-map"></div><p id="unifiedNetworkStatus" class="nota" role="status"></p><p class="nota">Borda vermelha indica poda fora do prazo. Aproxime para abrir os pontos de um grupo. Os filtros de prazo e mês selecionam previsões de poda. Outras camadas sem essa informação ficam fora do recorte.</p></article><article class="panel" id="cycleList"></article>';
    const current=mapa=window.L.map('mapaU',{preferCanvas:true}).setView(visao?.c||[-9.9,-69],visao?.z||7);
-   window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(current);
+   const base=$('unifiedBasemap');
+   let tiles=null,tileFailures=0;
+   base.value=camadas.fundo||'hybrid';
+   function setBase(){
+    if(tiles)tiles.remove();
+    const mode=base.value;
+    camadas.fundo=mode;
+    tileFailures=0;
+    if(mode==='local')return;
+    const hybrid=mode==='hybrid';
+    tiles=window.L.tileLayer(hybrid?'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}':'https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:hybrid?20:19,maxZoom:20,attribution:hybrid?'© Google':'© OpenStreetMap contributors'}).addTo(current);
+    tiles.on('tileload',()=>{tileFailures=0;});
+    tiles.on('tileerror',()=>{if(++tileFailures>=3&&base.value===mode){base.value=hybrid?'streets':'local';setBase();}});
+   }
+   base.onchange=setBase;setBase();
+   $('unifiedExpand').onclick=e=>{
+    const expanded=$('unifiedMapPanel').classList.toggle('sigora-map-expanded');
+    e.target.setAttribute('aria-pressed',String(expanded));
+    e.target.textContent=expanded?'Reduzir mapa':'Ampliar mapa';
+    current.invalidateSize();
+    $('unifiedMapPanel').scrollIntoView({block:'start'});
+   };
    current.createPane('unifiedNetwork').style.zIndex='390';
    const rend=window.L.canvas({padding:.3}),net=window.L.geoJSON(null,{pane:'unifiedNetwork',style:()=>({color:'#327bd1',weight:2,opacity:.8}),pointToLayer:(_f,p)=>window.L.circleMarker(p,{pane:'unifiedNetwork',radius:3,color:'#327bd1',weight:1})}).addTo(current);
    const visible={};
@@ -133,7 +174,7 @@
     }
     layer.addTo(current);visible[k]=layer;
    }
-   function paintList(){cycle.list($('cycleList'),model.rows.filter(r=>camadas[r.layer]),model.source,model.now,show);}
+   function paintList(){cycle.list($('cycleList'),$('cycleCalendar'),model.rows.filter(r=>camadas[r.layer]),(model.calendarRows||model.rows).filter(r=>camadas[r.layer]),model.source,model.now,show,F.mes,(m)=>{const month=$('f_mes');if(month){if(m&&$('f_cycleDate')){F.cycleDate='prevista';$('f_cycleDate').value='prevista';}month.value=m;month.dispatchEvent(new Event('change',{bubbles:true}));}});}
    let networkSerial=0;
    async function paintNetwork(){
     const token=++networkSerial,status=$('unifiedNetworkStatus');if(current!==mapa||!status)return;
