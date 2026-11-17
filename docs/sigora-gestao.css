@@ -43,3 +43,19 @@ html.dark {
 @media(max-width:780px){.sigora-layout {grid-template-columns:1fr}.rail .modulos {display:flex;overflow:auto}.rail .modulos a {white-space:nowrap}}
 @media(max-width:420px){.sigora-scenario-fields {grid-template-columns:1fr}}
 .rail .brandmark {flex:0 0 36px;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:21px}.rail #logout {background:#352a50;border-color:#50416e;color:#fff}.rail #logout:hover {background:#463661}
+.sigora-map {height:clamp(430px,68vh,880px);border-radius:10px;margin-top:12px;background:var(--soft)}
+.sigora-map-expanded .sigora-map {height:88vh}
+.sigora-map-layers {margin:12px 0;color:var(--ink)}
+.sigora-map-layers summary {cursor:pointer;font-weight:700}
+.sigora-map-layers .filtros {position:static;margin:8px 0}
+.sigora-calendar {display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}
+.sigora-calendar button[aria-pressed="true"] {background:var(--soft);border-color:var(--green);color:var(--green)}
+.sigora-calendar strong {margin-left:5px}
+.sigora-cycle-detail:empty {display:none}
+.sigora-cycle-detail {border:1px solid var(--line);padding:14px;margin:10px 0;border-radius:9px;background:var(--soft)}
+.sigora-progress-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 14px}
+.sigora-progress-card{display:grid;gap:6px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.sigora-progress-card strong{color:var(--green);font-size:1.1rem}
+.sigora-progress-card small{color:var(--muted)}
+.sigora-progress-card progress{width:100%;height:9px;accent-color:var(--green)}
+@media(max-width:600px){.sigora-progress-grid{grid-template-columns:1fr}}
