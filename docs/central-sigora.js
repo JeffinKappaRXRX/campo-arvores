@@ -51,7 +51,7 @@
       const hasOrders=Boolean(C.dados.os_abertas);
       el.innerHTML =
         '<section class="sigora-hero"><span class="eyebrow">MANUTENÇÃO E ORÇAMENTO</span><h2>Da carteira à programação</h2><p>Acompanhe as ordens de serviço, o orçamento e os dados de vegetação que apoiam a manutenção da rede.</p>'+
-        '<div class="sigora-actions">'+nav('carteira','Abrir carteira')+nav('programacao','Ver programação')+nav('cenarios','Comparar cenários')+'</div></section>'+
+        '<div class="sigora-actions">'+nav('carteira','Abrir carteira')+nav('programacao','Ver programação')+nav('simular','Simular carteira')+'</div></section>'+
         kpis([
           ['OS abertas no recorte',num(hasOrders?rows.length:null),'Sem inspeções e registros de expurgo'],
           ['OS de poda e limpeza',num(hasOrders?vegetation.length:null),'Dentro das OS do recorte'],
@@ -61,7 +61,7 @@
         '<div class="sigora-layout"><section class="panel"><h3>Ordens abertas por tipo</h3>'+bars(rows)+'</section>'+
         '<section class="panel"><h3>Orçamento consolidado'+(data.year?' · '+esc(data.year):'')+'</h3><p class="sigora-muted">Totais do ano para toda a base. Os filtros desta tela se aplicam às OS.</p>'+
         '<div class="table-wrap"><table><thead><tr><th scope="col">Recurso</th><th scope="col">Orçado</th><th scope="col">Projeção</th><th scope="col">Margem</th></tr></thead><tbody>'+data.lines.map(forecastRow).join('')+'</tbody></table></div>'+
-        list([['#sigco','Obras por SIGCO'],['#opex','OPEX por frente'],['#cenarios','Comparar cenários']])+'</section>'+
+        list([['#sigco','Obras por SIGCO'],['#opex','OPEX por frente'],['#cenarios','Comparar cenários de orçamento']])+'</section>'+
         '<section class="panel"><h3>Manutenção da rede</h3>'+list([['#monitor','Monitor do dia'],['#bioperacional','Painel operacional'],['#cartprog','Carteira de programação'],['#dec','DEC por conjunto']])+'</section>'+
         '<section class="panel"><h3>Vegetação e qualidade dos dados</h3><p class="sigora-muted">O ARBORA fornece inspeções de vegetação. O VERA e o histórico de poda complementam o planejamento no SIGORA.</p><p id="sigoraVegetationStatus" class="sigora-muted" role="status"></p>'+
         list([['gestao.html#resumo','Conferir inspeções e cadastros'],['#mapa','Explorar mapa unificado'],['#manejo','Abrir planejamento de poda'],['#fontes','Conferir fontes e premissas']])+'</section></div>';
