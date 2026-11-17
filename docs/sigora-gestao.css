@@ -1,0 +1,45 @@
+/* Identidade da gestão SIGORA, compartilhada pelo painel e pela central. */
+:root {
+  --bg:#f6f6fb; --panel:#fff; --ink:#211d35; --muted:#615b76;
+  --line:#e6e2ef; --green:#6041bb; --soft:#f0ebfb; --amber:#90601c;
+}
+html.dark {
+  --bg:#181528; --panel:#231e35; --ink:#f5efff; --muted:#c2b7d7;
+  --line:#403650; --green:#ba9aff; --soft:#362952; --amber:#e5b66b;
+}
+.rail {background:#1b1632}
+.rail .brandmark {background:#7753de;color:#fff;border-color:#a283ff}
+.rail .brand small,.rail .rail-label,.rail .rail-bottom {color:#c1b6dc}
+.rail nav a {color:#ddd4ef}
+.rail nav a.active,.rail nav a:hover {background:#453473;color:#fff}
+.rail .modulos {display:grid;gap:4px;margin-top:18px;padding:5px;border-radius:11px;background:#2a2147}
+.rail .modulos a {padding:9px 11px;border-radius:7px;font-weight:700;text-decoration:none}
+.rail .modulos a.active {background:#6647ae}
+.rail .field-link {color:#e1d5ff}
+.rail a:focus-visible,.sigora-hero a:focus-visible {outline:2px solid #d7bfff;outline-offset:2px}
+.sigora-hero {
+  padding:clamp(19px,4vw,38px);margin-bottom:18px;border-radius:15px;color:white;
+  background:radial-gradient(ellipse at top right,#5b3b98,transparent 65%),linear-gradient(110deg,#21163f,#39245d);
+}
+.sigora-hero p {color:#e3d9f4;max-width:56ch}
+.sigora-hero .eyebrow {color:#d2baff}
+.sigora-hero h2 {font-size:clamp(23px,4vw,37px);letter-spacing:-.035em;margin:8px 0}
+.sigora-actions {display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.sigora-hero .button-link {background:#fff;color:#42257d;border:1px solid white}
+.sigora-hero .button-link:hover {background:#eee3ff}
+.sigora-layout {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-bottom:18px}
+.sigora-layout .panel {margin:0;min-width:0}
+.sigora-chart {display:grid;gap:12px;margin-top:12px}
+.sigora-chart-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 12px;align-items:center}
+.sigora-chart-row progress {grid-column:1/-1;width:100%;height:.6rem;accent-color:#7753de}
+.sigora-muted {color:var(--muted)}
+.sigora-scenario-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.sigora-scenario-fields input {min-width:0;width:100%}
+.sigora-scenario-results {margin-top:18px}
+.sigora-negative {color:var(--crit);font-weight:700}
+.sigora-positive {color:var(--bom);font-weight:700}
+.sigora-link-grid {display:grid;gap:6px;padding:0;list-style:none}
+.sigora-link-grid a {color:var(--green);font-weight:650}
+@media(max-width:780px){.sigora-layout {grid-template-columns:1fr}.rail .modulos {display:flex;overflow:auto}.rail .modulos a {white-space:nowrap}}
+@media(max-width:420px){.sigora-scenario-fields {grid-template-columns:1fr}}
+.rail .brandmark {flex:0 0 36px;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:21px}.rail #logout {background:#352a50;border-color:#50416e;color:#fff}.rail #logout:hover {background:#463661}
