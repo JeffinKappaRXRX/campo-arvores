@@ -31,8 +31,14 @@ const CampoRoutes=(()=>{
     !Number.isFinite(p[0])||!Number.isFinite(p[1])||Math.abs(p[0])>180||Math.abs(p[1])>90))throw Error('Vão sem ID, extensão ou geometria válida.');
   if(line.every(p=>comparePoint(p,line[0])===0))throw Error('Vão sem geometria linear.');
   const inverted=comparePoint(line[0],line.at(-1))>0;
+  const poles=Array.isArray(raw.poles)?[...new Set(raw.poles.map(p=>text(p)))].filter(identifier).slice(0,2):[];
+  const parallel=[];
+  if(poles.length===2&&Array.isArray(raw.parallel))for(const peer of raw.parallel.slice(0,15)){
+   const peerId=text(peer?.id),peerMetres=Number(peer?.metres),feeder=key(peer?.feeder);
+   if(peerId!==id&&identifier(peerId)&&feeder&&feeder!==key(raw.feeder)&&peerMetres>0&&peerMetres<=50000&&!parallel.some(p=>p.id===peerId))parallel.push({id:peerId,feeder,metres:peerMetres,flip:peer.flip===true,...(peer.estimated?{estimated:true}:{})});
+  }
   return {id,metres,feeder:key(raw.feeder),locality:key(raw.locality),block:key(raw.block),zone:key(raw.zone),section:key(raw.section).replace(/^T/,'').trim(),
-   ...(raw.estimated?{estimated:true}:{}),line:inverted?[...line].reverse():line,reverse:Boolean(raw.reverse)!==inverted};
+   ...(raw.estimated?{estimated:true}:{}),...(poles.length?{poles}:{}),...(parallel.length?{parallel}:{}),line:inverted?[...line].reverse():line,reverse:Boolean(raw.reverse)!==inverted};
  }
  const first=s=>s.line[s.reverse?s.line.length-1:0],last=s=>s.line[s.reverse?0:s.line.length-1];
  function feature(f){
@@ -47,7 +53,7 @@ const CampoRoutes=(()=>{
   const metres=estimated?line.slice(1).reduce((total,point,i)=>total+distance(line[i],point),0):recorded;
   const rawZone=key(p.routezone??p.zona??p.urbanorural);
   const zone=['U','URBANA'].includes(rawZone)?'URBANO':rawZone==='R'?'RURAL':rawZone;
-  return span({id:p.routeid??p.id??p.idvao??p.idvaomt??p.gisid??p.idtrecho??p.idsegmento??p.objectid,metres,line,estimated,feeder:p.routefeeder??p.alimentador??p.feeder,
+  return span({poles:p.routepoles,parallel:p.routeparallel,id:p.routeid??p.id??p.idvao??p.idvaomt??p.gisid??p.idtrecho??p.idsegmento??p.objectid,metres,line,estimated,feeder:p.routefeeder??p.alimentador??p.feeder,
    locality:p.routelocality??p.localidade??p.cidade,block:p.routeblock??p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.routesection??p.tipotrecho??p.trecho])[0]});
  }
  const metres=spans=>spans.reduce((sum,span)=>sum+span.metres,0);
@@ -228,18 +234,69 @@ const CampoRoutes=(()=>{
   return out;
  }
  function coverage(spans,visits,filter=()=>true){
-  const lengths=new Map(spans.map(s=>[s.id,s.metres])), bySpan=new Map();
+  const byId=new Map(spans.map(s=>[s.id,s])),bySpan=new Map(),shared=new Map();
+  const append=(map,id,range)=>{if(!map.has(id))map.set(id,[]);map.get(id).push(range);};
   for(const visit of visits.filter(filter))for(const {spanId,start,end} of visit.ranges){
-   if(!lengths.has(spanId))continue;
-   if(!bySpan.has(spanId))bySpan.set(spanId,[]);
-   bySpan.get(spanId).push([start,end]);
+   const base=byId.get(spanId);if(!base)continue;
+   append(bySpan,spanId,[start,end]);
+   for(const peer of base.parallel||[]){
+    const range=peer.flip?[FULL-end,FULL-start]:[start,end];
+    if(byId.has(peer.id))append(bySpan,peer.id,range);
+    else{if(!shared.has(peer.id))shared.set(peer.id,{...peer,ranges:[]});shared.get(peer.id).ranges.push(range);}
+   }
   }
-  let metres=0;
+  let metres=0,sharedMetres=0;
   for(const [id,items] of bySpan){
    const joined=merge(items);bySpan.set(id,joined);
-   metres+=joined.reduce((sum,[a,b])=>sum+(b-a)*lengths.get(id)/FULL,0);
+   metres+=lengthIn(joined,byId.get(id).metres);
   }
-  return {bySpan,metres};
+  for(const extra of shared.values()){
+   extra.ranges=merge(extra.ranges);extra.covered=lengthIn(extra.ranges,extra.metres);
+   sharedMetres+=extra.covered;
+  }
+  return {bySpan,metres,shared,sharedMetres};
+ }
+ const lengthIn=(intervals,metres)=>intervals.reduce((sum,[a,b])=>sum+(b-a)*metres/FULL,0);
+ function dailyCoverage(spans,visits){
+  const days=new Map(),seen=new Map(),lengths=new Map(spans.map(s=>[s.id,s.metres]));
+  for(const visit of visits){if(!days.has(visit.day))days.set(visit.day,[]);days.get(visit.day).push(visit);}
+  return [...days.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([day,entries])=>{
+   const result=coverage(spans,entries);
+   let metres=0,sharedMetres=0;
+   for(const [id,next,length,extra] of [...[...result.bySpan].map(([id,ranges])=>[id,ranges,lengths.get(id),false]),...[...result.shared].map(([id,peer])=>[id,peer.ranges,peer.metres,true])]){
+    const old=seen.get(id)||[],combined=merge([...old,...next]),growth=lengthIn(combined,length)-lengthIn(old,length);
+    seen.set(id,combined);
+    if(extra)sharedMetres+=growth;else metres+=growth;
+   }
+   return {day,metres,sharedMetres,track:entries.reduce((n,v)=>n+(v.trackMetres||0),0)};
+  });
+ }
+ function routePlan(raw){
+  const date=String(raw?.start||''),start=new Date(date+'T12:00:00Z'),metresPerDay=Number(raw?.metresPerDay);
+  if(!/^20\d\d-\d\d-\d\d$/.test(date)||!Number.isFinite(+start)||start.toISOString().slice(0,10)!==date||
+   !Number.isFinite(metresPerDay)||metresPerDay<100||metresPerDay>250000)return null;
+  return {start:date,metresPerDay:Math.round(metresPerDay),source:raw.source==='history'?'history':'manual'};
+ }
+ function schedule(plan,metres){
+  const out=[];
+  if(!plan||!metres)return out;
+  const date=new Date(plan.start+'T12:00:00Z');
+  for(let remaining=metres,i=0;remaining>.001&&i<3660;i++,date.setUTCDate(date.getUTCDate()+1)){
+   if(date.getUTCDay()===6||date.getUTCDay()===0)continue;
+   const target=Math.min(remaining,plan.metresPerDay);remaining-=target;
+   out.push({day:date.toISOString().slice(0,10),metres:target});
+  }
+  return out;
+ }
+ function capacity(routes,visits,assignee){
+  const days=new Map();
+  for(const group of campaignParts(routes.filter(r=>r.assignee===assignee))){
+   const ids=new Set(group.map(r=>r.id));
+   for(const entry of dailyCoverage(group.flatMap(r=>r.spans),visits.filter(v=>ids.has(v.routeId))))days.set(entry.day,(days.get(entry.day)||0)+entry.metres);
+  }
+  const last=[...days].sort(([a],[b])=>b.localeCompare(a)).slice(0,20).map(([,m])=>m).sort((a,b)=>a-b);
+  const middle=last.length>>1,metres=last.length%2?last[middle]:(last[middle-1]+last[middle])/2;
+  return {days:last.length,metres:last.length>=3&&metres>=100?Math.round(metres):0};
  }
  function portion(span,start,end){
   if(start===0&&end===FULL)return span.line;
@@ -261,7 +318,7 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
@@ -273,6 +330,17 @@ async function routeReference(request,env,admin){
  if(!Number.isInteger(manifest?.parts)||manifest.parts<1||manifest.parts>32||!Number.isInteger(manifest.size)||manifest.size<1||manifest.size>6000000)throw sharedError('Complemento VERA ainda não está disponível na base central.',404);
  const parts=await Promise.all(Array.from({length:manifest.parts},(_,i)=>env.LOGIN_GUARD.get(ROUTE_REFERENCE_KEY+':'+i,'arrayBuffer')));
  if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Complemento VERA incompleto. Tente novamente.',503);
+ return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+}
+const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20261009-vera-20260803-v1';
+async function routeGeometry(request,env,admin){
+ if(!admin)throw sharedError('Rede MT do planejador restrita à gestão.',403);
+ if(request.method!=='GET')throw sharedError('Use GET.',405);
+ const manifest=await env.LOGIN_GUARD?.get(ROUTE_GEOMETRY_KEY,'json');
+ if(!manifest?.feeders?.length||!Number.isInteger(manifest.parts)||manifest.parts<1||manifest.parts>40||!Number.isInteger(manifest.size)||manifest.size>12000000)throw sharedError('A rede MT do planejador está indisponível.',503);
+ if(new URL(request.url).searchParams.has('catalog'))return json({feeders:manifest.feeders,count:manifest.count});
+ const parts=await Promise.all(Array.from({length:manifest.parts},(_,i)=>env.LOGIN_GUARD.get(ROUTE_GEOMETRY_KEY+':'+i,'arrayBuffer')));
+ if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Arquivo da rede MT incompleto. Tente novamente.',503);
  return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 }
 function visibleRoutes(routes){
@@ -291,6 +359,7 @@ const ROUTE_TABLES=[
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
+  if(path==='/api/routes/geometry')return await routeGeometry(request,env,admin);
   if(path==='/api/routes/reference')return await routeReference(request,env,admin);
   if(!admin&&!actor)throw sharedError('Entre com sua conta para acessar as rotas.',403);
   const db=await adminDb(env);
@@ -326,16 +395,17 @@ async function routeAPI(request,env){
    const feeder=derive?values('feeder').join(' / '):fallback.feeder;
    const zone=derive?values('zone').join(' / '):fallback.zone;
    const section=sections[0],phase=derive?Math.min(...spans.map(s=>priority(s.zone,s.section))):priority(zone,section);
-   const buffer=CampoRoutes.bufferMetres(input.buffer);
+   const buffer=CampoRoutes.bufferMetres(input.buffer),plan=CampoRoutes.routePlan(input.plan);
+   if(input.plan!=null&&!plan)throw sharedError('Informe a data inicial e uma capacidade diária válida.');
    const campaign=input.campaign;
    if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
    await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
    if(campaign){
-    const peer=await db.prepare('SELECT assignee FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
-    if((peer&&peer.assignee!==assignee)||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
+    const peer=await db.prepare('SELECT assignee,data FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
+    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
    }
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
@@ -490,7 +560,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
- if(['/api/routes','/api/routes/visit','/api/routes/reference'].includes(url.pathname))return routeAPI(request,env);
+ if(['/api/routes','/api/routes/visit','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname.startsWith('/api/central/'))return centralAPI(request,env);
@@ -561,9 +631,10 @@ async function sharedBody(request,limit=6500000){try{return JSON.parse(await(awa
 async function sharedRead(db,id){return db.prepare('SELECT * FROM shared_trees WHERE id=?').bind(id).first();}
 function sharedData(raw,actor,imported=false){
  if(!raw||!sharedId(raw.id)||!sharedCoordinate(raw.lat,90)||!sharedCoordinate(raw.lon,180))throw sharedError('ID, latitude e longitude válidos são obrigatórios.');
- const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
+ const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
  const out={id:raw.id,lat:Number(raw.lat),lon:Number(raw.lon),photos:[],createdAt:Number.isFinite(Date.parse(raw.createdAt))?raw.createdAt:new Date().toISOString(),updatedAt:Number.isFinite(Date.parse(raw.updatedAt))?raw.updatedAt:new Date().toISOString()};
  for(const key of allowed){if(typeof raw[key]==='boolean')out[key]=raw[key];else if(raw[key]!==undefined&&raw[key]!==null)out[key]=String(raw[key]).slice(0,key==='note'?5000:1000);}
+ if(out.treeSite!==undefined&&!['','publico','privado'].includes(out.treeSite))throw sharedError('Selecione área pública ou privada para o local da árvore.');
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
@@ -583,6 +654,7 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if(old?.deleted)throw sharedError('Árvore excluída pelo administrador. O cadastro não será recriado.',410);
  if(old?.last_op===body.operationId)return sharedView(old);
  if((old?.version||0)!==expected)throw sharedError('Outra pessoa atualizou esta árvore. Reabra a versão mais recente antes de salvar suas alterações.',409);
+ if(old&&data.treeSite===undefined){const site=JSON.parse(old.data).treeSite;if(site!==undefined)data.treeSite=site;}
  data.createdBy=old?JSON.parse(old.data).createdBy||JSON.parse(old.data).inspector||JSON.parse(old.data).lastInspector||old.actor:actor;
  if(identity){const original=old?JSON.parse(old.data):null;data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}
  const uploads=body.uploads||[];if(!Array.isArray(uploads)||uploads.length>12)throw sharedError('Envie no máximo 12 fotos por cadastro.');
@@ -913,7 +985,7 @@ async function controlAPI(request,env){try{
  }catch(e){return json({error:e.status?e.message:'Painel temporariamente indisponível. Tente novamente.'},e.status||503);}}
 
 // Administrative corrections reuse the central row and its immutable history.
-const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','os','address','note','area','access','team','municipality','perimeter','key','street'];
+const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','os','address','note','area','access','team','municipality','perimeter','key','street'];
 async function controlEditSnapshot(db,env,id){
  if(!sharedId(id))throw sharedError('ID inválido.');
  const row=await sharedRead(db,id);
@@ -975,7 +1047,7 @@ function veraLiveRecord(r,review){return {id:r.id,review:review||null,count:r.co
 // Para o mapa do inspetor: só o que ele precisa para achar e atualizar a árvore. Clientes e prioridade ficam no painel.
 function veraFieldRow(t){return {id:t.id,lat:t.lat,lon:t.lon,coordOriginal:t.coordOriginal,especies:t.especies,qtd:t.qtd,altura:t.altura,dap:t.dap,origemDap:t.origemDap,distMT:t.distMT,distBT:t.distBT,distAT:t.distAT,projecao:t.projecao,classe:t.classe,acao:t.acao,poste:t.poste,vao:t.vao,alimentador:t.alimentador,ano:t.ano,logradouro:t.logradouro,observacao:t.observacao,poda:t.poda,registro:t.registro,seq:t.seq,nArvores:t.nArvores,origemArvore:t.origemArvore,metodo:t.metodo,confianca:t.confianca,fonte:t.fonte,especieConf:t.especieConf};}
 // Volta para a planilha: tudo que o campo cadastrou, sem as fotos, que vêm uma a uma por field-photo.
-function veraExportRecord(r,review){return {id:r.id,externalId:r.externalId||'',lat:r.lat??null,lon:r.lon??null,species:r.species||'',height:r.height??null,dap:r.dap??null,circ:r.circ??null,position:r.position||'',pole:r.pole||'',span:r.span||'',feeder:r.feeder||'',os:r.os||'',poda:r.poda||'',projection:r.projection||'',grouped:r.grouped||'',mt:r.mt===true,bt:r.bt===true,at:r.at===true,mtDistance:r.mtDistance??null,btDistance:r.btDistance??null,atDistance:r.atDistance??null,note:r.note||'',address:r.address||'',inspector:r.collectionInspector||r.inspector||'',lastInspector:r.sharedActor||r.lastInspector||'',createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,sharedVersion:r.sharedVersion??null,folderUrl:r.folderUrl||r.googleReceipt?.folderUrl||'',photos:(r.photos||[]).map(p=>p.assetId).filter(Boolean),review:review||null};}
+function veraExportRecord(r,review){return {id:r.id,externalId:r.externalId||'',lat:r.lat??null,lon:r.lon??null,species:r.species||'',height:r.height??null,dap:r.dap??null,circ:r.circ??null,position:r.position||'',pole:r.pole||'',span:r.span||'',feeder:r.feeder||'',os:r.os||'',poda:r.poda||'',projection:r.projection||'',grouped:r.grouped||'',treeSite:r.treeSite||'',mt:r.mt===true,bt:r.bt===true,at:r.at===true,mtDistance:r.mtDistance??null,btDistance:r.btDistance??null,atDistance:r.atDistance??null,note:r.note||'',address:r.address||'',inspector:r.collectionInspector||r.inspector||'',lastInspector:r.sharedActor||r.lastInspector||'',createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,sharedVersion:r.sharedVersion??null,folderUrl:r.folderUrl||r.googleReceipt?.folderUrl||'',photos:(r.photos||[]).map(p=>p.assetId).filter(Boolean),review:review||null};}
 async function veraMeta(db){const {results}=await db.prepare('SELECT key,value FROM vera_meta').all();return Object.fromEntries(results.map(r=>[r.key,r.value]));}
 async function veraReviews(db){try{const {results}=await db.prepare('SELECT tree_id,verificacao,obs,actor,updated_at FROM vera_field_review').all();return results;}catch(e){if(veraMissingTable(e))return [];throw e;}}
 const veraPhotoId=id=>id.replace(/-\d+$/,'');

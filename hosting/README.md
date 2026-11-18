@@ -1,5 +1,15 @@
 # Publicação no endereço oficial
 
+## Rede central para planejamento, meta e local da árvore
+
+O planejador carrega uma base MT privada para manter a pesquisa e o enquadramento disponíveis enquanto o GPKG local é aberto. A base usa a geometria do Rede_Campo de 09/10/2026 e as extensões do catálogo VERA de 03/08/2026, vinculadas por ID do vão. Usa a distância da geometria quando a extensão cadastrada está vazia. O pacote é gerado por `hosting/build-route-network.py` e o manifesto e suas partes ficam nas chaves `arbora:route-geometry:campo-20261009-vera-20260803-v1` da API privada. Os dados de rede estão fora do repositório público.
+
+O catálogo alimenta a lista de alimentadores. Aplicar filtros destaca, enquadra e monta a prévia da rota. O recorte amplo tem prévia amostrada com extensão espacial completa e exige até 10.000 vãos para publicar. O GPKG local continua disponível para as demais camadas. Postes são ligados aos extremos a até 3 m, com desempate conservador. Um trecho compartilhado entre alimentadores exige o mesmo par de IDs de poste e geometrias a até 3 m uma da outra. A confirmação credita a mesma fração do vão aos circuitos nesse corredor, incluindo sentido invertido e sem somar repasses no mesmo plano. Uma derivação que só cruza um poste permanece pendente.
+
+A meta diária usa a mediana dos últimos 20 dias com saída registrada, com mínimo de três dias de histórico. O planejador pode informar outra capacidade ou definir uma quando o histórico for insuficiente. O prazo usa a capacidade em km de rede por dia e dias de segunda a sexta. A aba KPI de rotas apresenta meta, km de rede, cumprimento, km compartilhados, GPS, dias de saída e situação até a data do filtro.
+
+Em Classificação e referência, Local da árvore registra Público ou Privado separadamente da zona e da interferência. Cadastros anteriores podem permanecer sem classificação. O campo consta nas exportações locais e na edição administrativa. O Excel consolidado gerado pelo receptor do Drive requer publicar a nova versão do Apps Script no mesmo endereço de implantação.
+
 ## Rotas de vistoria MT — 18/11/2026
 
 Em **Vegetação → Rotas de vistoria**, marque T1/T2/T3, informe até 30 alimentadores e use as chaves quando precisar limitar o recorte. O mapa enquadra e destaca os vãos encontrados, mantendo as outras linhas ligadas como referência. A opção de área visível usa a janela do mapa no momento da consulta. É possível incluir todo o recorte, adicionar vãos na lista ou clicar na rede. Recortes acima de 10.000 vãos mostram uma prévia e pedem um filtro mais restrito para publicação.

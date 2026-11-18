@@ -40,7 +40,10 @@
   owner=next;state=saved||blank();selected=state.session?.routeId||(state.routes.some(r=>r.id===last)?last:resumeRoute())||null;currentGPS=null;
   paint();
  }
- const against=route=>M.coverage(route.spans,[...state.visits,...state.outbox].filter(v=>v.routeId===route.id));
+ function against(route){
+  const group=groupOf(route),ids=new Set(group.map(part=>part.id));
+  return M.coverage(group.flatMap(part=>part.spans),[...state.visits,...state.outbox].filter(visit=>ids.has(visit.routeId)));
+ }
  const route=()=>state?.routes.find(r=>r.id===selected);
  const session=()=>state?.session?.routeId===selected?state.session:null;
  function marks(){
@@ -114,6 +117,12 @@
   }
   refreshFieldOverlay();
   $('fieldRouteSummary').textContent=r?(r.campaign?.name||r.name)+' · '+km(total)+' planejados · '+km(covered.metres)+' confirmados · '+km(Math.max(0,total-covered.metres))+' pendentes na rota'+(group.length>1?' · parte '+(group.indexOf(r)+1)+'/'+group.length:''):'Baixe suas rotas com internet antes de sair.';
+  if(r?.plan){
+   const targets=M.schedule(r.plan,total),current=M.day(Date.now()),target=targets.find(item=>item.day===current);
+   if(target)$('fieldRouteSummary').textContent+=' · meta de hoje '+km(target.metres);
+   if(targets.length)$('fieldRouteSummary').textContent+=' · concluir até '+targets.at(-1).day.split('-').reverse().join('/');
+  }
+  if(covered.sharedMetres)$('fieldRouteSummary').textContent+=' · '+km(covered.sharedMetres)+' confirmados em vãos compartilhados';
   const remaining=r?M.pendingPaths(r.spans,prior.bySpan,active?.ranges):[];
   const nextPart=group.find(part=>part!==r&&part.spans.some(s=>M.remaining(covered.bySpan.get(s.id)).length));
   const move=$('fieldRouteNextPart');
@@ -130,7 +139,7 @@
    const missing=M.remaining(prior.bySpan.get(s.id)),picked=active?.ranges[s.id]||[];
    const label=missing.length?(active?.gpsMatches?.[s.id]?.length?'GPS sugeriu cobertura':'A vistoriar'):'Confirmado';
    const dir=(a,b)=>s.reverse?[M.FULL-b,M.FULL-a]:[a,b];
-   return `<li><b>${esc(s.id)}</b> · ${s.metres.toLocaleString('pt-BR')} m · ${label}${picked.length?' · marcado nesta saída':''}
+   return `<li><b>${esc(s.id)}</b> · ${s.metres.toLocaleString('pt-BR')} m · ${label}${s.parallel?.length?' · junto com '+esc([...new Set(s.parallel.map(peer=>peer.feeder))].join(', ')):''}${picked.length?' · marcado nesta saída':''}
    ${active&&missing.length?missing.map(([a,b])=>{const [x,y]=dir(a,b);return ` <button type="button" data-route-range="${i},${a},${b}">Confirmar ${x/100}%–${y/100}%</button>`;}).join('')+` <button type="button" data-route-part="${i}">Marcar parte</button>`:''}
    ${picked.length?` <button type="button" data-route-clear="${i}">Desmarcar</button>`:''}</li>`;
   }).join(''):'';

@@ -1,12 +1,12 @@
 'use strict';
 (()=>{
  const $=id=>document.getElementById(id),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- let map=null,tiles=null,trees=null,network=null,selection=null,locationPin=null,worker=null,config=null,ready=false,paused=false,importing=false,requestId=0,searchId=0,timer=null,lastData=null,treeSignature='',fitted=false,layerVisibility={},queryController=null,lastNetworkQuery='',lastTreeData=null,treeController=null,treeRequest=0,treeQuery='',visibleNetwork=[],routeLayer=null,routePreview=null,routePreviewFeatures=[],contextLayer=null,filterPair=null,attribute=null,restoring=false;
- let unifiedRequest=0;const unifiedPending=new Map();
+ let map=null,tiles=null,trees=null,network=null,selection=null,locationPin=null,worker=null,config=null,ready=false,paused=false,importing=false,requestId=0,searchId=0,timer=null,lastData=null,treeSignature='',fitted=false,layerVisibility={},queryController=null,lastNetworkQuery='',lastTreeData=null,treeController=null,treeRequest=0,treeQuery='',visibleNetwork=[],routeLayer=null,routePreview=null,routePreviewFeatures=[],contextLayer=null,filterPair=null,attribute=null,restoring=false,centralWorker=null,centralLayer=null,centralSignature="",centralEpoch=0;
+ let unifiedRequest=0;const unifiedPending=new Map(),centralPending=new Map(),readyWaiters=new Set();
  const status=text=>$('networkStatus').textContent=text;
  const api=(path,body,signal)=>window.CampoControl.api(path,body,signal);
  const allowed=()=>window.CampoControl?.authorized();
- function start(){void window.CampoParque?.load();window.CampoRoutePlanner?.open();if(map){setTimeout(()=>map.invalidateSize(),0);if(!ready&&!importing)void reuse();return;}map=L.map('controlMap',{zoomControl:false,preferCanvas:true}).setView([-9.97,-67.81],11);for(const [name,z]of [['controlNetwork',410],['controlContext',420],['controlTrees',640],['controlLabels',430],['controlSelection',450],['controlRoute',475]])map.createPane(name).style.zIndex=String(z);L.control.zoom({position:'bottomright'}).addTo(map);L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);trees=L.layerGroup().addTo(map);network=L.layerGroup().addTo(map);setTiles();window.CampoParque?.attach(map);map.on('moveend',()=>{clearTimeout(timer);timer=setTimeout(()=>{networkView();if(allowed())void refreshTrees();},250);});setTimeout(()=>{map.invalidateSize();void refreshTrees(true);},0);map.on('click',e=>{const candidates=window.CampoRoutePlanner?.picking()&&routePreviewFeatures.length?routePreviewFeatures:visibleNetwork;const f=typeof CampoNetworkHit!=='undefined'?CampoNetworkHit.closest(candidates,[e.latlng.lng,e.latlng.lat],c=>map.latLngToContainerPoint([c[1],c[0]])):null;if(f)showFeature(f);else{if(selection)map.removeLayer(selection);selection=null;}});void reuse();}
+ function start(){void window.CampoParque?.load();window.CampoRoutePlanner?.open();if(map){setTimeout(()=>map.invalidateSize(),0);if(!ready&&!importing)void reuse();return;}map=L.map('controlMap',{zoomControl:false,preferCanvas:true}).setView([-9.97,-67.81],11);for(const [name,z]of [['centralRouteContext',405],['controlNetwork',410],['controlContext',420],['controlTrees',640],['controlLabels',430],['controlSelection',450],['controlRoute',475]])map.createPane(name).style.zIndex=String(z);L.control.zoom({position:'bottomright'}).addTo(map);L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);trees=L.layerGroup().addTo(map);network=L.layerGroup().addTo(map);setTiles();window.CampoParque?.attach(map);map.on('moveend',()=>{clearTimeout(timer);timer=setTimeout(()=>{networkView();if(allowed())void refreshTrees();},250);});setTimeout(()=>{map.invalidateSize();void refreshTrees(true);},0);map.on('click',e=>{const candidates=window.CampoRoutePlanner?.picking()?routePreviewFeatures.length?routePreviewFeatures:visibleNetwork:visibleNetwork;const f=typeof CampoNetworkHit!=='undefined'?CampoNetworkHit.closest(candidates,[e.latlng.lng,e.latlng.lat],c=>map.latLngToContainerPoint([c[1],c[0]])):null;if(f)showFeature(f);else{if(selection)map.removeLayer(selection);selection=null;}});void reuse();}
  function setTiles(){if(!map)return;if(tiles){map.removeLayer(tiles);tiles=null;}const choice=$('basemap').value;if(choice==='local'){status('Rede local ativa · o mapa continua disponível sem fundo online.');return;}if(!navigator.onLine){$('basemap').value='local';status('Sem internet · rede local ativada automaticamente.');return;}const hybrid=choice==='hybrid',layer=L.tileLayer(hybrid?'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}':'https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22,maxNativeZoom:hybrid?20:19,attribution:hybrid?'© Google':'© OpenStreetMap contributors'}),selected=choice;let errors=0;tiles=layer;layer.on('tileload',()=>{errors=0;});layer.on('tileerror',()=>{if(tiles!==layer||$('basemap').value!==selected||++errors<3)return;$('basemap').value='local';setTiles();status('O fundo online não respondeu · rede local ativada automaticamente.');});layer.addTo(map);}
  function appendParams(p){if(!map)return;const b=map.getBounds().pad(.05);p.set('bbox',[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].join(','));p.set('zoom',String(map.getZoom()));}
  function fit(bounds){if(!map||!bounds)return;map.fitBounds([[bounds[1],bounds[0]],[bounds[3],bounds[2]]],{padding:[35,55],maxZoom:18});}
@@ -17,27 +17,30 @@
  function locate(r){if(!map||!Number.isFinite(Number(r.lat))||!Number.isFinite(Number(r.lon)))return;if(locationPin)map.removeLayer(locationPin);locationPin=L.circleMarker([Number(r.lat),Number(r.lon)],{pane:'controlSelection',radius:7,color:'#f7cb37',weight:2,fillOpacity:.1}).addTo(map).bindTooltip(escape(r.species||'Localização'));map.setView([Number(r.lat),Number(r.lon)],18);}
  // Read the existing GPKG configuration only; never load inspection records or photos.
  function meta(value){return new Promise((resolve,reject)=>{const request=indexedDB.open('campo-vegetacao',1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains('records'))db.createObjectStore('records',{keyPath:'id'});if(!db.objectStoreNames.contains('meta'))db.createObjectStore('meta');};request.onerror=()=>reject(request.error);request.onblocked=()=>reject(Error('Armazenamento ocupado por outra aba.'));request.onsuccess=()=>{const db=request.result;let result;const tx=db.transaction('meta',value?'readwrite':'readonly'),s=tx.objectStore('meta'),op=value?s.put(value,'gpkgConfig'):s.get('gpkgConfig');op.onsuccess=()=>result=op.result;tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(tx.error||Error('Leitura da configuração interrompida.'));};};});}
- function ensureWorker(){if(worker)return;worker=new Worker('package-worker.js');worker.onerror=()=>{status('O leitor da rede não pôde iniciar. Tente novamente.');release();};worker.onmessage=async event=>{const m=event.data;if(!allowed())return;if(['view','route-network','route-reference','route-network-error'].includes(m.action)&&unifiedPending.has(m.requestId)){const wait=unifiedPending.get(m.requestId);unifiedPending.delete(m.requestId);clearTimeout(wait.timer);if(m.action==='route-network-error')wait.reject(Error(m.message));else wait.resolve(m);return;}if(m.action==='progress'){status(m.message);return;}if(m.action==='paused'){ready=false;restoring=false;paused=true;if(!document.hidden)void reuse();return;}if(m.action==='busy'){status(m.message);release();return;}if(m.action==='error'){status(m.message+' A configuração anterior foi preservada.');release();return;}
+ function ensureWorker(){if(worker)return;worker=new Worker('package-worker.js');worker.onerror=()=>{status('O leitor da rede não pôde iniciar. Tente novamente.');release();};worker.onmessage=async event=>{const m=event.data;if(!allowed())return;if(['view','route-network','route-reference','route-network-error'].includes(m.action)&&unifiedPending.has(m.requestId)){const wait=unifiedPending.get(m.requestId);unifiedPending.delete(m.requestId);clearTimeout(wait.timer);if(m.action==='route-network-error')wait.reject(Error(m.message));else wait.resolve(m);return;}if(m.action==='progress'){status(m.message);return;}if(m.action==='paused'){ready=false;restoring=false;paused=true;if(!document.hidden)void reuse();return;}if(m.action==='busy'){status(m.message);release(m.message);return;}if(m.action==='error'){status(m.message+' A configuração anterior foi preservada.');release(m.message);return;}
  try{if(m.action==='inspect'){const layers=await window.CampoGestaoLayers.choose(m.layers.map(l=>window.CampoGestaoLayers.prepare(l)));if(!layers){status('Importação cancelada. A rede anterior foi preservada.');release();return;}worker.postMessage({action:'configure',layers,mapping:{}});status('Preparando índice da rede para consulta por área…');}
  else if(m.action==='zip-list'&&!importing){status('Selecione um ZIP com somente um GPKG para importar neste painel.');release();}
- else if(m.action==='configured'){config=m.config;await meta(config);ready=true;restoring=false;paused=false;lastNetworkQuery='';importing=false;buttons(false);paintLayers();status(config.count.toLocaleString('pt-BR')+' feições · rede preparada neste PC.');networkView();window.dispatchEvent(new Event('campo-unified-data'));}
- else if(m.action==='restored'){ready=true;restoring=false;paused=false;lastNetworkQuery='';paintLayers();status(config.count.toLocaleString('pt-BR')+' feições · rede local disponível.');networkView();window.dispatchEvent(new Event('campo-unified-data'));}
+ else if(m.action==='configured'){config=m.config;await meta(config);ready=true;restoring=false;paused=false;lastNetworkQuery='';importing=false;buttons(false);paintLayers();status(config.count.toLocaleString('pt-BR')+' feições · rede preparada neste PC.');networkView();networkReady();window.dispatchEvent(new Event('campo-unified-data'));}
+ else if(m.action==='restored'){ready=true;restoring=false;paused=false;lastNetworkQuery='';paintLayers();status(config.count.toLocaleString('pt-BR')+' feições · rede local disponível.');networkView();networkReady();window.dispatchEvent(new Event('campo-unified-data'));}
  else if(m.action==='view'&&filterPair&&(m.requestId===filterPair.base||m.requestId===filterPair.filter)){filterPair[m.requestId===filterPair.base?'baseData':'filterData']=m;if(filterPair.baseData&&filterPair.filterData){const found=filterPair.filterData.collection.features.length;drawNetwork(filterPair.baseData.collection);drawContext(filterPair.filterData.collection);status(found.toLocaleString('pt-BR')+' feição(ões) no filtro nesta área.'+(filterPair.baseData.capped||filterPair.filterData.capped?' Aproxime o mapa para ver todos.':''));}}else if(m.action==='view'&&m.requestId===requestId){drawContext(null);drawNetwork(m.collection);if(m.capped)status('Aproxime o mapa para ver todos os detalhes da rede.');}
  else if(m.action==='search-results'&&m.requestId===searchId){const list=$('mapResults');list.innerHTML=m.features.map((f,i)=>'<button type="button" data-network-result="'+i+'">'+escape(f.properties._layer)+' · '+escape(Object.entries(f.properties).filter(([k])=>!k.startsWith('_')).map(([,v])=>v).slice(0,3).join(' · '))+'</button>').join('');list.querySelectorAll('[data-network-result]').forEach(b=>b.onclick=()=>{const f=m.features[Number(b.dataset.networkResult)],bounds=CampoMapSearch.bounds(f.geometry);if(bounds)fit([bounds.west,bounds.south,bounds.east,bounds.north]);showFeature(f);$('mapSearch').hidden=true;$('mapSearchToggle').setAttribute('aria-expanded','false');});$('mapSearchStatus').textContent=m.features.length+' resultado(s) na rede'+(m.more?' · refine a busca':'');}
  }catch(e){status(e.message);buttons(false);importing=false;}};}
  function buttons(busy){for(const id of ['downloadNetwork','reuseNetwork','networkFile'])$(id).disabled=busy;}
- function release(){lastNetworkQuery='';ready=false;restoring=false;paused=false;importing=false;worker?.terminate();worker=null;for(const wait of unifiedPending.values()){clearTimeout(wait.timer);wait.reject(Error('A rede foi fechada. Reabra a base para consultar.'));}unifiedPending.clear();buttons(false);}
- async function reuse(){if(!allowed()||document.hidden||importing||restoring)return;restoring=true;try{config=await meta();if(!config){restoring=false;status('Nenhuma rede preparada neste PC. Clique em Baixar / atualizar rede do Drive.');return;}ensureWorker();ready=false;status('Abrindo rede já instalada…');worker.postMessage({action:'restore',config});}catch(e){restoring=false;status(e.message);}}
+ function networkReady(error){for(const notify of readyWaiters)notify(error);readyWaiters.clear();}
+ function release(message){networkReady(typeof message==='string'?message:'A rede local foi fechada.');lastNetworkQuery='';ready=false;restoring=false;paused=false;importing=false;worker?.terminate();worker=null;for(const wait of unifiedPending.values()){clearTimeout(wait.timer);wait.reject(Error('A rede foi fechada. Reabra a base para consultar.'));}unifiedPending.clear();buttons(false);}
+ async function reuse(){if(!allowed()||document.hidden||importing||restoring)return;restoring=true;try{config=await meta();if(!config){restoring=false;status('Instale o GPKG para mostrar postes, chaves e BT. Os vãos MT podem vir da base central.');networkView();return;}ensureWorker();ready=false;status('Abrindo rede já instalada…');worker.postMessage({action:'restore',config});}catch(e){restoring=false;status(e.message);networkReady(e.message);}}
  async function download(){if(!allowed()||importing)return;importing=true;buttons(true);try{const manifest=await api('/api/network/manifest');if(config?.centralSource?.revision===manifest.revision){status('A rede instalada já está atualizada.');importing=false;buttons(false);await reuse();return;}ensureWorker();worker.postMessage({action:'import-remote',manifest:{...manifest,apiBase:location.origin,adminSession:sessionStorage.getItem('campo-admin-session')||''}});status('Baixando e integrando a rede. Acompanhe o progresso nesta tela.');}catch(e){status(e.message);importing=false;buttons(false);}}
  function saveVisibility(){try{localStorage.setItem('campo-gestao-camadas',JSON.stringify(layerVisibility));}catch{}}
  function paintLayers(){const layers=config?.layers||[];try{layerVisibility={...JSON.parse(localStorage.getItem('campo-gestao-camadas')||'{}'),...layerVisibility};}catch{}for(const l of layers)if(layerVisibility[l.table_name]===undefined)layerVisibility[l.table_name]=window.CampoGestaoLayers.defaultVisible(l.table_name);window.CampoGestaoLayers.render($('networkLayers'),layers,layerVisibility,()=>{saveVisibility();networkView();});const names=layers.map(l=>'<option value="'+escape(l.table_name)+'">'+escape(l.table_name)+'</option>').join('');$('attrLayer').innerHTML='<option value="">Escolha a camada</option>'+names;attrColumns();$('networkFeeder').innerHTML='<option value="">Todos</option>'+(config?.feeders||[]).map(f=>'<option value="'+escape(f)+'">'+escape(f)+'</option>').join('');$('searchLayer').innerHTML='<option value="">Todas as camadas</option>'+layers.map(l=>'<option value="'+escape(l.table_name)+'">'+escape(l.table_name)+'</option>').join('');searchColumns();window.CampoRoutePlanner?.feeders(config?.feeders||[]);}
  function searchColumns(){const name=$('searchLayer').value,columns=[...new Set((config?.layers||[]).filter(l=>!name||l.table_name===name).flatMap(l=>l.columns||[]))];$('searchColumn').innerHTML='<option value="">Todas as colunas</option>'+columns.map(c=>'<option value="'+escape(c)+'">'+escape(c)+'</option>').join('');}
  function attrColumns(){const layer=(config?.layers||[]).find(l=>l.table_name===$('attrLayer').value);$('attrColumn').innerHTML='<option value="">Todas as colunas</option>'+(layer?.columns||[]).map(c=>'<option value="'+escape(c)+'">'+escape(c)+'</option>').join('');}
  function networkView(){
-  if(!ready||!worker||!map)return;
+  if(!map||!allowed()||!map.getContainer().offsetWidth)return;
   const b=map.getBounds().pad(.15),zoom=map.getZoom(),scale=$('networkScale').checked,feeder=$('networkFeeder').value;
+  if(centralLayer||!ready)void centralContext(b,zoom);
+  if(!ready||!worker)return;
   const feeders=feeder?[feeder]:window.CampoControl.filters().feeders||[];
-  const visibleLayers=Object.keys(layerVisibility).filter(k=>layerVisibility[k]&&(!scale||window.CampoGestaoLayers.inScale(k,zoom)));
+  const visibleLayers=Object.keys(layerVisibility).filter(k=>layerVisibility[k]&&(!scale||window.CampoGestaoLayers.inScale(k,zoom))&&(!centralLayer||config?.layers.find(layer=>layer.table_name===k)?.classification!=='MT'));
   const query={action:'view',bounds:{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()},visibleLayers};
   const signature=JSON.stringify([query,feeders,attribute]);if(signature===lastNetworkQuery)return;
   lastNetworkQuery=signature;filterPair=null;
@@ -65,29 +68,79 @@
  const popovers=[['mapMenuToggle','mapMenu'],['parqueToggle','parqueMenu'],['mapSearchToggle','mapSearch']];for(const [button,panel]of popovers)$(button).onclick=()=>{const open=$(panel).hidden;for(const [b,p]of popovers){$(p).hidden=true;$(b).setAttribute('aria-expanded','false');}$(panel).hidden=!open;$(button).setAttribute('aria-expanded',String(open));if(panel==='mapSearch'&&open)$('mapQuery').focus();};$('attrLayer').onchange=attrColumns;$('networkFeeder').onchange=networkView;$('networkScale').onchange=networkView;$('attrApply').onclick=()=>{const layer=$('attrLayer').value,text=$('attrValue').value.trim();if(!layer||!text){status('Escolha a camada e o valor do filtro.');return;}attribute={layer,column:$('attrColumn').value,text};layerVisibility[layer]=true;paintLayers();networkView();};$('attrClear').onclick=()=>{attribute=null;$('attrValue').value='';networkView();};
  function expand(on){$('mapa').classList.toggle('map-expanded',on);$('mapExit').hidden=!on;$('mapExpand').textContent=on?'↙':'⛶';setTimeout(()=>map?.invalidateSize(),0);}$('mapExpand').onclick=()=>expand(!$('mapa').classList.contains('map-expanded'));$('mapExit').onclick=()=>expand(false);document.addEventListener('keydown',e=>{if(e.key==='Escape')expand(false);});
  $('reuseNetwork').onclick=()=>void reuse();$('downloadNetwork').onclick=()=>void download();$('networkFile').onchange=async e=>{const file=e.target.files?.[0];if(!file||!allowed()||importing)return;ensureWorker();importing=true;buttons(true);const bytes=new Uint8Array(await file.slice(0,16).arrayBuffer());if(bytes[0]===80&&bytes[1]===75){worker.postMessage({action:'zip-list',file});const prior=worker.onmessage;worker.onmessage=event=>{if(event.data.action==='zip-list'){worker.onmessage=prior;if(event.data.entries.length!==1){status('Este ZIP contém várias bases. Selecione o GPKG desejado diretamente.');release();return;}worker.postMessage({action:'open-zip',index:0});}else void prior(event);};}else worker.postMessage({action:'inspect-file',file});e.target.value='';};$('searchLayer').onchange=searchColumns;$('mapSearchForm').onsubmit=search;
+ window.addEventListener('resize',()=>{if(map&&allowed())setTimeout(()=>{map.invalidateSize();networkView();},100);});
  document.addEventListener('visibilitychange',()=>{if(document.hidden&&worker&&ready){ready=false;worker.postMessage({action:'pause'});}else if(!document.hidden&&paused&&allowed())void reuse();});window.addEventListener('pagehide',release);
- function stop(){window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
+ function stop(){stopCentral();window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
  function unifiedNetwork(bounds,zoom,feeders){
   if(!allowed()||!ready||!worker)return Promise.reject(Error('Rede local ainda não disponível. Use a opção de instalar ou atualizar a rede.'));
   const visibleLayers=Object.keys(layerVisibility).filter(k=>layerVisibility[k]&&(!$("networkScale").checked||window.CampoGestaoLayers.inScale(k,zoom)));
   const requestId=--unifiedRequest;
   return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{unifiedPending.delete(requestId);reject(Error("A consulta da rede demorou. Mova ou aproxime o mapa para tentar de novo."));},12000);unifiedPending.set(requestId,{resolve,timer});worker.postMessage({action:"view",bounds,feeders,visibleLayers,requestId,strictFeeders:true});});
  }
- async function routeNetwork(filters,action='route-network'){
-  if(!allowed())throw Error('Entre na gestão para consultar a rede.');
+ function stopCentral(){
+  centralWorker?.terminate();centralWorker=null;centralEpoch++;centralSignature='';
+  for(const request of centralPending.values()){clearTimeout(request.timer);request.reject(Error('A sessão da gestão foi encerrada.'));}centralPending.clear();
+  centralLayer?.remove();centralLayer=null;
+ }
+ function centralQuery(action,query={}){
+  if(!centralWorker){
+   centralWorker=new Worker('route-network-worker.js');
+   centralWorker.onmessage=({data:result})=>{
+    const waiting=centralPending.get(result.id);if(!waiting)return;
+    centralPending.delete(result.id);clearTimeout(waiting.timer);
+    if(result.error)waiting.reject(Error(result.error));else waiting.resolve(result.data);
+   };
+   centralWorker.onerror=()=>stopCentral();
+  }
+  const id=++unifiedRequest;
+  return new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{centralPending.delete(id);reject(Error('A base MT central excedeu o tempo de resposta.'));},95000);
+   centralPending.set(id,{resolve,reject,timer});centralWorker.postMessage({id,action,...query,adminSession:sessionStorage.getItem('campo-admin-session')||''});
+  });
+ }
+ async function centralContext(b,zoom){
+  const bounds={west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()},signature=JSON.stringify([bounds,zoom]);
+  if(signature===centralSignature)return;
+  centralSignature=signature;const serial=++centralEpoch;
+  try{
+   const result=await centralQuery('filter',{context:true,bounds,zoom});
+   if(!allowed()||serial!==centralEpoch)return;
+   const pane='centralRouteContext',first=!centralLayer;
+   centralLayer?.remove();
+   centralLayer=L.geoJSON({type:'FeatureCollection',features:result.features},{pane,style:{color:'#45cfcb',weight:1.6,opacity:.78},onEachFeature:(feature,line)=>{
+    line.on('click',event=>{L.DomEvent.stopPropagation(event.originalEvent||event);showFeature(feature);});
+   }}).addTo(map);
+   if(first){status('Rede MT central disponível.');networkView();}
+  }catch{if(serial===centralEpoch)centralSignature='';}
+ }
+ async function localRouteNetwork(filters,action){
   if(!ready&&!importing)await reuse();
   if(!ready&&(restoring||importing))await new Promise((resolve,reject)=>{
-   const done=()=>{clearTimeout(timer);window.removeEventListener('campo-unified-data',done);resolve();};
-   const timer=setTimeout(()=>{window.removeEventListener('campo-unified-data',done);reject(Error('Aguarde a preparação da rede e tente novamente.'));},12000);
-   window.addEventListener('campo-unified-data',done,{once:true});
+   const done=message=>{clearTimeout(wait);readyWaiters.delete(done);if(message)reject(Error(message));else resolve();};
+   const wait=setTimeout(()=>done('A rede local continua em preparação.'),90000);
+   readyWaiters.add(done);
   });
-  if(!ready||!worker)throw Error('Abra Rede no mapa e baixe a base do Drive ou instale o GPKG de campo.');
+  if(!ready||!worker)throw Error('O GPKG local não está aberto.');
   const id='route-'+(++unifiedRequest);
   return new Promise((resolve,reject)=>{
-   const timer=setTimeout(()=>{unifiedPending.delete(id);reject(Error('A consulta demorou. Experimente um recorte menor.'));},60000);
-   unifiedPending.set(id,{resolve,reject,timer});
-   worker.postMessage({action,requestId:id,...filters});
+   const timer=setTimeout(()=>{unifiedPending.delete(id);reject(Error('A consulta à rede local demorou.'));},60000);
+   unifiedPending.set(id,{resolve,reject,timer});worker.postMessage({action,requestId:id,...filters});
   });
+ }
+ async function routeNetwork(filters,action='route-network'){
+  if(!allowed())throw Error('Entre na gestão para consultar a rede.');
+  if(action!=='route-network')return localRouteNetwork(filters,action);
+  const featureId=filters.featureId;
+  if(featureId&&!featureId.startsWith('route-mt:'))return localRouteNetwork(filters,action);
+  try{
+   const result=await centralQuery('filter',filters);
+   if(map&&map.getContainer().offsetWidth)void centralContext(map.getBounds().pad(.15),map.getZoom());
+   return result;
+  }catch(error){
+   if(!ready)throw error;
+   const result=await localRouteNetwork(filters,action);
+   return {...result,referenceError:'Rede central indisponível. Recorte calculado com o GPKG local.'};
+  }
  }
  function setRouteFilter(features,focus=false,scroll=false,extent=null){
   if(!map)return;
@@ -105,7 +158,7 @@
    if(extent)fit([extent.west,extent.south,extent.east,extent.north]);
    else if(routePreview.getBounds().isValid())map.fitBounds(routePreview.getBounds(),{padding:[35,45],maxZoom:18});
   }
-  if(scroll)$('controlMap').scrollIntoView({block:'center'});
+  if(scroll)$('controlMap').scrollIntoView({block:'center',behavior:'smooth'});
  }
  function routeOverlay(spans,covered,focus,buffer=0){
   if(!map)return;
@@ -126,5 +179,5 @@
   }
   if(focus&&routeLayer.getBounds().isValid()){map.fitBounds(routeLayer.getBounds(),{padding:[24,24],maxZoom:19});$('controlMap').scrollIntoView({block:'center'});}
  }
- window.CampoControlMap={routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,unifiedNetwork,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
+ window.CampoControlMap={routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,unifiedNetwork,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
 })();

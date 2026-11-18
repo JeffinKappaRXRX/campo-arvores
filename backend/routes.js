@@ -8,6 +8,17 @@ async function routeReference(request,env,admin){
  if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Complemento VERA incompleto. Tente novamente.',503);
  return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 }
+const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20261009-vera-20260803-v1';
+async function routeGeometry(request,env,admin){
+ if(!admin)throw sharedError('Rede MT do planejador restrita à gestão.',403);
+ if(request.method!=='GET')throw sharedError('Use GET.',405);
+ const manifest=await env.LOGIN_GUARD?.get(ROUTE_GEOMETRY_KEY,'json');
+ if(!manifest?.feeders?.length||!Number.isInteger(manifest.parts)||manifest.parts<1||manifest.parts>40||!Number.isInteger(manifest.size)||manifest.size>12000000)throw sharedError('A rede MT do planejador está indisponível.',503);
+ if(new URL(request.url).searchParams.has('catalog'))return json({feeders:manifest.feeders,count:manifest.count});
+ const parts=await Promise.all(Array.from({length:manifest.parts},(_,i)=>env.LOGIN_GUARD.get(ROUTE_GEOMETRY_KEY+':'+i,'arrayBuffer')));
+ if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Arquivo da rede MT incompleto. Tente novamente.',503);
+ return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+}
 function visibleRoutes(routes){
  return CampoRoutes.campaignParts(routes).flatMap(parts=>{
   const plan=parts[0].campaign;
@@ -24,6 +35,7 @@ const ROUTE_TABLES=[
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
+  if(path==='/api/routes/geometry')return await routeGeometry(request,env,admin);
   if(path==='/api/routes/reference')return await routeReference(request,env,admin);
   if(!admin&&!actor)throw sharedError('Entre com sua conta para acessar as rotas.',403);
   const db=await adminDb(env);
@@ -59,16 +71,17 @@ async function routeAPI(request,env){
    const feeder=derive?values('feeder').join(' / '):fallback.feeder;
    const zone=derive?values('zone').join(' / '):fallback.zone;
    const section=sections[0],phase=derive?Math.min(...spans.map(s=>priority(s.zone,s.section))):priority(zone,section);
-   const buffer=CampoRoutes.bufferMetres(input.buffer);
+   const buffer=CampoRoutes.bufferMetres(input.buffer),plan=CampoRoutes.routePlan(input.plan);
+   if(input.plan!=null&&!plan)throw sharedError('Informe a data inicial e uma capacidade diária válida.');
    const campaign=input.campaign;
    if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
    await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
    if(campaign){
-    const peer=await db.prepare('SELECT assignee FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
-    if((peer&&peer.assignee!==assignee)||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
+    const peer=await db.prepare('SELECT assignee,data FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
+    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
    }
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}

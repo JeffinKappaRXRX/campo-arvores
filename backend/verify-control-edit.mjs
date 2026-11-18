@@ -13,13 +13,13 @@ const login=await call('/api/admin/login',{password:env.ADMIN_PASSWORD});cookie=
 sql.prepare('INSERT INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').run('tree1',JSON.stringify(original),original.updatedAt,'initial','Inspetor original');sql.prepare('INSERT INTO shared_photos VALUES(?,?,?)').run('tree1','p0',image);
 const count=()=>sql.prepare('SELECT COUNT(*) n FROM shared_changes').get().n,read=()=>JSON.parse(sql.prepare('SELECT data FROM shared_trees WHERE id=?').get('tree1').data);
 let snap=await call('/api/control/edit?id=tree1');assert.equal(snap.status,200);assert.equal(snap.data.version,1);assert.equal(count(),1,'opening editor is read only');
-const body={id:'tree1',version:1,operationId:'edit-1',values:{height:12,mtDistance:1.25},uploads:[upload]};
+const body={id:'tree1',version:1,operationId:'edit-1',values:{treeSite:'privado',height:12,mtDistance:1.25},uploads:[upload]};
 assert.equal((await call('/api/control/edit',{...body,version:0})).status,409);
 assert.equal((await call('/api/control/edit',{...body,values:{createdAt:'2026-11-16'}})).status,400,'creation date cannot be forged');
 assert.equal((await call('/api/control/edit',{...body,values:{height:-1}})).status,400);
 assert.equal((await call('/api/control/edit',{...body,uploads:[{...upload,sha256:'bad'}]})).status,400);
 sql.prepare('INSERT INTO campo_admin_locks VALUES(?,?,?)').run('tree1','lock',Date.now()+60000);assert.equal((await call('/api/control/edit',body)).status,409);assert.equal(count(),1);sql.exec('DELETE FROM campo_admin_locks');
-let result=await call('/api/control/edit',body);assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(result.data.tree.sharedVersion,2);assert.equal(read().height,'12');assert.equal(read().mtDistance,'1.25');
+let result=await call('/api/control/edit',body);assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(result.data.tree.sharedVersion,2);assert.equal(read().treeSite,'privado');assert.equal(read().height,'12');assert.equal(read().mtDistance,'1.25');
 for(const k of ['createdAt','inspector','createdBy','inspectionTiming','plantIdentification','extraMetadata'])assert.deepEqual(read()[k],original[k],k+' preserved');assert.equal(read().photos.length,2);assert.equal(count(),2);
 assert.equal(sql.prepare('SELECT image FROM shared_photos WHERE tree_id=? AND asset_id=?').get('tree1','p0').image,image);assert.equal(sql.prepare('SELECT data FROM shared_changes WHERE tree_id=? AND version=1').get('tree1').data,JSON.stringify(original));
 assert.equal((await call('/api/control/edit',body)).data.replayed,true);assert.equal(count(),2,'retry adds no version or photo');
