@@ -1,5 +1,15 @@
 # Publicação no endereço oficial
 
+## Rotas de vistoria MT — 18/11/2026
+
+Em **Vegetação → Rotas de vistoria**, marque T1/T2/T3, informe até 30 alimentadores e use as chaves quando precisar limitar o recorte. O mapa enquadra e destaca os vãos encontrados, mantendo as outras linhas ligadas como referência. A opção de área visível usa a janela do mapa no momento da consulta. É possível incluir todo o recorte, adicionar vãos na lista ou clicar na rede. Recortes acima de 10.000 vãos mostram uma prévia e pedem um filtro mais restrito para publicação.
+
+A geometria vem do GPKG preparado no painel. O complemento VERA de 03/08/2026 está disponível para a gestão em `GET /api/routes/reference`, com cache local e importação manual de `.json.gz` como alternativa. A consulta junta somente IDs correspondentes. Usa a extensão positiva em metros do cadastro do vão e recorre à geometria quando a extensão está ausente. A interface indica os quilômetros estimados e a diferença entre a geometria instalada e o catálogo. O complemento permanece no armazenamento privado da API, com as partes e o manifesto das chaves `arbora:mt-reference:2026-08-03`. A distribuição pública do aplicativo não contém esse arquivo.
+
+O painel grava a rota na mesma base central e a libera para a conta autenticada do inspetor ao concluir a publicação. Rotas grandes podem ter partes de execução e mantêm um mapa completo da atribuição. O buffer é configurável de 5 m a 200 m por lado, com padrão de 30 m. O campo guarda localmente a saída e a fila de envio, mostra o restante por vão e continua da cobertura confirmada. A trilha GPS e a sugestão de cobertura têm indicadores distintos. A confirmação pelo inspetor registra apenas a cobertura de rede revisada. As rotas e faixas já baixadas funcionam offline. A navegação por ruas abre o Google Maps pelos pontos pendentes, em etapas quando necessário, e depende da conectividade e cobertura viária.
+
+Validação de desenvolvimento com `node tests/route-filters.cjs`, `node tests/routes.cjs` e `node backend/verify-pages.mjs`. A publicação usa `node backend/build.mjs` e `node hosting/build-release.mjs`.
+
 ## Mapa unificado e plano de poda por ciclo — 16/11/2026
 
 O painel em `gestao.html#c-mapa` reúne VERA, inspeções compartilhadas, parque por poste, OS e SS, limpeza de faixa, licenças, camadas de manutenção e rede elétrica preparada no PC. O mapa, a tabela e o CSV do ciclo usam o mesmo recorte e as mesmas camadas de poda ativadas. O cadastro e as fotos podem ser abertos a partir do ponto. A rede é uma camada de referência consultada pela área visível e pelos alimentadores do recorte territorial. A instalação continua disponível no menu de rede do painel.

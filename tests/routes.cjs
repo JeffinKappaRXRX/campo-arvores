@@ -13,6 +13,12 @@ assert.equal(M.phase('Rural','T3'),4);
 const s=M.span({...spans[0],line:[...spans[0].line].reverse(),reverse:false});
 assert.deepEqual(s.line,spans[0].line);
 assert.equal(s.reverse,true);
+const corridor=M.bufferRings(spans,30);
+assert.equal(corridor.length,5);
+assert(Math.abs(M.distance(spans[0].line[1],corridor[0][4])-30)<.001);
+assert(M.matchedRanges(spans,spans[0].line[0],spans[1].line[1]).some(x=>x.spanId==='vao0'));
+assert.equal(M.matchedRanges(spans,[-67.8,-9.969],[-67.8,-9.971]).length,0);
+assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans[2].line[0]])).searchParams.get('waypoints'),'-9.970000,-67.799400');
 
 (async()=>{
  const db=await new Promise(resolve=>{const q=indexedDB.open('route-test',1);q.onupgradeneeded=()=>q.result.createObjectStore('meta');q.onsuccess=()=>resolve(q.result);});
@@ -54,4 +60,30 @@ assert.equal(s.reverse,true);
  assert.deepEqual(M.remaining(M.coverage(spans,saved.visits).bySpan.get('vao1')),[[5000,10000]]);
  assert.match(app.d.getElementById('fieldRouteStatus').textContent,/recebidas/);
  app.close();db.close();console.log('PASS: seleção, sobreposição, conclusão parcial offline, reabertura, sincronização e retomada.');
+})().catch(e=>{console.error(e);process.exitCode=1;});
+
+(async()=>{
+ const {DatabaseSync}=require('node:sqlite');
+ const sql=new DatabaseSync(':memory:');
+ sql.exec("CREATE TABLE campo_users(id TEXT, name TEXT, blocked INTEGER); CREATE TABLE campo_user_lifecycle(user_id TEXT, deleted_at TEXT); INSERT INTO campo_users VALUES('operator','Inspetor',0);");
+ const db={prepare(text){let args=[];return {bind(...items){args=items;return this;},first(){return sql.prepare(text).get(...args);},all(){return {results:sql.prepare(text).all(...args)};},run(){return {meta:sql.prepare(text).run(...args)};}};},batch(items){return items.map(item=>item.run());}};
+ const ctx=vm.createContext({Request,Response,Blob,URL,
+  json:(data,status=200)=>Response.json(data,{status}),adminDb:async()=>db,isAdministrator:r=>r.headers.get('X-Test-Role')==='admin',
+  sharedBody:r=>r.json(),sharedError:(message,status=400)=>Object.assign(Error(message),{status}),centralMissingTable:error=>/no such table/.test(error.message)});
+ vm.runInContext(fs.readFileSync('docs/route-core.js','utf8')+'\n'+fs.readFileSync('backend/routes.js','utf8'),ctx);
+ const env={CAMPO_USER:{id:'operator'},LOGIN_GUARD:{get:async(_key,type)=>type==='json'?{parts:2,size:2}:new Uint8Array([31]).buffer}};
+ const request=(path,body,admin=false,identity=env)=>ctx.routeAPI(new Request('https://example.test'+path,{method:body?'POST':'GET',headers:admin?{'X-Test-Role':'admin'}:{},body:body?JSON.stringify(body):null}),identity);
+ const campaign={id:'combined',total:2,name:'Vistoria por partes'};
+ const part=i=>({id:'combined-'+i,assignee:'operator',name:'Vistoria ('+i+'/2)',campaign:{...campaign,index:i},locality:'Rio Branco',feeder:'TAQ-01C1',zone:'Urbano',section:'1',fromNetwork:true,spans:[spans[i-1]],buffer:55});
+ assert.equal((await request('/api/routes',part(1),true)).status,201);
+ assert.deepEqual((await (await request('/api/routes')).json()).routes,[]);
+ assert.equal((await request('/api/routes',part(2),true)).status,201);
+ assert.equal((await request('/api/routes',part(2),true)).status,200);
+ const data=await (await request('/api/routes')).json();
+ assert.deepEqual(data.routes.map(r=>r.id),['combined-1','combined-2']);
+ assert(data.routes.every(r=>r.buffer===55));
+ assert.deepEqual((await (await request('/api/routes',null,false,{CAMPO_USER:{id:'another'}})).json()).routes,[]);
+ assert.equal((await request('/api/routes/reference')).status,403);
+ assert.deepEqual([...new Uint8Array(await (await request('/api/routes/reference',null,true)).arrayBuffer())],[31,31]);
+ sql.close();console.log('PASS: publicação integral, retentativa idempotente, escopo por inspetor e complemento protegido.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,4 +1,11 @@
 let routeReferenceReady=false;
+const routeReferenceURL='/api/routes/reference';
+async function centralRouteReference(){
+ if(!/\.pages\.dev$/.test(self.location.hostname))return null;
+ const response=await fetch(routeReferenceURL,{cache:'no-store',signal:AbortSignal.timeout(12000)});
+ if(!response.ok)throw Error('Complemento VERA central indisponível (HTTP '+response.status+').');
+ return response.blob();
+}
 async function referenceFile(file){
  const db=await new Promise((resolve,reject)=>{
   const open=indexedDB.open('campo-mt-reference',1);
@@ -12,8 +19,10 @@ async function referenceFile(file){
  });}finally{db.close();}
 }
 async function loadRouteReference(file){
- if(!sourceDb||routeReferenceReady&&!file)return;
- const stored=file||await referenceFile();
+ if(!sourceDb)throw Error('Abra a base de rede antes de vincular o complemento VERA.');
+ if(routeReferenceReady&&!file)return;
+ const cached=file||await referenceFile();
+ const stored=cached||await centralRouteReference();
  if(!stored)return;
  if(stored.size>6000000)throw Error('Selecione o arquivo .json.gz de referência da rede MT.');
  const data=fflate.strFromU8(fflate.gunzipSync(new Uint8Array(await stored.arrayBuffer())));
@@ -27,8 +36,8 @@ async function loadRouteReference(file){
   sourceDb.exec({sql:"INSERT INTO campo_mt_ref SELECT value->>0,value->>1,value->>2,value->>3,value->>4,value->>5,value->>6 FROM json_each(?)",bind:[data]});
   sourceDb.exec('COMMIT');
  }catch(e){sourceDb.exec('ROLLBACK');throw e;}
- if(file)await referenceFile(file);
  routeReferenceReady=true;
+ if(file||!cached)await referenceFile(stored).catch(()=>{});
  return list.length;
 }
 async function loadSqliteBinary(){
@@ -102,8 +111,8 @@ function queryFiltered(m){
  try{while(refs.step()){const row=refs.get({});pending[row.layer].push(row.row_id);if(++count%500===0){flush();if(features.length>4000)break;}}if(features.length<=4000)flush();}finally{refs.finalize();}
  postMessage({action:'view',requestId:m.requestId,collection:{type:'FeatureCollection',features:features.slice(0,4000)},capped:features.length>4000});
 }
-function query(m){if(!indexDb)return;if(m.search?.text||m.blocks?.length)return queryFiltered(m);const b=m.bounds,bind=[b.east,b.west,b.north,b.south],selection=feederSelection(m),filter=selection.sql;bind.push(...selection.bind);let refs=rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+layerClause(m)+' LIMIT 4001',bind);const capped=refs.length>4000;if(capped){const active=currentLayers.map((l,i)=>!Array.isArray(m.visibleLayers)||m.visibleLayers.includes(l.table_name)?i:-1).filter(i=>i>=0);const quota=Math.floor(4000/Math.max(1,active.length));refs=active.flatMap(i=>rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+' AND r.layer=? LIMIT '+quota,[...bind,i]));}const features=[];for(let i=0;i<currentLayers.length;i++){const l=currentLayers[i],ids=refs.slice(0,4000).filter(r=>r.layer===i).map(r=>r.row_id);if(!ids.length)continue;const transform=projection(l.srs_id),stmt=sourceDb.prepare('SELECT rowid AS _campo_rid,* FROM '+q(l.table_name)+' WHERE rowid IN ('+ids.map(Number).join(',')+')');try{while(stmt.step()){const row=stmt.get({}),g=decodeGeometry(row[l.column_name],transform);delete row[l.column_name];const id=l.table_name+':'+row._campo_rid;delete row._campo_rid;for(const k of Object.keys(row))if(row[k] instanceof Uint8Array)delete row[k];features.push({type:'Feature',id,geometry:g,properties:{...row,_layer:l.table_name,_class:l.classification}});}}finally{stmt.finalize();}}postMessage({action:'view',requestId:m.requestId,collection:{type:'FeatureCollection',features},capped});}
-let queue=Promise.resolve();onmessage=e=>{if(e.data.action==='cancel'){cancelled=true;return;}queue=queue.then(async()=>{const m=e.data;try{cancelled=false;if(m.action==='import-remote')await importRemote(m.manifest);else if(m.action==='inspect-file'){remoteSource=null;await importFile(m.file);}else if(m.action==='zip-list'){remoteSource=null;await zipDirectory(m.file);}else if(m.action==='open-zip')await openZip(m.index);else if(m.action==='configure')await configure(m);else if(m.action==='view')query(m);else if(m.action==='focus')focus(m);else if(m.action==='search'||m.action==='universal-search')searchNetwork(m);else if(m.action==='route-reference')postMessage({action:'route-reference',requestId:m.requestId,count:await loadRouteReference(m.file)});else if(m.action==='route-network'){try{await loadRouteReference();}catch{}postMessage({action:'route-network',requestId:m.requestId,...routeNetwork(m)});}else if(m.action==='block-summary')postMessage({action:'block-summary',requestId:m.requestId,items:blockSummary(m)});else if(m.action==='pause')await pausePackage();else if(m.action==='restore'){await engine();close();currentPath=m.config.path;currentIndex=m.config.indexPath;currentLayers=m.config.layers;currentMapping=m.config.mapping;sourceDb=new pool.OpfsSAHPoolDb(currentPath,'r');indexDb=new pool.OpfsSAHPoolDb(currentIndex,'r');postMessage({action:'restored'});}else if(m.action==='prune'){for(const path of m.paths||[])if(path&&path!==currentPath&&path!==currentIndex)pool.unlink(path);}else if(m.action==='remove'){close();if(currentPath)pool.unlink(currentPath);if(currentIndex)pool.unlink(currentIndex);postMessage({action:'removed'});}}catch(e){const busy=e.code==='CAMPO_PACKAGE_BUSY'||/createSyncAccessHandle|Access Handles|another open.*Handle/i.test(e.message);postMessage({action:busy?'busy':m.action==='universal-search'?'universal-search-error':m.action==='search'?'search-error':m.action==='block-summary'?'block-error':['route-network','route-reference'].includes(m.action)?'route-network-error':'error',requestId:m.requestId,message:busy?packageBusyError().message:e.message});}});};
+function query(m){if(!indexDb)return;if(m.search?.text||m.blocks?.length)return queryFiltered(m);const b=m.bounds,bind=[b.east,b.west,b.north,b.south],selection=feederSelection(m,!m.strictFeeders),filter=selection.sql;bind.push(...selection.bind);let refs=rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+layerClause(m)+' LIMIT 4001',bind);const capped=refs.length>4000;if(capped){const active=currentLayers.map((l,i)=>!Array.isArray(m.visibleLayers)||m.visibleLayers.includes(l.table_name)?i:-1).filter(i=>i>=0);const quota=Math.floor(4000/Math.max(1,active.length));refs=active.flatMap(i=>rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+' AND r.layer=? LIMIT '+quota,[...bind,i]));}const features=[];for(let i=0;i<currentLayers.length;i++){const l=currentLayers[i],ids=refs.slice(0,4000).filter(r=>r.layer===i).map(r=>r.row_id);if(!ids.length)continue;const transform=projection(l.srs_id),stmt=sourceDb.prepare('SELECT rowid AS _campo_rid,* FROM '+q(l.table_name)+' WHERE rowid IN ('+ids.map(Number).join(',')+')');try{while(stmt.step()){const row=stmt.get({}),g=decodeGeometry(row[l.column_name],transform);delete row[l.column_name];const id=l.table_name+':'+row._campo_rid;delete row._campo_rid;for(const k of Object.keys(row))if(row[k] instanceof Uint8Array)delete row[k];features.push({type:'Feature',id,geometry:g,properties:{...row,_layer:l.table_name,_class:l.classification}});}}finally{stmt.finalize();}}postMessage({action:'view',requestId:m.requestId,collection:{type:'FeatureCollection',features},capped});}
+let queue=Promise.resolve();onmessage=e=>{if(e.data.action==='cancel'){cancelled=true;return;}queue=queue.then(async()=>{const m=e.data;try{cancelled=false;if(m.action==='import-remote')await importRemote(m.manifest);else if(m.action==='inspect-file'){remoteSource=null;await importFile(m.file);}else if(m.action==='zip-list'){remoteSource=null;await zipDirectory(m.file);}else if(m.action==='open-zip')await openZip(m.index);else if(m.action==='configure')await configure(m);else if(m.action==='view')query(m);else if(m.action==='focus')focus(m);else if(m.action==='search'||m.action==='universal-search')searchNetwork(m);else if(m.action==='route-reference')postMessage({action:'route-reference',requestId:m.requestId,count:await loadRouteReference(m.file)});else if(m.action==='route-network'){let referenceError='';try{await loadRouteReference();}catch(e){referenceError=e.message;}postMessage({action:'route-network',requestId:m.requestId,referenceError,...routeNetwork(m)});}else if(m.action==='block-summary')postMessage({action:'block-summary',requestId:m.requestId,items:blockSummary(m)});else if(m.action==='pause')await pausePackage();else if(m.action==='restore'){await engine();close();currentPath=m.config.path;currentIndex=m.config.indexPath;currentLayers=m.config.layers;currentMapping=m.config.mapping;sourceDb=new pool.OpfsSAHPoolDb(currentPath,'r');indexDb=new pool.OpfsSAHPoolDb(currentIndex,'r');postMessage({action:'restored'});}else if(m.action==='prune'){for(const path of m.paths||[])if(path&&path!==currentPath&&path!==currentIndex)pool.unlink(path);}else if(m.action==='remove'){close();if(currentPath)pool.unlink(currentPath);if(currentIndex)pool.unlink(currentIndex);postMessage({action:'removed'});}}catch(e){const busy=e.code==='CAMPO_PACKAGE_BUSY'||/createSyncAccessHandle|Access Handles|another open.*Handle/i.test(e.message);postMessage({action:busy?'busy':m.action==='universal-search'?'universal-search-error':m.action==='search'?'search-error':m.action==='block-summary'?'block-error':['route-network','route-reference'].includes(m.action)?'route-network-error':'error',requestId:m.requestId,message:busy?packageBusyError().message:e.message});}});};
 
 function feederSelection(m,includeUnassigned=true){const values=[...new Set((Array.isArray(m.feeders)?m.feeders:(m.feeder?[m.feeder]:[])).map(v=>String(v).trim()).filter(Boolean))];return values.length?{sql:' AND (r.feeder IN ('+values.map(()=>'?').join(',')+')'+(includeUnassigned?" OR r.feeder=''":'')+')',bind:values}:{sql:'',bind:[]};}
 
@@ -115,51 +124,77 @@ function geometryBlockBounds(g){let bounds=null;const walk=c=>{if(!Array.isArray
 function blockSummary(m){const codes=[...new Set((m.blocks||[]).map(v=>String(v).trim().toUpperCase()).filter(Boolean))];if(codes.length>500)throw Error('Use até 500 blocos por filtro.');const items=codes.map(code=>({code,count:0,bounds:null})),byCode=new Map(items.map(item=>[item.code,item]));if(!sourceDb||!codes.length)return items;for(const layer of currentLayers){if(Array.isArray(m.visibleLayers)&&!m.visibleLayers.includes(layer.table_name))continue;if(m.search?.layer&&m.search.layer!==layer.table_name)continue;const columns=layer.columns||rows(sourceDb,'PRAGMA table_info('+q(layer.table_name)+')').map(x=>x.name),column=nameBlockColumn(columns);if(!column)continue;const condition=combinedNetworkCondition(layer,m),feeders=feederSelection(m).bind,field=(layer.mapping||currentMapping).feeder;let feederSql='',feederBind=[];if(feeders.length&&field&&columns.includes(field)){feederSql=' AND (TRIM(CAST('+q(field)+' AS TEXT)) IN ('+feeders.map(()=>'?').join(',')+') OR '+q(field)+" IS NULL OR TRIM(CAST("+q(field)+" AS TEXT))='')";feederBind=feeders;}const stmt=sourceDb.prepare('SELECT '+q(column)+' AS block_code,'+q(layer.column_name)+' AS block_geom FROM '+q(layer.table_name)+' WHERE 1=1'+condition.sql+feederSql).bind([...condition.bind,...feederBind]),transform=projection(layer.srs_id);try{while(stmt.step()){const row=stmt.get({}),item=byCode.get(String(row.block_code??'').trim().toUpperCase());if(!item)continue;const bounds=geometryBlockBounds(decodeGeometry(row.block_geom,transform));if(!bounds)continue;item.count++;item.bounds=mergeBlockBounds(item.bounds,bounds);}}finally{stmt.finalize();}}return items;}
 
 // A busca do planejador percorre somente as camadas MT e independe do zoom atual.
-function routeNetwork({blocks=[],feeders=[],sections=[],zone=''}){
+const routeColumnName=value=>String(value).normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g,'');
+function isRouteLayer(layer){
+ if(layer.geometry_type_name&&!/LINESTRING/i.test(layer.geometry_type_name))return false;
+ return layer.classification==='MT'||/vao(?:s)?(?:de)?(?:rede)?(?:mt|primaria)|rede(?:eletrica)?(?:mt|primaria)/.test(routeColumnName(layer.table_name));
+}
+function routeNetwork({blocks=[],feeders=[],sections=[],zone='',featureId='',bounds=null}){
  if(!sourceDb)throw Error('Abra ou baixe a base de rede para pesquisar vãos.');
  if(blocks.length>500||feeders.length>30||sections.length>3)throw Error('Reduza o filtro de rede.');
- const layers=currentLayers.filter(l=>l.classification==='MT'||(!l.classification&&/VAO.*MT|VAO.*REDE.*PRIM/i.test(l.table_name.normalize('NFD').replace(/[\u0300-\u036f]/g,''))));
+ const layers=currentLayers.filter(isRouteLayer);
  if(!layers.length)throw Error('A base instalada precisa de uma camada de vãos MT.');
  const features=[],found=new Set(),limit=10000;
- let total=0,missingColumns=false;
+ let total=0,missingColumns=false,extent=null;
  for(const layer of layers){
   const columns=layer.columns||rows(sourceDb,'PRAGMA table_info('+q(layer.table_name)+')').map(r=>r.name);
-  const column=(...names)=>names.map(name=>columns.find(c=>c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'')===name)).find(Boolean);
-  const id=column('id','idvao','idvaomt','gisid'),join=Boolean(routeReferenceReady&&id);
+  const names=new Map(columns.map(c=>[routeColumnName(c),c]));
+  const column=(...aliases)=>aliases.map(name=>names.get(name)).find(Boolean);
+  const id=column('id','idvao','idvaomt','gisid','idtrecho','idsegmento','objectid')||(layer.mapping?.span&&columns.includes(layer.mapping.span)?layer.mapping.span:null);
+  if(!id){missingColumns=true;continue;}
+  const native=field=>field?'n.'+q(field):'NULL';
   const term=expr=>"NULLIF(UPPER(TRIM(CAST("+expr+" AS TEXT))), '')";
-  const attr=(field,ref)=>join?"COALESCE("+term(field?'n.'+q(field):'NULL')+",NULLIF(r."+ref+",''))":term(field?'n.'+q(field):'NULL');
+  const identifier=term(native(id));
+  const join=routeReferenceReady;
+  const normalizeSection=e=>`CASE WHEN ${e} IN ('1','1.0','T1','T 1') THEN '1' WHEN ${e} IN ('2','2.0','T2','T 2') THEN '2' WHEN ${e} IN ('3','3.0','T3','T 3') THEN '3' END`;
+  const normalizeZone=e=>`CASE WHEN ${e} IN ('U','URBANA','URBANO') THEN 'URBANO' WHEN ${e} IN ('R','RURAL') THEN 'RURAL' END`;
+  const attr=(field,ref,normalize=value=>value)=>{
+   const value=normalize(term(native(field)));
+   return join?`COALESCE(${value},NULLIF(r.${ref},''))`:value;
+  };
   const feederField=(layer.mapping||currentMapping).feeder;
-  const block=nameBlockColumn(columns)||column('chave','bloco'),feeder=columns.includes(feederField)?feederField:column('alimentador','feeder','alimentadorsgd','codalimentador');
-  const section=column('tipotrecho','trecho','trechotipo'),zoneField=column('zona','urbanorural','tipolocalidade','classificacaourbanorural');
-  const filters=[[block,blocks,'block'],[feeder,feeders,'feeder'],[section,sections,'section'],[zoneField,zone?[zone]:[],'zone']];
-  if(filters.some(([field,values])=>values.length&&!field&&!join)){missingColumns=true;continue;}
-  const normalizedSection=expr=>`CASE WHEN SUBSTR(${expr},1,1)='T' THEN TRIM(SUBSTR(${expr},2)) ELSE ${expr} END`;
-  const normalizedZone=expr=>`CASE WHEN ${expr} IN ('U','URBANA','URBANO') THEN 'URBANO' WHEN ${expr} IN ('R','RURAL') THEN 'RURAL' END`;
-  const bind=[],where=filters.map(([field,values,key])=>{
-   if(!values.length)return '';
-   bind.push(...values);
-   const expr=attr(field,key);
-   const normalized=key==='section'?normalizedSection(expr):key==='zone'?normalizedZone(expr):expr;
-   return ' AND '+normalized+' IN ('+values.map(()=>'?').join(',')+')';
-  }).join('');
-  const from=' FROM '+q(layer.table_name)+' AS n'+(join?' LEFT JOIN campo_mt_ref r ON r.id=TRIM(CAST(n.'+q(id)+' AS TEXT))':'')+' WHERE 1=1'+where;
+  const fields={block:nameBlockColumn(columns)||column('chave','bloco','codchave','numoperativo'),
+   feeder:columns.includes(feederField)?feederField:column('alimentador','feeder','alimentadorsgd','codalimentador'),
+   section:column('tipotrecho','trecho','trechotipo','segmentacao','classificacaotrecho'),
+   zone:column('zona','urbanorural','tipolocalidade','classificacaourbanorural'),
+   locality:column('localidade','cidade','municipio','nomemunicipio')};
+  const expressions=Object.fromEntries(Object.entries(fields).map(([key,field])=>[key,attr(field,key,key==='section'?normalizeSection:key==='zone'?normalizeZone:undefined)]));
+  const filters=[['block',blocks],['feeder',feeders],['section',sections],['zone',zone?[zone]:[]]];
+  if(!featureId&&filters.some(([field,values])=>values.length&&!fields[field]&&!join)){missingColumns=true;continue;}
+  const bind=[];
+  let where='';
+  if(featureId){
+   const prefix=layer.table_name+':';
+   if(!featureId.startsWith(prefix)||!/^\d+$/.test(featureId.slice(prefix.length)))continue;
+   where=' AND n.rowid=?';bind.push(Number(featureId.slice(prefix.length)));
+  }else for(const [field,values] of filters){
+   if(!values.length)continue;
+   where+=' AND '+expressions[field]+' IN ('+values.map(()=>'?').join(',')+')';bind.push(...values);
+  }
+  let from=' FROM '+q(layer.table_name)+' AS n'+(join?' LEFT JOIN campo_mt_ref r ON r.id='+identifier:'')+' WHERE 1=1'+where;
+  if(bounds&&indexDb){
+   const ids=rows(indexDb,'SELECT r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE r.layer=? AND s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?',[currentLayers.indexOf(layer),bounds.east,bounds.west,bounds.north,bounds.south]);
+   if(!ids.length)continue;
+   const rowIds=ids.map(({row_id})=>Number(row_id));
+   from+=' AND n.rowid IN ('+rowIds.join(',')+')';
+  }
   if(blocks.length){
-   for(const row of rows(sourceDb,'SELECT '+attr(block,'block')+' AS code, COUNT(*) AS count'+from+' GROUP BY 1',bind)){found.add(row.code);total+=row.count;}
+   for(const row of rows(sourceDb,'SELECT '+expressions.block+' AS code, COUNT(*) AS count'+from+' GROUP BY 1',bind)){found.add(row.code);total+=row.count;}
   }else total+=rows(sourceDb,'SELECT COUNT(*) AS count'+from,bind)[0].count;
-  if(features.length>=limit)continue;
   const transform=projection(layer.srs_id);
-  const extra=[
-   attr(block,'block')+' AS _route_block',
-   attr(feeder,'feeder')+' AS _route_feeder',
-   normalizedSection(attr(section,'section'))+' AS _route_section',
-   normalizedZone(attr(zoneField,'zone'))+' AS _route_zone',
-   attr(column('localidade','cidade','municipio'),'locality')+' AS _route_locality'
-  ];
+  const extra=[identifier+' AS _route_id',...Object.entries(expressions).map(([field,expr])=>expr+' AS _route_'+field)];
   if(join)extra.push('r.metres AS _route_metres');
-  const stmt=sourceDb.prepare('SELECT n.rowid AS _campo_rid,n.*,'+extra.join(',')+from+' ORDER BY n.rowid LIMIT '+(limit-features.length)).bind(bind);
-  try{while(stmt.step()){const feature=rowFeature(layer,stmt.get({}),transform);if(feature)features.push(feature);}}finally{stmt.finalize();}
+  const stmt=sourceDb.prepare('SELECT n.rowid AS _campo_rid,n.*,'+extra.join(',')+from+' ORDER BY n.rowid').bind(bind);
+  try{
+   while(stmt.step()){
+    const feature=rowFeature({...layer,classification:'MT'},stmt.get({}),transform);
+    if(!feature)continue;
+    extent=mergeBlockBounds(extent,geometryBlockBounds(feature.geometry));
+    if(features.length<limit)features.push(feature);
+   }
+  }finally{stmt.finalize();}
  }
- const referenceControls=[['block',blocks],['feeder',feeders],['section',sections],['zone',zone?[zone]:[]]].filter(([,values])=>values.length);
- const reference=routeReferenceReady?rows(sourceDb,'SELECT COUNT(*) count,SUM(metres) metres FROM campo_mt_ref WHERE 1=1'+referenceControls.map(([field,values])=>' AND '+field+' IN ('+values.map(()=>'?').join(',')+')').join(''),referenceControls.flatMap(([,values])=>values))[0]:null;
- return {features,total,reference,capped:total>limit,missing:blocks.filter(code=>!found.has(code)),missingColumns};
+ const controls=[['block',blocks],['feeder',feeders],['section',sections],['zone',zone?[zone]:[]]].filter(([,values])=>values.length);
+ const reference=routeReferenceReady&&!featureId&&!bounds?rows(sourceDb,'SELECT COUNT(*) count,SUM(metres) metres,COUNT(CASE WHEN metres>0 THEN 1 END) measured FROM campo_mt_ref WHERE 1=1'+controls.map(([field,values])=>' AND '+field+' IN ('+values.map(()=>'?').join(',')+')').join(''),controls.flatMap(([,values])=>values))[0]:null;
+ return {features,total,reference,extent,capped:total>limit,missing:blocks.filter(code=>!found.has(code)),missingColumns};
 }

@@ -13,8 +13,10 @@ const CampoRoutes=(()=>{
  const text=(value,max=100)=>String(value??'').trim().slice(0,max);
  const key=value=>text(value,100).toUpperCase();
  const codes=value=>[...new Set(String(value??'').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
- const sections=values=>[...new Set(values.map(v=>key(v).replace(/^T/,'').trim()).filter(v=>['1','2','3'].includes(v)))].sort();
+ const sections=values=>[...new Set(values.map(v=>key(v).replace(/^T\s*/, '').replace(/\.0+$/, '')).filter(v=>['1','2','3'].includes(v)))].sort();
  const sectionLabel=route=>(route.sections||[route.section]).map(s=>'T'+s).join(' + ');
+ const DEFAULT_BUFFER=30;
+ const bufferMetres=value=>Number.isFinite(Number(value))&&Number(value)>=5&&Number(value)<=200?Number(value):DEFAULT_BUFFER;
  const identifier=value=>/^[A-Za-z0-9_.:-]{1,100}$/.test(value||'');
  const comparePoint=(a,b)=>a[0]-b[0]||a[1]-b[1];
  const distance=(a,b)=>{
@@ -35,45 +37,170 @@ const CampoRoutes=(()=>{
  const first=s=>s.line[s.reverse?s.line.length-1:0],last=s=>s.line[s.reverse?0:s.line.length-1];
  function feature(f){
   const p=Object.fromEntries(Object.entries(f.properties||{}).map(([k,v])=>[k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,''),v]));
-  if(f.geometry?.type!=='LineString')throw Error('Selecione um vão de linha da rede MT.');
+  const line=continuousLine(f.geometry);
+  if(!line)throw Error('O vão MT precisa de uma geometria linear contínua.');
   const layer=key(f.properties?._class||f.properties?._layer);
   if(layer&&!/(^MT$|VAO.*MT|REDE.*MT)/.test(layer))throw Error('Selecione um vão de MT.');
   const numeric=v=>Number(String(v??'').trim().replace(',','.'));
-  const recorded=numeric(p.redecompm??p.comprimentoatual??p.comprimentom??p.comprimento??p.extensaom??p.extensao)||numeric(p.redecompkm)*1000;
-  const line=f.geometry.coordinates;
+  const recorded=[p.redecompm,p.comprimentoatual,p.comprimentom,p.comprimento,p.extensaom,p.extensao,p.routemetres,numeric(p.redecompkm)*1000].map(numeric).find(value=>Number.isFinite(value)&&value>0);
   const estimated=!(recorded>0);
   const metres=estimated?line.slice(1).reduce((total,point,i)=>total+distance(line[i],point),0):recorded;
-  const zone=key(p.zona);
-  return span({id:p.id??p.idvao,metres,line,estimated,feeder:p.alimentador??p.feeder,
-   locality:p.localidade??p.cidade,block:p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.tipotrecho??p.trecho])[0]});
+  const rawZone=key(p.routezone??p.zona??p.urbanorural);
+  const zone=['U','URBANA'].includes(rawZone)?'URBANO':rawZone==='R'?'RURAL':rawZone;
+  return span({id:p.routeid??p.id??p.idvao??p.idvaomt??p.gisid??p.idtrecho??p.idsegmento??p.objectid,metres,line,estimated,feeder:p.routefeeder??p.alimentador??p.feeder,
+   locality:p.routelocality??p.localidade??p.cidade,block:p.routeblock??p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.routesection??p.tipotrecho??p.trecho])[0]});
+ }
+ const metres=spans=>spans.reduce((sum,span)=>sum+span.metres,0);
+ const pendingColor='#ee344a',confirmedColor='#168756',haloColor='#fff4f0';
+ function mapLines(spans,coverage,marked={}){
+  const lines={pending:[],confirmed:[]};
+  for(const span of spans){
+   const ranges=merge([...(coverage?.get(span.id)||[]),...(Object.hasOwn(marked,span.id)?marked[span.id]:[])]);
+   for(const [state,items] of [['pending',remaining(ranges)],['confirmed',ranges]])
+    for(const [a,b] of items)lines[state].push(portion(span,a,b));
+  }
+  return lines;
+ }
+ function streetDirections(destination,origin,waypoints=[]){
+  const coords=([lon,lat])=>lat.toFixed(6)+','+lon.toFixed(6);
+  const options=new URLSearchParams({api:'1',destination:coords(destination),travelmode:'driving'});
+  if(origin)options.set('origin',coords(origin));else options.set('dir_action','navigate');
+  if(waypoints.length)options.set('waypoints',waypoints.slice(0,3).map(coords).join('|'));
+  return 'https://www.google.com/maps/dir/?'+options;
+ }
+ function continuousLine(geometry){
+  if(geometry?.type==='LineString')return geometry.coordinates.map(p=>p.slice(0,2));
+  if(geometry?.type!=='MultiLineString'||!geometry.coordinates.length)return null;
+  const [head,...tail]=geometry.coordinates.map(line=>line.map(p=>p.slice(0,2)));
+  let line=head;
+  while(tail.length){
+   const end=line.at(-1),start=line[0];
+   const i=tail.findIndex(part=>[start,end].some(a=>[part[0],part.at(-1)].some(b=>distance(a,b)<.25)));
+   if(i<0)return null;
+   const part=tail.splice(i,1)[0];
+   if(distance(end,part[0])<.25)line=[...line,...part.slice(1)];
+   else if(distance(end,part.at(-1))<.25)line=[...line,...[...part].reverse().slice(1)];
+   else if(distance(start,part.at(-1))<.25)line=[...part.slice(0,-1),...line];
+   else line=[...[...part].reverse().slice(0,-1),...line];
+  }
+  return line;
+ }
+ function campaignParts(routes){
+  const groups=new Map();
+  for(const route of routes){
+   const legacy=/^([a-f0-9-]{36})-([1-9]\d*)$/i.exec(route.id);
+   const code=route.campaign?.id||legacy?.[1]||route.id;
+   if(!groups.has(code))groups.set(code,[]);
+   groups.get(code).push(route);
+  }
+  return [...groups.values()].map(parts=>parts.sort((a,b)=>(a.campaign?.index||Number(a.id.split('-').at(-1))||0)-(b.campaign?.index||Number(b.id.split('-').at(-1))||0)));
+ }
+ function pendingPaths(spans,covered,marked={}){
+  return spans.flatMap(s=>{
+   const paths=remaining(merge([...(covered?.get(s.id)||[]),...(Object.hasOwn(marked,s.id)?marked[s.id]:[])])).map(([a,b])=>portion(s,a,b));
+   return s.reverse?paths.reverse().map(line=>[...line].reverse()):paths;
+  });
+ }
+ function roadStops(paths){
+  const stops=[];let previous=null;
+  for(const line of paths){
+   if(!previous||distance(previous,line[0])>35)stops.push(line[0]);
+   previous=line.at(-1);
+   if(distance(stops.at(-1),previous)>=250)stops.push(previous);
+  }
+  const end=paths.at(-1)?.at(-1);
+  if(end&&distance(stops.at(-1),end)>5)stops.push(end);
+  return stops;
+ }
+ function bufferRings(spans,metres){
+  if(!metres)return [];
+  const result=[];
+  for(const {line} of spans)for(let i=1;i<line.length;i++){
+   const a=line[i-1],b=line[i],y=111195,x=y*Math.cos((a[1]+b[1])*Math.PI/360);
+   const angle=Math.atan2((b[1]-a[1])*y,(b[0]-a[0])*x),ring=[];
+   if(comparePoint(a,b)===0)continue;
+   for(const [point,start] of [[b,angle-Math.PI/2],[a,angle+Math.PI/2]])for(let j=0;j<=8;j++){
+    const t=start+j*Math.PI/8;
+    ring.push([point[0]+metres*Math.cos(t)/x,point[1]+metres*Math.sin(t)/y]);
+   }
+   result.push([...ring,ring[0]]);
+  }
+  return result;
+ }
+ function matchedRanges(spans,previous,position){
+  const lat=previous[1],y=111195,x=y*Math.cos(lat*Math.PI/180);
+  const local=p=>[(p[0]-previous[0])*x,(p[1]-lat)*y];
+  const [dx,dy]=local(position),step=Math.hypot(dx,dy);
+  if(step<7||step>160)return [];
+  const radius=14,results=[];
+  for(const span of spans){
+   const points=span.line.map(local);
+   if(points.every(p=>p[0]<Math.min(0,dx)-radius)||points.every(p=>p[0]>Math.max(0,dx)+radius)||
+    points.every(p=>p[1]<Math.min(0,dy)-radius)||points.every(p=>p[1]>Math.max(0,dy)+radius))continue;
+   const ranges=[];let offset=0;
+   for(let i=1;i<points.length;i++){
+    const [ax,ay]=points[i-1],sx=points[i][0]-ax,sy=points[i][1]-ay,len=Math.hypot(sx,sy);
+    if(!len)continue;
+    const from=(-ax*sx-ay*sy)/len,to=((dx-ax)*sx+(dy-ay)*sy)/len;
+    const a=Math.max(0,Math.min(from,to)),b=Math.min(len,Math.max(from,to));
+    const distanceFromTrack=t=>Math.abs((ax+sx*t/len)*dy-(ay+sy*t/len)*dx)/step;
+    if(b-a>=Math.min(7,len*.75)&&Math.abs(to-from)>=step*.8&&distanceFromTrack(a)<=radius&&distanceFromTrack(b)<=radius){
+     ranges.push([offset+a,offset+b]);
+    }
+    offset+=len;
+   }
+   const valid=ranges.map(([a,b])=>[Math.round(FULL*a/offset),Math.round(FULL*b/offset)]).filter(([a,b])=>a<b);
+   if(valid.length)results.push({spanId:span.id,ranges:merge(valid)});
+  }
+  // GPS cannot reliably distinguish overlapping or parallel candidate spans.
+  const ids=new Map(spans.map(s=>[s.id,s]));
+  return results.filter((result,i)=>results.every((other,j)=>{
+   if(i===j)return true;
+   const a=ids.get(result.spanId),b=ids.get(other.spanId);
+   return [a.line[0],a.line.at(-1)].some(p=>[b.line[0],b.line.at(-1)].some(q=>distance(p,q)<3))&&
+    !(distance(a.line[0],b.line[0])<3&&distance(a.line.at(-1),b.line.at(-1))<3);
+  }));
+ }
+ function routeParts(spans){
+  const parts=[];let part=[],bytes=0;
+  const encoder=new TextEncoder();
+  for(const span of spans){
+   const size=encoder.encode(JSON.stringify(span)).length+1;
+   if(part.length===250||bytes+size>440000){parts.push(part);part=[];bytes=0;}
+   part.push(span);bytes+=size;
+  }
+  if(part.length)parts.push(part);
+  return parts;
  }
  function order(spans,keys,start){
   const rank=new Map(keys.map((k,i)=>[k,i])),groups=new Map(),result=[];
   for(const s of spans){
-   const group=rank.get(s.block)??keys.length;
+   const group=rank.has(s.block)?rank.get(s.block):s.feeder+"|"+s.block;
    if(!groups.has(group))groups.set(group,[]);
    groups.get(group).push(s);
   }
-  for(const group of [...groups.keys()].sort((a,b)=>a-b)){
-   const pending=groups.get(group).slice(),ends=new Map();
+  for(const group of [...groups.keys()].sort((a,b)=>(typeof a==='number'?a:keys.length)-(typeof b==='number'?b:keys.length))){
+   const pending=new Set(groups.get(group)),ends=new Map();
    const coordinate=p=>p.map(n=>n.toFixed(5)).join(',');
    for(const s of pending)for(const p of [first(s),last(s)]){
-    const key=coordinate(p);ends.set(key,(ends.get(key)||0)+1);
+    const key=coordinate(p);if(!ends.has(key))ends.set(key,new Set());ends.get(key).add(s);
    }
    if(!start){
-    const i=pending.findIndex(s=>ends.get(coordinate(first(s)))===1||ends.get(coordinate(last(s)))===1);
-    const s=pending.splice(Math.max(0,i),1)[0];
-    const reverse=ends.get(coordinate(first(s)))!==1&&ends.get(coordinate(last(s)))===1;
+    const s=[...pending].find(s=>ends.get(coordinate(first(s))).size===1||ends.get(coordinate(last(s))).size===1)||pending.values().next().value;
+    pending.delete(s);
+    const reverse=ends.get(coordinate(first(s))).size!==1&&ends.get(coordinate(last(s))).size===1;
     const initial={...s,reverse:s.reverse!==reverse};
     result.push(initial);start=last(initial);
    }
-   while(pending.length){
-    let nearest=Infinity,index=0,reverse=false;
-    for(const [i,s] of pending.entries()){
+   while(pending.size){
+    let nearest=Infinity,chosen,reverse=false;
+    const connected=[...(ends.get(coordinate(start))||[])].filter(s=>pending.has(s));
+    for(const s of connected.length?connected:pending){
      const a=distance(start,first(s)),b=distance(start,last(s));
-     if(Math.min(a,b)<nearest){nearest=Math.min(a,b);index=i;reverse=b<a;}
+     if(Math.min(a,b)<nearest){nearest=Math.min(a,b);chosen=s;reverse=b<a;}
     }
-    const s=pending.splice(index,1)[0],next={...s,reverse:s.reverse!==reverse};
+    pending.delete(chosen);
+    const next={...chosen,reverse:chosen.reverse!==reverse};
     result.push(next);start=last(next);
    }
   }
@@ -134,10 +261,27 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
+const ROUTE_REFERENCE_KEY='arbora:mt-reference:2026-08-03';
+async function routeReference(request,env,admin){
+ if(!admin)throw sharedError('Complemento de rede restrito à gestão.',403);
+ if(request.method!=='GET')throw sharedError('Use GET.',405);
+ const manifest=await env.LOGIN_GUARD?.get(ROUTE_REFERENCE_KEY,'json');
+ if(!Number.isInteger(manifest?.parts)||manifest.parts<1||manifest.parts>32||!Number.isInteger(manifest.size)||manifest.size<1||manifest.size>6000000)throw sharedError('Complemento VERA ainda não está disponível na base central.',404);
+ const parts=await Promise.all(Array.from({length:manifest.parts},(_,i)=>env.LOGIN_GUARD.get(ROUTE_REFERENCE_KEY+':'+i,'arrayBuffer')));
+ if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Complemento VERA incompleto. Tente novamente.',503);
+ return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+}
+function visibleRoutes(routes){
+ return CampoRoutes.campaignParts(routes).flatMap(parts=>{
+  const plan=parts[0].campaign;
+  if(!plan)return parts;
+  return parts.length===plan.total&&parts.every((part,i)=>part.campaign?.index===i+1&&part.campaign.total===plan.total&&part.assignee===parts[0].assignee)?parts:[];
+ });
+}
 const ROUTE_TABLES=[
  'CREATE TABLE IF NOT EXISTS campo_routes (id TEXT PRIMARY KEY, assignee TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
  'CREATE INDEX IF NOT EXISTS campo_routes_assignee ON campo_routes(assignee,created_at)',
@@ -147,16 +291,19 @@ const ROUTE_TABLES=[
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
+  if(path==='/api/routes/reference')return await routeReference(request,env,admin);
   if(!admin&&!actor)throw sharedError('Entre com sua conta para acessar as rotas.',403);
   const db=await adminDb(env);
   if(path==='/api/routes'&&request.method==='GET'){
    const all=admin&&url.searchParams.get('mine')!=='1';
    if(!all&&!actor)throw sharedError('Entre com uma conta de inspetor.',403);
    try{
-    const routes=all?db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_routes WHERE assignee=? ORDER BY created_at DESC').bind(actor);
-    const visits=all?db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at'):db.prepare('SELECT data,received_at FROM campo_route_visits WHERE actor=? ORDER BY received_at').bind(actor);
-    const [a,b]=await Promise.all([routes.all(),visits.all()]);
-    return json({routes:a.results.map(row=>JSON.parse(row.data)),visits:b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at}))});
+    const routeQuery=all?db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_routes WHERE assignee=? ORDER BY created_at DESC').bind(actor);
+    const visitQuery=all?db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at'):db.prepare('SELECT data,received_at FROM campo_route_visits WHERE actor=? ORDER BY received_at').bind(actor);
+    const [a,b]=await Promise.all([routeQuery.all(),visitQuery.all()]);
+    const routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data))),ids=new Set(routes.map(route=>route.id));
+    const visits=b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at})).filter(visit=>ids.has(visit.routeId));
+    return json({routes,visits});
    }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[]});throw error;}
   }
   if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
@@ -179,10 +326,17 @@ async function routeAPI(request,env){
    const feeder=derive?values('feeder').join(' / '):fallback.feeder;
    const zone=derive?values('zone').join(' / '):fallback.zone;
    const section=sections[0],phase=derive?Math.min(...spans.map(s=>priority(s.zone,s.section))):priority(zone,section);
+   const buffer=CampoRoutes.bufferMetres(input.buffer);
+   const campaign=input.campaign;
+   if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
    await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
+   if(campaign){
+    const peer=await db.prepare('SELECT assignee FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
+    if((peer&&peer.assignee!==assignee)||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
+   }
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
    return json({route},201);
@@ -336,7 +490,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
- if(url.pathname==='/api/routes'||url.pathname==='/api/routes/visit')return routeAPI(request,env);
+ if(['/api/routes','/api/routes/visit','/api/routes/reference'].includes(url.pathname))return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname.startsWith('/api/central/'))return centralAPI(request,env);

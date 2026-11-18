@@ -41,6 +41,8 @@ const read=file=>fs.readFileSync(file,'utf8');
  assert.deepEqual(M.codes('rbr554, RBR444\nRBR999\tRBR554'),expected.blocks);
  const first=M.feature(network.features[0]);assert(first.estimated&&first.metres>100);
  assert.equal(M.feature({...network.features[0],properties:{...network.features[0].properties,'Rede Comp M':42}}).metres,42);
+ assert.deepEqual(query({featureId:network.features[0].id}).features.map(f=>f.properties.Id),['1']);
+ assert(network.extent.west<network.extent.east);
 
  db.exec("CREATE TABLE mt_campo (Id TEXT, Alimentador TEXT, geom TEXT); CREATE TEMP TABLE campo_mt_ref (id TEXT PRIMARY KEY, feeder TEXT, locality TEXT, zone TEXT, section TEXT, block TEXT, metres REAL);");
  const actual=[
@@ -86,7 +88,7 @@ const read=file=>fs.readFileSync(file,'utf8');
  assert.equal(submitted.fromNetwork,true);
  assert.deepEqual(submitted.spans.map(s=>s.section),['1','2']);
  assert.deepEqual(submitted.spans.map(s=>s.block),['RBR554','RBR444']);
- const all=Array.from({length:251},(_,i)=>({...network.features[0],properties:{...network.features[0].properties,Id:String(2000+i),'Rede Comp M':30}}));
+ const all=Array.from({length:251},(_,i)=>({...network.features[0],properties:{...network.features[0].properties,Id:String(2000+i),_route_id:String(2000+i),'Rede Comp M':30}}));
  response={...network,features:all,total:all.length};
  filter.elements.feeder.value='TAN-01I9';filter.elements.zone.value='URBANO';filter.elements.blocks.value='rbr554 rbr444 rbr999';
  filter.querySelector('[value="1"]').checked=true;filter.querySelector('[value="2"]').checked=true;
@@ -99,6 +101,8 @@ const read=file=>fs.readFileSync(file,'utf8');
  await form.onsubmit(new w.Event('submit'));
  assert.equal(attempts.at(-2).spans.length,250);
  assert.equal(attempts.at(-1).spans.length,1);
+ assert.equal(attempts.at(-1).campaign.total,2);
+ assert.equal(attempts.at(-1).buffer,'30');
  assert.equal($('routeAssign').textContent,'Retomar atribuição');
  failPart=false;
  await form.onsubmit(new w.Event('submit'));

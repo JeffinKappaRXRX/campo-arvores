@@ -4,17 +4,13 @@
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
  const panel=$('fieldRoutes'),status=$('fieldRouteStatus');
- let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0,routeGeometry=null,coverageInput={},fieldOverlay=null,googleOverlay=null;
+ let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0,routeGeometry=null,coverageInput={},fieldOverlay=null,googleOverlay=null,roadLeg=0,lastRoadSignature="",scopeTiles=null,mapScope=null;
  const identity=()=>window.CampoAccount?.current()?.id;
- const partOf=route=>/^([a-f0-9-]{36})-([1-9]\d*)$/i.exec(route.id);
- function orderedRoutes(routes){
-  const groups=new Map();
-  for(const route of routes){
-   const group=partOf(route)?.[1]||route.id;
-   if(!groups.has(group))groups.set(group,[]);
-   groups.get(group).push(route);
-  }
-  return [...groups.values()].flatMap(parts=>parts.sort((a,b)=>Number(partOf(a)?.[2]||0)-Number(partOf(b)?.[2]||0)));
+ const orderedRoutes=routes=>M.campaignParts(routes).flat();
+ const groupOf=r=>r?M.campaignParts(state.routes).find(parts=>parts.includes(r))||[r]:[];
+ function resumeRoute(){
+  const routes=orderedRoutes(state?.routes||[]);
+  return routes.find(r=>r.spans.some(s=>M.remaining(against(r).bySpan.get(s.id)).length))?.id||routes[0]?.id||null;
  }
  const blank=()=>({routes:[],visits:[],outbox:[],session:null});
  async function save(next){
@@ -41,7 +37,7 @@
   const saved=await req('meta','readonly',store=>store.get(dbKey+':'+next));
   if(turn!==loadEpoch||identity()!==next)return;
   const last=owner===next?selected:null;
-  owner=next;state=saved||blank();selected=state.session?.routeId||(state.routes.some(r=>r.id===last)?last:orderedRoutes(state.routes)[0]?.id)||null;currentGPS=null;
+  owner=next;state=saved||blank();selected=state.session?.routeId||(state.routes.some(r=>r.id===last)?last:resumeRoute())||null;currentGPS=null;
   paint();
  }
  const against=route=>M.coverage(route.spans,[...state.visits,...state.outbox].filter(v=>v.routeId===route.id));
@@ -63,8 +59,9 @@
    if(owner!==actor||identity()!==actor)return;
    const receipts=new Set(remote.visits.map(v=>v.id)),next={...state,routes:remote.routes,visits:remote.visits,outbox:state.outbox.filter(v=>!receipts.has(v.id))};
    await save(next);state=next;
-   if(!route())selected=state.session?.routeId||orderedRoutes(state.routes)[0]?.id||null;
-   paint();status.textContent=state.outbox.length?'Ainda há conclusões pendentes de confirmação.':'Rotas atualizadas. Conclusões recebidas pelo painel.';
+   const hadRoute=Boolean(route());
+   if(!hadRoute)selected=state.session?.routeId||resumeRoute();
+   paint(!hadRoute);status.textContent=state.outbox.length?'Ainda há conclusões pendentes de confirmação.':'Rotas atualizadas. Conclusões recebidas pelo painel.';
   }catch(error){status.textContent=error.message+' Os dados locais continuam salvos.';}finally{refreshing=false;}
  }
  async function fieldRouteApi(url,body){
@@ -80,55 +77,70 @@
   for(const item of orderedRoutes(state?.routes||[]))$('fieldRouteSelect').add(new Option(item.name+' · '+item.feeder,item.id));
   $('fieldRouteSelect').value=r?.id||'';
   $('fieldRouteSelect').disabled=Boolean(state?.session);
-  $('fieldRouteStart').disabled=!r||Boolean(state?.session);
+  const prior=r?against(r):null;
+  const completed=r&&r.spans.every(s=>!M.remaining(prior.bySpan.get(s.id)).length);
+  $('fieldRouteStart').disabled=!r||completed||Boolean(state?.session);
   $('fieldRouteFinal').hidden=!active;
   $('fieldRouteQueue').textContent=(state?.outbox.length||0)+' conclusão(ões) pendente(s) de envio';
-  const prior=r?against(r):null;
-  const total=r?M.metres(r.spans):0;
+  const group=groupOf(r),spans=group.flatMap(part=>part.spans);
+  const keys=new Set(group.map(part=>part.id));
+  const visits=r?[...state.visits,...state.outbox].filter(visit=>keys.has(visit.routeId)):[];
+  const covered=M.coverage(spans,visits),buffer=r?M.bufferMetres(r.buffer):0;
+  const total=M.metres(spans);
   const estimate=r?M.metres(r.spans.filter(s=>s.estimated)):0;
   const street=$('fieldRouteStreet'),legend=$('fieldRouteMapLegend');
   if(street)street.hidden=!r;
-  if(legend){legend.hidden=!r;legend.textContent=r?'Minha rota · '+km(total)+' de rede · verde: confirmado':'';}
+  if(legend){legend.hidden=!r;legend.textContent=r?'Minha rota · '+km(total)+' de rede · azul: faixa de '+buffer+' m por lado · verde: confirmado':'';}
   if(r&&street){
-   const next=r.spans.map(s=>({s,remaining:M.remaining(M.merge([...(prior.bySpan.get(s.id)||[]),...(active?.ranges[s.id]||[])]))})).find(item=>item.remaining.length);
-   const a=M.first(r.spans[0]),b=M.last(r.spans.at(-1));
-   const start=next?.remaining.at(next.s.reverse?-1:0);
-   const point=start?M.portion(next.s,...start).at(next.s.reverse?-1:0):a;
-   $('fieldRouteNavigate').textContent=next?'Google Maps · ir ao próximo ponto':'Google Maps · ir ao início';
-   $('fieldRouteNavigate').href=M.streetDirections(point);
-   $('fieldRouteRoadTrip').href=M.streetDirections(b,a);
+   const paths=M.pendingPaths(r.spans,prior.bySpan,active?.ranges),stops=M.roadStops(paths);
+   const signature=r.id+'|'+stops.map(p=>p.join(',')).join('|');
+   if(signature!==lastRoadSignature){roadLeg=0;lastRoadSignature=signature;}
+   const next=stops[0],start=next||M.first(r.spans[0]);
+   $('fieldRouteNavigate').textContent=next?'Navegar ao próximo ponto':'Navegar ao início';
+   $('fieldRouteNavigate').href=M.streetDirections(start);
+   const leg=stops.slice(roadLeg,roadLeg+5),trip=$('fieldRouteRoadTrip'),advance=$('fieldRouteRoadNext');
+   trip.hidden=leg.length<2;
+   if(leg.length>=2){
+    trip.href=M.streetDirections(leg.at(-1),leg[0],leg.slice(1,-1));
+    trip.textContent='Trajeto por ruas · '+(Math.floor(roadLeg/4)+1)+'/'+Math.ceil((stops.length-1)/4);
+   }
+   if(advance)advance.hidden=stops.length<=5;
   }
-  if(r!==coverageInput.route||active?.ranges!==coverageInput.ranges||state?.visits!==coverageInput.visits||state?.outbox!==coverageInput.outbox){
-   coverageInput={route:r,ranges:active?.ranges,visits:state?.visits,outbox:state?.outbox};
-   routeGeometry=r?M.mapLines(r.spans,prior.bySpan,active?.ranges):null;
+  const routeKey=group.map(part=>part.id).join('|');
+  if(routeKey!==coverageInput.routeKey||active?.ranges!==coverageInput.ranges||state?.visits!==coverageInput.visits||state?.outbox!==coverageInput.outbox){
+   const scopeSame=routeKey===coverageInput.routeKey;
+   coverageInput={routeKey,ranges:active?.ranges,visits:state?.visits,outbox:state?.outbox};
+   routeGeometry=r?{...M.mapLines(spans,covered.bySpan,active?.ranges),buffer:scopeSame&&routeGeometry?routeGeometry.buffer:M.bufferRings(spans,buffer)}:null;
   }
   refreshFieldOverlay();
-  $('fieldRouteSummary').textContent=r?r.locality+' · '+r.feeder+' · '+M.sectionLabel(r)+' '+r.zone+' · '+km(total)+' de rede planejada · '+km(prior.metres)+' de rede confirmada · '+km(Math.max(0,total-prior.metres))+' de rede restante · início '+r.spans[0].id+' · fim '+r.spans.at(-1).id:'Baixe suas rotas com internet antes de sair.';
+  $('fieldRouteSummary').textContent=r?(r.campaign?.name||r.name)+' · '+km(total)+' planejados · '+km(covered.metres)+' confirmados · '+km(Math.max(0,total-covered.metres))+' pendentes na rota'+(group.length>1?' · parte '+(group.indexOf(r)+1)+'/'+group.length:''):'Baixe suas rotas com internet antes de sair.';
+  const remaining=r?M.pendingPaths(r.spans,prior.bySpan,active?.ranges):[];
+  const nextPart=group.find(part=>part!==r&&part.spans.some(s=>M.remaining(covered.bySpan.get(s.id)).length));
+  const move=$('fieldRouteNextPart');
+  if(move){move.hidden=!completed||!nextPart||Boolean(active);move.dataset.target=nextPart?.id||'';}
+  const hint=$('fieldRouteGPSHint'),confirmGPS=$('fieldRouteConfirmGPS');
+  if(hint&&confirmGPS){
+   const suggested=r&&active?gpsRanges(r,active,prior):[];
+   const amount=r?M.coverage(r.spans,[{ranges:suggested}]).metres:0;
+   hint.hidden=!active;confirmGPS.hidden=!amount;
+   hint.textContent=amount?km(amount)+' de rede sugeridos pelo GPS. Revise antes de confirmar.':active?'GPS ativo durante a saída. Confirme no mapa ou na lista a rede que você vistoriou.':'';
+  }
+  if(r&&remaining.length)$('fieldRouteSummary').textContent+=' · próximo vão '+r.spans.find(s=>M.remaining(M.merge([...(prior.bySpan.get(s.id)||[]),...(active?.ranges[s.id]||[])])).length).id;
   $('fieldRouteItems').innerHTML=r?r.spans.map((s,i)=>{
    const missing=M.remaining(prior.bySpan.get(s.id)),picked=active?.ranges[s.id]||[];
-   const gps=session()?.trails?.some(trail=>{
-    let start=-1,end=-1;
-    for(let j=0;j<trail.length;j++){
-     const [lat,lon]=trail[j],p=[lon,lat];
-     if(start<0&&M.distance(p,M.first(s))<=12)start=j;
-     if(start>=0&&j>start&&M.distance(p,M.last(s))<=12){end=j;break;}
-    }
-    return end>=0;
-   });
-   const label=missing.length?(gps?'GPS passou pelas extremidades · confirme no local':'A vistoriar'):'Confirmado';
+   const label=missing.length?(active?.gpsMatches?.[s.id]?.length?'GPS sugeriu cobertura':'A vistoriar'):'Confirmado';
    const dir=(a,b)=>s.reverse?[M.FULL-b,M.FULL-a]:[a,b];
    return `<li><b>${esc(s.id)}</b> · ${s.metres.toLocaleString('pt-BR')} m · ${label}${picked.length?' · marcado nesta saída':''}
    ${active&&missing.length?missing.map(([a,b])=>{const [x,y]=dir(a,b);return ` <button type="button" data-route-range="${i},${a},${b}">Confirmar ${x/100}%–${y/100}%</button>`;}).join('')+` <button type="button" data-route-part="${i}">Marcar parte</button>`:''}
    ${picked.length?` <button type="button" data-route-clear="${i}">Desmarcar</button>`:''}</li>`;
   }).join(''):'';
-  const group=r&&partOf(r)?.[1];
-  if(group)$('fieldRouteSummary').textContent+=' · '+km(M.metres(state.routes.filter(item=>partOf(item)?.[1]===group).flatMap(item=>item.spans)))+' no conjunto atribuído';
-  if(estimate)$('fieldRouteSummary').textContent+=' · '+km(estimate)+' estimados pela geometria';
+  if(estimate)$('fieldRouteSummary').textContent+=' · '+km(estimate)+' estimados pela geometria nesta parte';
   if(active)$('fieldRouteSummary').textContent+=' · '+km(M.trailMetres(active.trails))+' de trilha GPS nesta saída';
   if(!panel.hidden)paintMap(r,fit);
  }
  function drawLeaflet(target,geometry,pane){
   const group=L.featureGroup().addTo(target),style={pane,interactive:false};
+  if(geometry.buffer.length&&typeof L.polygon==='function')L.polygon(geometry.buffer.map(ring=>[ring.map(([lon,lat])=>[lat,lon])]),{...style,stroke:false,fillColor:'#167da3',fillOpacity:.23,fillRule:'nonzero'}).addTo(group);
   for(const [key,color] of [['pending',M.pendingColor],['confirmed',M.confirmedColor]]){
    if(!geometry[key].length)continue;
    const lines=geometry[key].map(line=>line.map(([lon,lat])=>[lat,lon]));
@@ -147,9 +159,14 @@
    for(const overlay of googleOverlay?.layers||[])overlay.setMap(null);
    const layers=[];
    if(routeGeometry){
+    if(routeGeometry.buffer.length){
+     const corridor=new google.maps.Data({map:googleMap});
+     corridor.addGeoJson({type:'Feature',geometry:{type:'MultiPolygon',coordinates:routeGeometry.buffer.map(ring=>[ring])},properties:{}});
+     corridor.setStyle({clickable:false,fillColor:'#167da3',fillOpacity:.23,strokeWeight:0,zIndex:9});layers.push(corridor);
+    }
     for(const halo of [true,false]){
      const overlay=new google.maps.Data({map:googleMap});
-     overlay.addGeoJson({type:'FeatureCollection',features:Object.entries(routeGeometry).filter(([,lines])=>lines.length).map(([key,lines])=>({type:'Feature',geometry:{type:'MultiLineString',coordinates:lines},properties:{key}}))});
+     overlay.addGeoJson({type:'FeatureCollection',features:Object.entries(routeGeometry).filter(([key,lines])=>key!=='buffer'&&lines.length).map(([key,lines])=>({type:'Feature',geometry:{type:'MultiLineString',coordinates:lines},properties:{key}}))});
      overlay.setStyle(feature=>({clickable:false,strokeColor:halo?M.haloColor:feature.getProperty('key')==='confirmed'?M.confirmedColor:M.pendingColor,strokeWeight:halo?14:7,strokeOpacity:halo ? .82 : 1,zIndex:halo?10:11}));
      layers.push(overlay);
     }
@@ -177,13 +194,17 @@
  function paintMap(r,fit){
   if(typeof L==='undefined')return;
   const target=$('fieldRouteMap');target.hidden=!r;
-  if(!r){layer?.remove();layer=null;return;}
-  if(!map){map=L.map(target,{attributionControl:false,preferCanvas:true}).setView([-9.97,-67.81],13);L.control.scale({imperial:false}).addTo(map);}
-  map.invalidateSize();if(layer)layer.remove();layer=drawLeaflet(map,routeGeometry,'overlayPane');
+  if(!r){layer?.remove();mapScope?.group.remove();mapScope=null;layer=null;return;}
+  if(!map){map=L.map(target,{preferCanvas:true}).setView([-9.97,-67.81],13);L.control.scale({imperial:false}).addTo(map);}
+  if(navigator.onLine&&!scopeTiles&&typeof L.tileLayer==='function')scopeTiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:21,maxNativeZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  else if(!navigator.onLine&&scopeTiles){scopeTiles.remove();scopeTiles=null;}
+  map.invalidateSize();
+  if(mapScope?.geometry!==routeGeometry){mapScope?.group.remove();mapScope={geometry:routeGeometry,group:drawLeaflet(map,routeGeometry,'overlayPane')};}
+  layer?.remove();layer=L.featureGroup().addTo(map);
   for(const [name,p]of [['Início',M.first(r.spans[0])],['Fim',M.last(r.spans.at(-1))]])L.circleMarker([p[1],p[0]],{radius:6}).addTo(layer).bindTooltip(name,{permanent:true});
   if(currentGPS)L.circleMarker([currentGPS.lat,currentGPS.lon],{radius:5,color:'#1a5fb4'}).addTo(layer);
   for(const trail of session()?.trails||[])if(trail.length>1)L.polyline(trail,{color:'#265fc2',weight:2,opacity:.7}).addTo(layer);
-  if(fit&&layer.getBounds().isValid())map.fitBounds(layer.getBounds(),{padding:[20,20],maxZoom:19});
+  if(fit&&mapScope.group.getBounds().isValid())map.fitBounds(mapScope.group.getBounds(),{padding:[25,25],maxZoom:18});
  }
  async function transact(fn){
   if(busy||refreshing||sampleWrite||!state)return;
@@ -194,8 +215,9 @@
  $('fieldRouteStart').onclick=()=>void transact(()=>{
   const r=route();if(!r||state.session)return;
   currentGPS=null;
+  if(typeof startLiveGPS==='function')startLiveGPS();
   status.textContent='Vistoria iniciada. Confirme os trechos efetivamente vistoriados.';
-  return {...state,session:{id:crypto.randomUUID(),routeId:r.id,startedAt:new Date().toISOString(),ranges:{},trails:[],lastSampleAt:0}};
+  return {...state,session:{id:crypto.randomUUID(),routeId:r.id,startedAt:new Date().toISOString(),ranges:{},gpsMatches:{},trails:[],lastSampleAt:0}};
  });
  $('fieldRouteFinal').onclick=async()=>{
   if(busy||refreshing||sampleWrite||!session())return;
@@ -211,6 +233,26 @@
   });
   void loadRemote();
  };
+ function gpsRanges(r,active,prior){
+  return r.spans.flatMap(span=>{
+   const done=M.merge([...(prior.bySpan.get(span.id)||[]),...(active.ranges[span.id]||[])]);
+   return M.remaining(done).flatMap(([a,b])=>(active.gpsMatches?.[span.id]||[]).map(([c,d])=>({spanId:span.id,start:Math.max(a,c),end:Math.min(b,d)})).filter(range=>range.start<range.end));
+  });
+ }
+ $('fieldRouteConfirmGPS')?.addEventListener('click',()=>void transact(()=>{
+  const r=route(),active=session();if(!r||!active)return;
+  const suggested=gpsRanges(r,active,against(r));
+  if(!suggested.length||!confirm('Confirma que vistoriou todos os trechos sugeridos pelo GPS?'))return;
+  const ranges={...active.ranges};
+  for(const {spanId,start,end} of suggested)ranges[spanId]=M.merge([...(ranges[spanId]||[]),[start,end]]);
+  return {...state,session:{...active,ranges}};
+ }));
+ $('fieldRouteNextPart')?.addEventListener('click',e=>{if(e.target.dataset.target&&!state.session){selected=e.target.dataset.target;paint();}});
+ $('fieldRouteRoadNext')?.addEventListener('click',()=>{
+  const r=route();if(!r)return;
+  const stops=M.roadStops(M.pendingPaths(r.spans,against(r).bySpan,session()?.ranges));
+  roadLeg=roadLeg+5<stops.length?roadLeg+4:0;paint(false);
+ });
  $('fieldRouteItems').onclick=e=>void transact(()=>{
   const active=session(),r=route();if(!active||!r)return;
   const data=e.target.dataset,raw=data.routeRange?.split(','),idx=Number(raw?.[0]??data.routePart??data.routeClear),s=r.spans[idx];if(!s)return;
@@ -237,16 +279,22 @@
  $('fieldRouteSync').onclick=()=>void boot(true).then(loadRemote).catch(error=>{status.textContent=error.message;});
  document.querySelector('[data-view="fieldRoutes"]').addEventListener('click',()=>void boot(true).then(()=>{paint();return loadRemote();}).catch(e=>{status.textContent=e.message;}));
  window.addEventListener('online',()=>void loadRemote());
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!panel.hidden)void loadRemote();});
+ setInterval(()=>{if(!document.hidden&&!panel.hidden)void loadRemote();},60000);
  window.addEventListener('campo-account-changed',()=>{if(identity()!==owner||state?.outbox.length)void boot().then(loadRemote).catch(e=>{status.textContent=e.message;});});
  window.addEventListener('campo-route-gps',e=>{
   const active=session(),p=e.detail,at=Date.parse(p.timestamp);
-  if(!active||identity()!==owner||busy||refreshing||sampleWrite||p.accuracy>35||at-active.lastSampleAt<6000)return;
+  if(!active||identity()!==owner||busy||refreshing||sampleWrite||!Number.isFinite(at)||p.accuracy>35||at-active.lastSampleAt<6000)return;
   let trails=active.trails,prev=trails.at(-1)?.at(-1);
   const point=[p.lat,p.lon];
   if(trails.reduce((n,part)=>n+part.length,0)>=3000)return;
   if(!prev||at-active.lastSampleAt>25000||M.distance([prev[1],prev[0]],[point[1],point[0]])>200)trails=[...trails,[point]];
   else trails=[...trails.slice(0,-1),[...trails.at(-1),point]];
-  const next={...state,session:{...active,trails,lastSampleAt:at}};
+  const gpsMatches={...active.gpsMatches};
+  if(prev&&p.accuracy<=25&&active.lastAccuracy<=25&&at-active.lastSampleAt<=25000){
+   for(const {spanId,ranges} of M.matchedRanges(route().spans,[prev[1],prev[0]],[p.lon,p.lat]))gpsMatches[spanId]=M.merge([...(gpsMatches[spanId]||[]),...ranges]);
+  }
+  const next={...state,session:{...active,trails,gpsMatches,lastSampleAt:at,lastAccuracy:p.accuracy}};
   const actor=owner;
   sampleWrite=true;void save(next).then(()=>{if(owner!==actor||identity()!==actor)return;state=next;currentGPS=p;if(!panel.hidden&&route())paint(false);}).catch(error=>{status.textContent=error.message;}).finally(()=>{sampleWrite=false;});
  });
