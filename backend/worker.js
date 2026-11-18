@@ -358,7 +358,7 @@ const ROUTE_TABLES=[
  'CREATE TABLE IF NOT EXISTS campo_route_returns (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL UNIQUE, route_id TEXT NOT NULL, assignee TEXT NOT NULL, actor TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
  'CREATE INDEX IF NOT EXISTS campo_route_returns_assignee ON campo_route_returns(assignee,created_at)'
 ];
-const ROUTE_RETURN_REASONS={acesso:'Acesso impedido',seguranca:'Condição insegura',rede:'Dados ou traçado da rede incorretos',area:'Fora da área ou atribuição',reprogramacao:'Reprogramação operacional',homologacao:'Homologação',outro:'Outro'};
+const ROUTE_RETURN_REASONS={acesso:'Acesso impedido',seguranca:'Condição insegura',rede:'Dados ou traçado da rede incorretos',area:'Fora da área ou atribuição',reprogramacao:'Reprogramação operacional',homologacao:'Homologação',outro:'Outro',gestao_reatribuicao:'Reatribuição pela gestão',gestao_correcao:'Correção da rota pela gestão',gestao_homologacao:'Homologação ou teste da gestão',gestao_solicitacao:'Solicitação do inspetor à gestão',gestao_outro:'Retirada pela gestão'};
 async function authorizeRouteHomologation(request,env,db,input){
  const login=String(input.adminLogin||'').trim().toLowerCase(),password=input.adminPassword;
  if(!login||login.length>254||typeof password!=='string'||!password||password.length>128)throw sharedError('Administrador ou senha incorretos.',401);
@@ -426,15 +426,17 @@ async function routeAPI(request,env){
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
    return json({route},201);
   }
-   if(path==='/api/routes/return'&&actor){
+   if(path==='/api/routes/return'&&(actor||admin)){
     const {id,routeId}=input||{},reasonCode=String(input.reasonCode||''),note=CampoRoutes.text(input.note,480);
-    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!ROUTE_RETURN_REASONS[reasonCode]||(reasonCode==='outro'&&!note))throw sharedError('Informe a rota e um motivo válido para a devolução.');
-    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
-    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
+    const management=reasonCode.startsWith('gestao_');
+    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!ROUTE_RETURN_REASONS[reasonCode]||(['outro','gestao_outro'].includes(reasonCode)&&!note))throw sharedError('Informe a rota e um motivo válido para a devolução.');
+    if(management&&!admin)throw sharedError('Somente a gestão pode retirar uma rota do inspetor.',403);
+    const entry=management?await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first():await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
+    if(!entry)throw sharedError(management?'Rota não encontrada.':'Rota não atribuída à sua conta.',404);
     const route=JSON.parse(entry.data),scopeId=route.campaign?.id||route.id;
     const authorizedBy=reasonCode==='homologacao'?await authorizeRouteHomologation(request,env,db,input):null;
-    const returned={id,scopeId,routeId,assignee:actor,actorName:env.CAMPO_USER?.name||route.operator||'Inspetor',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
-    const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,actor,actor,JSON.stringify(returned),now).run();
+    const returnActor=actor||'administrator',returned={id,scopeId,routeId,assignee:route.assignee,actor:returnActor,actorName:env.CAMPO_USER?.name||(management?'Administrador':route.operator||'Inspetor'),source:management?'management':'field',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
+    const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,route.assignee,returnActor,JSON.stringify(returned),now).run();
     if(!insert.meta?.changes){
      const row=await db.prepare('SELECT data FROM campo_route_returns WHERE scope_id=?').bind(scopeId).first(),stored=row&&JSON.parse(row.data);
      if(stored?.id!==id)throw sharedError('Esta rota já foi devolvida.',409);
@@ -1004,7 +1006,7 @@ async function controlAPI(request,env){try{
  if(request.method!=='GET')throw sharedError('Use GET para consultar o painel.',405);
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
- if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.2',at:new Date().toISOString()});}
+ if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
  if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
  if(p==='/api/control/map'){const data=await controlLiveUniverse(env),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);

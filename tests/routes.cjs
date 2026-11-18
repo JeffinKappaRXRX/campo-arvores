@@ -104,7 +104,14 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
   assert.equal((await request('/api/routes/return',{id:'return-homolog',routeId:'homolog-route',reasonCode:'homologacao',adminLogin:'gestor',adminPassword:'admin-pass'})).status,201);
   const stored=sql.prepare("SELECT data FROM campo_route_returns WHERE scope_id='homolog-route'").get();
   assert.equal(stored.data.includes('admin-pass'),false);assert.equal(JSON.parse(stored.data).authorizedBy.name,'Gestor');
+  const managed={...homolog,id:'managed-route',name:'Retirada administrativa',spans:[spans[3]]};
+  assert.equal((await request('/api/routes',managed,true)).status,201);
+  assert.equal((await request('/api/routes/return',{id:'return-forbidden',routeId:'managed-route',reasonCode:'gestao_reatribuicao'})).status,403);
+  assert.equal((await request('/api/routes/return',{id:'return-managed',routeId:'managed-route',reasonCode:'gestao_reatribuicao',note:'Troca de equipe'},true,{CAMPO_USER:{id:'admin',name:'Gestor'}})).status,201);
+  const managedReturn=JSON.parse(sql.prepare("SELECT data FROM campo_route_returns WHERE scope_id='managed-route'").get().data);
+  assert.equal(managedReturn.assignee,'operator');assert.equal(managedReturn.actor,'admin');assert.equal(managedReturn.source,'management');
+  assert.equal((await (await request('/api/routes')).json()).routes.some(route=>route.id==='managed-route'),false);
  assert.equal((await request('/api/routes/reference')).status,403);
  assert.deepEqual([...new Uint8Array(await (await request('/api/routes/reference',null,true)).arrayBuffer())],[31,31]);
- sql.close();console.log('PASS: publicação, devolução integral e homologação protegida por senha administrativa.');
+ sql.close();console.log('PASS: publicação, devolução integral, retirada pela gestão e homologação protegida.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

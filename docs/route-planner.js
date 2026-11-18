@@ -41,13 +41,16 @@
  <label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
  <p id="routeTotals" aria-live="polite"></p><div id="routePublished"></div></details>`;
  $('mapFrame').before(panel);
+ const withdrawDialog=document.createElement('dialog');withdrawDialog.id='routeWithdrawDialog';withdrawDialog.className='route-return-dialog';
+ withdrawDialog.innerHTML=`<form id="routeWithdrawForm"><div class="sectionhead"><div><span class="eyebrow">CONTROLE DA GESTÃO</span><h2>Retirar rota do inspetor</h2></div><button type="button" id="routeWithdrawClose" class="secondary">Fechar</button></div><p id="routeWithdrawSummary"></p><p><strong>Atenção:</strong> a rota sairá da carteira do inspetor na próxima sincronização. O histórico já recebido será preservado, mas uma saída ainda não sincronizada no aparelho poderá não ser aceita.</p><label>Motivo<select id="routeWithdrawReason" required><option value="">Selecione</option><option value="gestao_reatribuicao">Reatribuição ou ajuste da equipe</option><option value="gestao_correcao">Correção da rota</option><option value="gestao_homologacao">Homologação ou teste</option><option value="gestao_solicitacao">Solicitação do inspetor</option><option value="gestao_outro">Outro</option></select></label><label>Observação<textarea id="routeWithdrawNote" maxlength="480" rows="3" placeholder="Detalhe quando necessário"></textarea></label><p id="routeWithdrawFeedback" role="status"></p><button type="submit" class="primary" id="routeWithdrawConfirm">Retirar rota do inspetor</button></form>`;
+ document.body.append(withdrawDialog);
  const kpis=document.createElement('article');kpis.className='panel route-card';kpis.id='routeKpis';
  kpis.innerHTML=`<div class="panel-head"><h3>KPI de rotas por inspetor</h3></div><div class="route-grid">
  <label>De<input id="routeKpiStart" type="date"></label><label>Até<input id="routeKpiEnd" type="date"></label><label>Inspetor<select id="routeKpiOperator"><option value="">Todos</option></select></label>
  </div><div id="routeKpiTable" class="route-kpi-scroll" aria-live="polite"></div>`;
  $('mapFrame').after(kpis);
  const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
- let draft=[],candidates=[],filterKeys=[],previewComplete=false,extent=null,filterTimer,filterRequest=0,feedersList=new Set(),historyCapacity=false,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null;
+ let draft=[],candidates=[],filterKeys=[],previewComplete=false,extent=null,filterTimer,filterRequest=0,feedersList=new Set(),historyCapacity=false,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null,withdrawRoute=null,withdrawing=false;
  const today=()=>M.day(Date.now());
  $('routeKpiStart').value=today().slice(0,7)+'-01';$('routeKpiEnd').value=today();form.elements.planStart.value=today();
  const planned=routes=>[...new Map(routes.flatMap(r=>r.spans).map(s=>[s.id,s])).values()];
@@ -330,16 +333,34 @@
    const shared=done.sharedMetres?' · '+km(done.sharedMetres)+' de outros alimentadores · '+extras.length+' vãos concluídos'+(codes.length?' ('+codes.join(', ')+')':''):'';
    const inFilter=M.coverage(routeSpans,related,v=>inPeriod(v.day)).metres;
    const returnedText=returned?`<p><strong>DEVOLVIDA · ${esc(returned.reason)}</strong> · por ${esc(returned.actorName)} em ${esc(new Date(returned.createdAt).toLocaleString('pt-BR'))}${returned.note?' · '+esc(returned.note):''}${returned.authorizedBy?' · autorizada por '+esc(returned.authorizedBy.name):''}</p>`:'';
-   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button></div>`;
+   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><div class="route-buttons"><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button>${returned?'':`<button type="button" class="secondary" data-route-withdraw="${esc(r.id)}">Retirar do inspetor</button>`}</div></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
   paintKpis();
  }
  $('routePublished').onclick=e=>{
-  const parts=M.campaignParts(snapshot.routes).find(group=>group[0].id===e.target.dataset.routeMap);if(!parts)return;
+   if(e.target.dataset.routeWithdraw){
+    const parts=M.campaignParts(snapshot.routes).find(group=>group[0].id===e.target.dataset.routeWithdraw);if(!parts||parts[0].returned||withdrawing)return;
+    withdrawRoute=parts[0];$('routeWithdrawForm').reset();$('routeWithdrawFeedback').textContent='';$('routeWithdrawSummary').textContent=(withdrawRoute.campaign?.name||withdrawRoute.name)+' · '+withdrawRoute.operator+' · '+withdrawRoute.feeder;
+    if(typeof withdrawDialog.showModal==='function')withdrawDialog.showModal();else withdrawDialog.setAttribute('open','');return;
+   }
+   const parts=M.campaignParts(snapshot.routes).find(group=>group[0].id===e.target.dataset.routeMap);if(!parts)return;
   const spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
   const cover=M.coverage(spans,snapshot.visits.filter(v=>ids.has(v.routeId)));
   clearNetwork();
   window.CampoControlMap?.routeOverlay?.(spans,cover.bySpan,true,M.bufferMetres(parts[0].buffer));
+ };
+ const closeWithdraw=()=>{if(withdrawing)return;withdrawRoute=null;if(typeof withdrawDialog.close==='function')withdrawDialog.close();else withdrawDialog.removeAttribute('open');};
+ $('routeWithdrawClose').onclick=closeWithdraw;
+ $('routeWithdrawForm').onsubmit=async e=>{
+   e.preventDefault();if(!withdrawRoute||withdrawing)return;
+   const reasonCode=$('routeWithdrawReason').value,note=$('routeWithdrawNote').value.trim(),feedback=$('routeWithdrawFeedback');
+   if(reasonCode==='gestao_outro'&&!note){feedback.textContent='Descreva o motivo da retirada.';return;}
+   withdrawing=true;$('routeWithdrawConfirm').disabled=true;feedback.textContent='Retirando a rota…';
+   try{
+    await api('/api/routes/return',{id:crypto.randomUUID(),routeId:withdrawRoute.id,reasonCode,note});
+    const name=withdrawRoute.campaign?.name||withdrawRoute.name;withdrawRoute=null;if(typeof withdrawDialog.close==='function')withdrawDialog.close();else withdrawDialog.removeAttribute('open');
+    status.textContent='Rota “'+name+'” retirada do inspetor. O histórico recebido foi preservado.';await refresh();
+   }catch(error){feedback.textContent=error.message;}finally{withdrawing=false;$('routeWithdrawConfirm').disabled=false;}
  };
 
  function paintKpis(){

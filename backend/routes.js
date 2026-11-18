@@ -34,7 +34,7 @@ const ROUTE_TABLES=[
  'CREATE TABLE IF NOT EXISTS campo_route_returns (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL UNIQUE, route_id TEXT NOT NULL, assignee TEXT NOT NULL, actor TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
  'CREATE INDEX IF NOT EXISTS campo_route_returns_assignee ON campo_route_returns(assignee,created_at)'
 ];
-const ROUTE_RETURN_REASONS={acesso:'Acesso impedido',seguranca:'Condição insegura',rede:'Dados ou traçado da rede incorretos',area:'Fora da área ou atribuição',reprogramacao:'Reprogramação operacional',homologacao:'Homologação',outro:'Outro'};
+const ROUTE_RETURN_REASONS={acesso:'Acesso impedido',seguranca:'Condição insegura',rede:'Dados ou traçado da rede incorretos',area:'Fora da área ou atribuição',reprogramacao:'Reprogramação operacional',homologacao:'Homologação',outro:'Outro',gestao_reatribuicao:'Reatribuição pela gestão',gestao_correcao:'Correção da rota pela gestão',gestao_homologacao:'Homologação ou teste da gestão',gestao_solicitacao:'Solicitação do inspetor à gestão',gestao_outro:'Retirada pela gestão'};
 async function authorizeRouteHomologation(request,env,db,input){
  const login=String(input.adminLogin||'').trim().toLowerCase(),password=input.adminPassword;
  if(!login||login.length>254||typeof password!=='string'||!password||password.length>128)throw sharedError('Administrador ou senha incorretos.',401);
@@ -102,15 +102,17 @@ async function routeAPI(request,env){
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
    return json({route},201);
   }
-   if(path==='/api/routes/return'&&actor){
+   if(path==='/api/routes/return'&&(actor||admin)){
     const {id,routeId}=input||{},reasonCode=String(input.reasonCode||''),note=CampoRoutes.text(input.note,480);
-    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!ROUTE_RETURN_REASONS[reasonCode]||(reasonCode==='outro'&&!note))throw sharedError('Informe a rota e um motivo válido para a devolução.');
-    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
-    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
+    const management=reasonCode.startsWith('gestao_');
+    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!ROUTE_RETURN_REASONS[reasonCode]||(['outro','gestao_outro'].includes(reasonCode)&&!note))throw sharedError('Informe a rota e um motivo válido para a devolução.');
+    if(management&&!admin)throw sharedError('Somente a gestão pode retirar uma rota do inspetor.',403);
+    const entry=management?await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first():await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
+    if(!entry)throw sharedError(management?'Rota não encontrada.':'Rota não atribuída à sua conta.',404);
     const route=JSON.parse(entry.data),scopeId=route.campaign?.id||route.id;
     const authorizedBy=reasonCode==='homologacao'?await authorizeRouteHomologation(request,env,db,input):null;
-    const returned={id,scopeId,routeId,assignee:actor,actorName:env.CAMPO_USER?.name||route.operator||'Inspetor',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
-    const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,actor,actor,JSON.stringify(returned),now).run();
+    const returnActor=actor||'administrator',returned={id,scopeId,routeId,assignee:route.assignee,actor:returnActor,actorName:env.CAMPO_USER?.name||(management?'Administrador':route.operator||'Inspetor'),source:management?'management':'field',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
+    const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,route.assignee,returnActor,JSON.stringify(returned),now).run();
     if(!insert.meta?.changes){
      const row=await db.prepare('SELECT data FROM campo_route_returns WHERE scope_id=?').bind(scopeId).first(),stored=row&&JSON.parse(row.data);
      if(stored?.id!==id)throw sharedError('Esta rota já foi devolvida.',409);

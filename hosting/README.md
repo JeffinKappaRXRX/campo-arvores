@@ -22,6 +22,8 @@ O painel grava a rota na mesma base central e a libera para a conta autenticada 
 
 Em **Minhas rotas**, a opção **Devolver rota** exige conexão e devolve a campanha inteira, inclusive suas partes. A ação fica bloqueada durante uma saída ou enquanto houver conclusão pendente de envio. Os motivos operacionais são registrados na base central; **Homologação** exige usuário/e-mail e senha de uma conta administrativa ativa. A validação ocorre no servidor, recebe limitação de tentativas e não persiste a senha. Rotas devolvidas saem da carteira do inspetor, permanecem identificadas na gestão e não entram como planejamento ativo nos totais ou KPIs.
 
+Em **Rotas atribuídas e cobertura**, a gestão pode usar **Retirar do inspetor** em uma rota ativa. O diálogo exige um motivo, avisa sobre saídas ainda não sincronizadas e registra o administrador responsável. A retirada vale para toda a campanha fracionada, preserva visitas e quilômetros já recebidos, remove a atribuição ativa na próxima sincronização do aparelho e exclui a rota dos totais planejados e KPIs futuros.
+
 Validação de desenvolvimento com `node tests/route-filters.cjs`, `node tests/routes.cjs` e `node backend/verify-pages.mjs`. A publicação usa `node backend/build.mjs` e `node hosting/build-release.mjs`.
 
 ## Mapa unificado e plano de poda por ciclo — 16/11/2026

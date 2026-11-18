@@ -114,6 +114,20 @@ const read=file=>fs.readFileSync(file,'utf8');
  failPart=false;
  await form.onsubmit(new w.Event('submit'));
  assert.deepEqual(attempts.at(-1),attempts.at(-2));
+ const managementRoute={id:'managed-route',assignee:'inspetor',operator:'Inspetor',name:'Rota da gestão',locality:'Rio Branco',feeder:'TAN-01I9',zone:'URBANO',section:'1',phase:1,spans:[M.feature(network.features[0])]};
+ let withdrawnPayload=null,withdrawn=false;
+ w.CampoControl.api=async(path,body)=>{
+  if(path==='/api/routes/return'){withdrawnPayload=JSON.parse(JSON.stringify(body));withdrawn=true;return {returned:{...body,reason:'Reatribuição pela gestão'}};}
+  if(path.endsWith('users'))return {users:[{id:'inspetor',name:'Inspetor',passwordConfigured:true}]};
+  const route=withdrawn?{...managementRoute,returned:{reason:'Reatribuição pela gestão',actorName:'Gestor',createdAt:'2026-11-18T20:00:00Z',note:'Troca de equipe'}}:managementRoute;
+  return {routes:[route],visits:[]};
+ };
+ $('routeRefresh').click();await new Promise(resolve=>setTimeout(resolve,10));
+ const withdrawButton=$('routePublished').querySelector('[data-route-withdraw]');assert(withdrawButton);withdrawButton.click();
+ assert.equal($('routeWithdrawDialog').hasAttribute('open'),true);$('routeWithdrawReason').value='gestao_reatribuicao';$('routeWithdrawNote').value='Troca de equipe';
+ $('routeWithdrawForm').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(withdrawnPayload.routeId,'managed-route');assert.equal(withdrawnPayload.reasonCode,'gestao_reatribuicao');
+ assert.match($('routePublished').textContent,/DEVOLVIDA/);assert.equal($('routePublished').querySelector('[data-route-withdraw]'),null);
  dom.window.close();db.close();
- console.log('PASS: filtro SQL exato no MT, T1 + T2, alimentador, zona, chaves ausentes, lista/mapa e atribuição.');
+ console.log('PASS: filtro SQL exato, atribuição e retirada administrativa da rota pela gestão.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
