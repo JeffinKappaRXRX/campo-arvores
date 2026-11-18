@@ -10,7 +10,31 @@ assert.equal((await add('Jefferson','owner@example.com','jefferson','admin')).st
 let users=(await call('/api/admin/users',undefined,root)).data.users,alice=users.find(u=>u.email==='alice@example.com'),owner=users.find(u=>u.email==='owner@example.com');assert.equal(alice.username,'alice');assert.equal(alice.phone,'+5568999991234');assert(!JSON.stringify(users).includes('password_hash'));assert(!JSON.stringify(users).includes('salt'));assert.equal((await call('/api/admin/users',{...owner,blocked:true},root)).status,409);const credential=sql.prepare('SELECT * FROM campo_user_credentials WHERE user_id=?').get(alice.id);assert.notEqual(credential.password_hash,password);assert(credential.salt);
 async function login(username,pw=password){ip=crypto.randomUUID();const result=await call('/api/auth/login',{username,password:pw});assert.equal(result.status,200,JSON.stringify(result.data));const cookie=result.r.headers.getSetCookie().find(s=>s.startsWith('__Host-campo-session='));assert.match(cookie,/Secure; HttpOnly; SameSite=Lax/);assert.match(cookie,/Max-Age=34560000/);return cookie.split(';')[0];}
 assert.equal((await call('/api/auth/login',{username:'alice',password:'wrong'})).status,401);assert.deepEqual((await call('/api/auth/login',{username:'missing',password:'wrong'})).data,(await call('/api/auth/login',{username:'alice',password:'wrong'})).data,'unknown and incorrect credentials have same response');assert.equal((await call('/api/auth/login',{username:'alice',password},{origin:'https://evil.test'})).status,403);
-const cookie=await login('ALICE');assert((await call('/api/auth/status',undefined,{cookie})).data.authenticated);assert.deepEqual((await call('/api/network/bt-feeders',undefined,{cookie})).data,btFixture);assert.equal((await call('/api/admin/users',undefined,{cookie})).status,403);assert.equal((await call('/api/admin/access-requests',undefined,{cookie})).status,403);
+const cookie=await login('ALICE');
+{
+const inspector={cookie};
+await add('Bruno','bruno@example.com','bruno');const other={cookie:await login('BRUNO')};
+assert.deepEqual((await call('/api/routes',undefined,inspector)).data.routes,[]);
+const route={id:'test-route',name:'Piloto',assignee:alice.id,locality:'Rio Branco',feeder:'TAN-01I9',zone:'URBANO',section:'1',
+ spans:[{id:'2580',metres:178.78,line:[[-67.81,-9.97],[-67.809,-9.97]]}]};
+assert.equal((await call('/api/routes',route,inspector)).status,403);
+const created=await call('/api/routes',route,root);assert.equal(created.status,201,JSON.stringify(created.data));
+assert.equal((await call('/api/routes',route,root)).status,200);
+assert.equal((await call('/api/routes',{...route,name:'Duplicata'},root)).status,409);
+assert.equal((await call('/api/routes',undefined,inspector)).data.routes.length,1);
+assert.equal((await call('/api/routes',undefined,other)).data.routes.length,0);
+assert.equal((await call('/api/routes?mine=1',undefined,root)).status,403);
+const visit={id:'test-visit',routeId:route.id,startedAt:'2026-11-17T15:00:00Z',endedAt:'2026-11-17T15:20:00Z',ranges:[{spanId:'2580',start:0,end:5000}]};
+assert.equal((await call('/api/routes/visit',visit,other)).status,404);
+assert.equal((await call('/api/routes/visit',{...visit,ranges:[{spanId:'unknown',start:0,end:5000}]},inspector)).status,400);
+assert.equal((await call('/api/routes/visit',visit,inspector)).status,200);
+assert.equal((await call('/api/routes/visit',visit,inspector)).status,200);
+assert.equal((await call('/api/routes/visit',{...visit,reason:'inconsistente'},inspector)).status,409);
+assert.equal((await call('/api/routes',undefined,root)).data.visits.length,1);
+console.log('PASS API: administração, atribuição, autenticação, privacidade e reenvio idempotente.');
+}
+
+assert((await call('/api/auth/status',undefined,{cookie})).data.authenticated);assert.deepEqual((await call('/api/network/bt-feeders',undefined,{cookie})).data,btFixture);assert.equal((await call('/api/admin/users',undefined,{cookie})).status,403);assert.equal((await call('/api/admin/access-requests',undefined,{cookie})).status,403);
 const id=crypto.randomUUID(),record={id,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),lat:-9.9,lon:-67.8,inspector:'Mallory',species:'Árvore',photos:[]};const saved=await call('/api/shared/save',{record,actor:'Impersonated',baseVersion:0,operationId:crypto.randomUUID()},{cookie});assert.equal(saved.status,200);assert.equal(saved.data.tree.inspector,'Alice');assert.equal(saved.data.tree.lastEditorUserId,alice.id);
 assert.equal((await call('/api/team/presence/ping',{name:'Fake',active:true,shareLocation:false},{cookie})).status,200);assert.equal((await call('/api/admin/presence',undefined,root)).data.sessions[0].email,'alice@example.com');
 assert.equal((await call('/api/admin/users',{...alice,blocked:true},root)).status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie})).status,401);ip=crypto.randomUUID();assert.equal((await call('/api/auth/login',{username:'alice',password})).status,401);alice=(await call('/api/admin/users',undefined,root)).data.users.find(u=>u.id===alice.id);assert.equal((await call('/api/admin/users',{...alice,blocked:false},root)).status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie})).status,401,'unblocking does not resurrect sessions');

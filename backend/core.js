@@ -125,6 +125,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
+ if(url.pathname==='/api/routes'||url.pathname==='/api/routes/visit')return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname.startsWith('/api/central/'))return centralAPI(request,env);

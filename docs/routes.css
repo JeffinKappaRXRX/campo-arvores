@@ -1,0 +1,10 @@
+.route-card{padding:1rem;margin-block:1rem}
+.route-card .route-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.75rem;margin-block:.8rem}
+.route-card label{display:grid;gap:.35rem;font-weight:600}
+.route-card .route-buttons{display:flex;gap:.65rem;align-items:end;flex-wrap:wrap}
+.route-card .route-list{max-height:23rem;overflow:auto;padding-inline-start:1.7rem}
+.route-card li{padding-block:.6rem}
+.route-card button:disabled{opacity:.58}
+.route-card .route-result{padding:.75rem 0;border-top:1px solid var(--line,#879990)}
+.route-result small{display:block}
+#fieldRouteMap{height:clamp(19rem,44vh,31rem);border:1px solid var(--line,#879990);border-radius:.7rem;background:#e5eee5}

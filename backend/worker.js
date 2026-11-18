@@ -7,6 +7,160 @@ function identificationPending(r){return !r.deletedRemote&&(unknownSpecies(r)||[
 root.CampoInspectionRules={missing,unknownSpecies,identificationPending};if(typeof module!=='undefined')module.exports=root.CampoInspectionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
+'use strict';
+const CampoRoutes=(()=>{
+ const FULL=10000;
+ const text=(value,max=100)=>String(value??'').trim().slice(0,max);
+ const key=value=>text(value,100).toUpperCase();
+ const identifier=value=>/^[A-Za-z0-9_.:-]{1,100}$/.test(value||'');
+ const comparePoint=(a,b)=>a[0]-b[0]||a[1]-b[1];
+ const distance=(a,b)=>{
+  const rad=Math.PI/180, dy=(b[1]-a[1])*rad, dx=(b[0]-a[0])*rad;
+  const x=Math.sin(dy/2)**2+Math.cos(a[1]*rad)*Math.cos(b[1]*rad)*Math.sin(dx/2)**2;
+  return 12742000*Math.asin(Math.min(1,Math.sqrt(x)));
+ };
+ function span(raw){
+  const id=text(raw.id),metres=Number(raw.metres),line=raw.line;
+  if(!identifier(id)||!Number.isFinite(metres)||metres<=0||metres>50000||
+   !Array.isArray(line)||line.length<2||line.length>300||line.some(p=>!Array.isArray(p)||p.length!==2||
+    !Number.isFinite(p[0])||!Number.isFinite(p[1])||Math.abs(p[0])>180||Math.abs(p[1])>90))throw Error('Vão sem ID, extensão ou geometria válida.');
+  if(line.every(p=>comparePoint(p,line[0])===0))throw Error('Vão sem geometria linear.');
+  const inverted=comparePoint(line[0],line.at(-1))>0;
+  return {id,metres,feeder:key(raw.feeder),locality:key(raw.locality),block:key(raw.block),zone:key(raw.zone),section:key(raw.section).replace(/^T/,''),
+   line:inverted?[...line].reverse():line,reverse:Boolean(raw.reverse)!==inverted};
+ }
+ const first=s=>s.line[s.reverse?s.line.length-1:0],last=s=>s.line[s.reverse?0:s.line.length-1];
+ function feature(f){
+  const p=Object.fromEntries(Object.entries(f.properties||{}).map(([k,v])=>[k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,''),v]));
+  if(f.geometry?.type!=='LineString')throw Error('Selecione um vão de linha da rede MT.');
+  const layer=key(f.properties?._class||f.properties?._layer);
+  if(layer&&!/(^MT$|VAO.*MT|REDE.*MT)/.test(layer))throw Error('Selecione um vão de MT.');
+  const numeric=v=>Number(String(v??'').trim().replace(',','.'));
+  const metres=numeric(p.redecompm??p.comprimentoatual??p.comprimentom??p.comprimento)||numeric(p.redecompkm)*1000;
+  return span({id:p.id??p.idvao,metres,line:f.geometry.coordinates,feeder:p.alimentador??p.feeder,
+   locality:p.localidade??p.cidade,block:p.namebloco??p.bloco,zone:p.zona,section:p.tipotrecho});
+ }
+ function bounds(intervals){
+  return intervals.map(([start,end])=>{
+   if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>FULL||start>=end)throw Error('Faixa de cobertura inválida.');
+   return [start,end];
+  }).sort((a,b)=>a[0]-b[0]);
+ }
+ function merge(intervals){
+  const result=[];
+  for(const interval of bounds(intervals)){
+   const prior=result.at(-1);
+   if(prior&&interval[0]<=prior[1])prior[1]=Math.max(prior[1],interval[1]);
+   else result.push(interval);
+  }
+  return result;
+ }
+ function remaining(intervals){
+  const out=[];let cursor=0;
+  for(const [start,end] of merge(intervals||[])){if(cursor<start)out.push([cursor,start]);cursor=end;}
+  if(cursor<FULL)out.push([cursor,FULL]);
+  return out;
+ }
+ function coverage(spans,visits,filter=()=>true){
+  const lengths=new Map(spans.map(s=>[s.id,s.metres])), bySpan=new Map();
+  for(const visit of visits.filter(filter))for(const {spanId,start,end} of visit.ranges){
+   if(!lengths.has(spanId))continue;
+   if(!bySpan.has(spanId))bySpan.set(spanId,[]);
+   bySpan.get(spanId).push([start,end]);
+  }
+  let metres=0;
+  for(const [id,items] of bySpan){
+   const joined=merge(items);bySpan.set(id,joined);
+   metres+=joined.reduce((sum,[a,b])=>sum+(b-a)*lengths.get(id)/FULL,0);
+  }
+  return {bySpan,metres};
+ }
+ function portion(span,start,end){
+  if(start===0&&end===FULL)return span.line;
+  const cumulative=[0];
+  for(let i=1;i<span.line.length;i++)cumulative.push(cumulative[i-1]+distance(span.line[i-1],span.line[i]));
+  const total=cumulative.at(-1),a=total*start/FULL,b=total*end/FULL;
+  function point(target){
+   let i=cumulative.findIndex(value=>value>=target);
+   if(i<=0)return span.line[0];
+   const width=cumulative[i]-cumulative[i-1],fraction=width?(target-cumulative[i-1])/width:0;
+   return span.line[i-1].map((v,axis)=>v+(span.line[i][axis]-v)*fraction);
+  }
+  return [point(a),...span.line.filter((_,i)=>cumulative[i]>a&&cumulative[i]<b),point(b)];
+ }
+ function trailMetres(trails){
+  return trails.reduce((sum,line)=>sum+line.slice(1).reduce((m,[lat,lon],i)=>m+distance([line[i][1],line[i][0]],[lon,lat]),0),0);
+ }
+ function phase(zone,section){
+  return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'')]||0;
+ }
+ const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
+ return {FULL,text,key,identifier,distance,first,last,span,feature,merge,remaining,coverage,portion,trailMetres,phase,day};
+})();
+if(typeof module!=='undefined')module.exports=CampoRoutes;
+
+const ROUTE_TABLES=[
+ 'CREATE TABLE IF NOT EXISTS campo_routes (id TEXT PRIMARY KEY, assignee TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
+ 'CREATE INDEX IF NOT EXISTS campo_routes_assignee ON campo_routes(assignee,created_at)',
+ 'CREATE TABLE IF NOT EXISTS campo_route_visits (id TEXT PRIMARY KEY, route_id TEXT NOT NULL, actor TEXT NOT NULL, data TEXT NOT NULL, received_at TEXT NOT NULL)',
+ 'CREATE INDEX IF NOT EXISTS campo_route_visits_route ON campo_route_visits(route_id,received_at)'
+];
+async function routeAPI(request,env){
+ try{
+  const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
+  if(!admin&&!actor)throw sharedError('Entre com sua conta para acessar as rotas.',403);
+  const db=await adminDb(env);
+  if(path==='/api/routes'&&request.method==='GET'){
+   const all=admin&&url.searchParams.get('mine')!=='1';
+   if(!all&&!actor)throw sharedError('Entre com uma conta de inspetor.',403);
+   try{
+    const routes=all?db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_routes WHERE assignee=? ORDER BY created_at DESC').bind(actor);
+    const visits=all?db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at'):db.prepare('SELECT data,received_at FROM campo_route_visits WHERE actor=? ORDER BY received_at').bind(actor);
+    const [a,b]=await Promise.all([routes.all(),visits.all()]);
+    return json({routes:a.results.map(row=>JSON.parse(row.data)),visits:b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at}))});
+   }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[]});throw error;}
+  }
+  if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
+  const input=await sharedBody(request,500000),now=new Date().toISOString();
+  if(path==='/api/routes'&&admin){
+   const {id,assignee}=input||{};
+   if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(assignee)||!Array.isArray(input.spans)||!input.spans.length||input.spans.length>250)throw sharedError('Informe o inspetor e até 250 vãos.');
+   const name=CampoRoutes.text(input.name),locality=CampoRoutes.key(input.locality),feeder=CampoRoutes.key(input.feeder),zone=CampoRoutes.key(input.zone),section=CampoRoutes.key(input.section).replace(/^T/,'');
+   const phase=CampoRoutes.phase(zone,section);
+   if(!name||!locality||!feeder||!phase)throw sharedError('Informe nome, localidade, alimentador, zona e trecho.');
+   let spans;
+   try{spans=input.spans.map(CampoRoutes.span);}catch(error){throw sharedError(error.message);}
+   if(new Set(spans.map(s=>s.id)).size!==spans.length||spans.some(s=>s.feeder&&s.feeder!==feeder||s.locality&&s.locality!==locality||s.zone&&s.zone!==zone||s.section&&s.section!==section))throw sharedError('Revise vãos repetidos ou fora do recorte.');
+   const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
+   if(!operator)throw sharedError('Selecione uma conta ativa.');
+   await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,phase,spans,createdAt:now};
+   const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
+   if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
+   return json({route},201);
+  }
+  if(path==='/api/routes/visit'&&actor){
+   const {id,routeId,startedAt,endedAt}=input||{},start=Date.parse(startedAt),end=Date.parse(endedAt);
+   if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end>Date.now()+600000||end-start>7*86400000||
+     !Array.isArray(input.ranges)||input.ranges.length>750)throw sharedError('Dados da vistoria inválidos.');
+   const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
+   if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
+   const route=JSON.parse(entry.data),ids=new Set(route.spans.map(s=>s.id));
+   const ranges=input.ranges.map(x=>{
+    if(!x||!ids.has(x.spanId)||!Number.isInteger(x.start)||!Number.isInteger(x.end)||x.start<0||x.end>CampoRoutes.FULL||x.start>=x.end)throw sharedError('Vão ou faixa de vistoria inválida.');
+    return {spanId:x.spanId,start:x.start,end:x.end};
+   });
+   const visit={id,routeId,actor,startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),day:CampoRoutes.day(end),trackMetres:Math.round(Math.max(0,Math.min(1000000,Number(input.trackMetres)||0))),ranges,reason:CampoRoutes.text(input.reason,480)};
+   if(!ranges.length&&!visit.reason)throw sharedError('Informe por que a rota foi encerrada sem cobertura.');
+   await db.prepare('INSERT OR IGNORE INTO campo_route_visits(id,route_id,actor,data,received_at) VALUES(?,?,?,?,?)').bind(id,routeId,actor,JSON.stringify(visit),now).run();
+   const row=await db.prepare('SELECT data,received_at FROM campo_route_visits WHERE id=? AND actor=?').bind(id,actor).first();
+   if(row?.data!==JSON.stringify(visit))throw sharedError('O identificador já pertence a outra vistoria.',409);
+   return json({visit:{...visit,receivedAt:row.received_at}});
+  }
+  throw sharedError('Operação não permitida.',403);
+ }catch(error){return json({error:error.status?error.message:'Rotas temporariamente indisponíveis.'},error.status||503);}
+}
+
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 let activeRequests=0;
 function consolidatedLink(value){
@@ -134,6 +288,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
+ if(url.pathname==='/api/routes'||url.pathname==='/api/routes/visit')return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname.startsWith('/api/central/'))return centralAPI(request,env);
