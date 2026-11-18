@@ -30,13 +30,14 @@ const CampoRoutes=(()=>{
   const layer=key(f.properties?._class||f.properties?._layer);
   if(layer&&!/(^MT$|VAO.*MT|REDE.*MT)/.test(layer))throw Error('Selecione um vão de MT.');
   const numeric=v=>Number(String(v??'').trim().replace(',','.'));
-  const recorded=numeric(p.redecompm??p.comprimentoatual??p.comprimentom??p.comprimento??p.extensaom??p.extensao)||numeric(p.redecompkm)*1000;
+  const recorded=[p.redecompm,p.comprimentoatual,p.comprimentom,p.comprimento,p.extensaom,p.extensao,numeric(p.redecompkm)*1000,p.routemetres].map(numeric).find(value=>value>0);
   const line=f.geometry.coordinates;
   const estimated=!(recorded>0);
   const metres=estimated?line.slice(1).reduce((total,point,i)=>total+distance(line[i],point),0):recorded;
-  const zone=key(p.zona);
-  return span({id:p.id??p.idvao,metres,line,estimated,feeder:p.alimentador??p.feeder,
-   locality:p.localidade??p.cidade,block:p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.tipotrecho??p.trecho])[0]});
+  const rawZone=key(p.routezone??p.zona??p.urbanorural);
+  const zone=['U','URBANA'].includes(rawZone)?'URBANO':rawZone==='R'?'RURAL':rawZone;
+  return span({id:p.id??p.idvao??p.idvaomt??p.gisid,metres,line,estimated,feeder:p.routefeeder??p.alimentador??p.feeder,
+   locality:p.routelocality??p.localidade??p.cidade,block:p.routeblock??p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.routesection??p.tipotrecho??p.trecho])[0]});
  }
  const metres=spans=>spans.reduce((sum,span)=>sum+span.metres,0);
  const pendingColor='#ee344a',confirmedColor='#168756',haloColor='#fff4f0';

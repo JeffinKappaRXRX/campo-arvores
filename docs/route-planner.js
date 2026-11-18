@@ -18,6 +18,7 @@
  <div class="route-buttons"><button type="submit" class="primary">Filtrar rede</button><button type="button" id="routeClearNetwork">Limpar filtro</button><button type="button" id="routeFilterMap" hidden>Ver no mapa</button></div>
  </form>
  <p id="routeMapLegend" class="route-legend-mark" hidden>Vermelho com halo: rede filtrada para vistoria. A rede de referência continua visível.</p>
+ <label>Complemento cadastral por ID (.json.gz)<input type="file" id="routeReference" accept=".gz,application/gzip"></label><p id="routeReferenceStatus" role="status"></p>
  <p id="routeNetworkStatus" role="status">Deixe os trechos em branco para incluir todos.</p>
  <div id="routeMatches" hidden>
  <div class="route-buttons"><button type="button" id="routeAddAll">Atribuir rota filtrada</button></div>
@@ -65,6 +66,17 @@
  search.addEventListener('input',editedFilters);
  $('routeClearNetwork').onclick=()=>{search.reset();clearNetwork();searchStatus.textContent='Filtro limpo.';};
  $('routeFilterMap').onclick=()=>window.CampoControlMap?.setRouteFilter(candidates.map(x=>x.feature),true,true);
+ $('routeReference').onchange=async e=>{
+  const file=e.target.files[0];if(!file)return;
+  const note=$('routeReferenceStatus'),input=e.target;input.disabled=true;
+  note.textContent='Importando cadastro de vãos neste navegador…';
+  try{
+   const result=await window.CampoControlMap.importRouteReference(file);
+   note.textContent=result.count.toLocaleString('pt-BR')+' IDs cadastrados. A referência ficará neste navegador.';
+   search.requestSubmit();
+  }catch(error){note.textContent=error.message;}
+  finally{input.value='';input.disabled=false;}
+ };
  search.onsubmit=async e=>{
   e.preventDefault();
   if(job)return;
@@ -84,11 +96,13 @@
    const order=new Map(blocks.map((key,i)=>[key,i]));
    candidates=[...unique.values()].sort((a,b)=>(order.get(a.span.block)??blocks.length)-(order.get(b.span.block)??blocks.length));
    filterKeys=blocks;previewComplete=!result.capped&&!result.missingColumns&&!invalid&&result.features.length===result.total;
-   const count=candidates.length.toLocaleString('pt-BR'),info=[count+' vão(s) · '+km(M.metres(candidates.map(x=>x.span)))+' de rede no recorte.'];
+   const count=candidates.length.toLocaleString('pt-BR'),info=[count+' vão(s) · '+km(M.metres(candidates.map(x=>x.span)))+' de rede vinculada ao mapa.'];
+   if(result.reference)info.push('Referência cadastral do recorte: '+result.reference.count.toLocaleString('pt-BR')+' vão(s) · '+km(result.reference.metres||0)+'.');
    if(candidates.length>250)info.push('A lista exibe os primeiros 250; a atribuição usa o recorte inteiro.');
    if(result.capped)info.push(result.total.toLocaleString('pt-BR')+' registros no recorte. Refine os filtros para visualizar todos e liberar a inclusão em lote.');
    if(result.missing.length)info.push('Chaves sem vãos no recorte: '+result.missing.join(', ')+'.');
-   if(result.missingColumns)info.push('Há camadas MT sem os campos do filtro. Confira a versão da rede.');
+   if(result.missingColumns)info.push('A consulta está incompleta: faltam campos no GPKG e a referência por ID não está disponível. Importe o complemento cadastral por ID nesta tela.');
+   if(!candidates.length&&!result.missingColumns)info.push('Nenhum vão correspondente na geometria instalada. Confira o código do alimentador e o recorte.');
    if(invalid||result.features.length<Math.min(result.total,10000))info.push('Alguns registros estão sem ID, geometria ou extensão utilizável.');
    searchStatus.textContent=info.join(' ');
    window.CampoControlMap.setRouteFilter(candidates.map(x=>x.feature),Boolean(candidates.length));

@@ -42,6 +42,21 @@ const read=file=>fs.readFileSync(file,'utf8');
  const first=M.feature(network.features[0]);assert(first.estimated&&first.metres>100);
  assert.equal(M.feature({...network.features[0],properties:{...network.features[0].properties,'Rede Comp M':42}}).metres,42);
 
+ db.exec("CREATE TABLE mt_campo (Id TEXT, Alimentador TEXT, geom TEXT); CREATE TEMP TABLE campo_mt_ref (id TEXT PRIMARY KEY, feeder TEXT, locality TEXT, zone TEXT, section TEXT, block TEXT, metres REAL);");
+ const actual=[
+  ['6587410','AAL-01C8','RIO BRANCO','URBANO','1','RBR14528',35.432],
+  ['6784695','AAL-01C8','RIO BRANCO','URBANO','2','RBR6496',28.731],
+  ['00','AAL-01C8','RIO BRANCO','RURAL','2','RBR6496',52]
+ ];
+ db.prepare("INSERT INTO campo_mt_ref SELECT value->>0,value->>1,value->>2,value->>3,value->>4,value->>5,value->>6 FROM json_each(?)").run(JSON.stringify(actual));
+ for(const [i,row] of actual.entries())db.prepare('INSERT INTO mt_campo VALUES (?,?,?)').run(row[0],row[1],coordinates(i));
+ db.prepare('INSERT INTO mt_campo VALUES (?,?,?)').run('not-joined','AAL-01C8',coordinates(4));
+ worker.installed=[{table_name:'mt_campo',column_name:'geom',classification:'MT',columns:['Id','Alimentador','geom'],srs_id:4326}];
+ vm.runInContext('currentLayers=installed;routeReferenceReady=true;',worker);
+ const linked=query({feeders:['AAL-01C8'],sections:['1','2'],zone:'URBANO'});
+ assert.deepEqual(linked.features.map(f=>M.feature(f).id),['6587410','6784695']);
+ assert(Math.abs(M.metres(linked.features.map(M.feature))-64.163)<1e-8);
+ assert.deepEqual(query({blocks:['RBR6496'],sections:['1','2'],zone:'URBANO'}).features.map(f=>M.feature(f).id),['6784695']);
  const dom=new JSDOM('<main><div id="mapFrame"><div id="controlMap"></div></div></main>',{runScripts:'outside-only',url:'https://campo.test'});
  const w=dom.window,d=w.document,$=id=>d.getElementById(id);
  let onMap,submitted,response=network,failPart=false;
