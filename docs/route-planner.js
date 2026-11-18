@@ -12,7 +12,7 @@
  <label><input name="sections" type="checkbox" value="1"> T1</label>
  <label><input name="sections" type="checkbox" value="2"> T2</label>
  <label><input name="sections" type="checkbox" value="3"> T3</label></fieldset>
- <label>Alimentadores<select name="feeder" id="routeFeeders" multiple size="5"><option value="">Todos os alimentadores</option></select><small>Selecione na lista. Use Ctrl para marcar vários.</small></label>
+ <label>Alimentador<input name="feeder" id="routeFeeder" type="search" list="routeFeederSuggestions" maxlength="600" placeholder="Ex.: AAL-01C9" autocomplete="off"><datalist id="routeFeederSuggestions"></datalist><small>Digite o código. Para mais de um, separe por vírgula.</small></label>
  <label>Zona <select name="zone"><option value="">Todas</option><option value="URBANO">Urbano</option><option value="RURAL">Rural</option></select></label>
  <label class="route-scope"><span><input type="checkbox" name="mapArea"> Limitar à área visível do mapa</span></label>
  <label class="route-keys">Chaves <textarea name="blocks" rows="3" placeholder="RBR554&#10;RBR444" aria-describedby="routeKeyHelp"></textarea><small id="routeKeyHelp">Separe por vírgula, espaço ou quebra de linha.</small></label></div>
@@ -26,7 +26,7 @@
  <ul id="routeCandidates" class="route-list"></ul></div>
  <form id="routePlanForm">
  <div class="route-buttons"><button type="button" id="routePick" aria-pressed="false">Selecionar vãos no mapa</button><label>Importar GeoJSON <input id="routeImport" type="file" accept=".json,.geojson,application/geo+json"></label></div>
- <ol id="routeDraftList" class="route-list"></ol><p id="routePlanned"></p>
+ <ol id="routeDraftList" class="route-list"></ol><p id="routePlanned"></p><div id="routeRoad" class="route-buttons" hidden><a id="routeNavigateNext" target="_blank" rel="noopener noreferrer">Google Maps · ir ao primeiro ponto</a><a id="routeRoadTrip" target="_blank" rel="noopener noreferrer">Google Maps · trajeto por ruas</a><small>A rede destacada é o serviço. O Google Maps calcula o deslocamento viário em separado.</small></div>
  <div class="route-grid"><label>Nome da rota<input name="name" maxlength="100" required></label><label>Inspetor<select name="assignee" required></select></label><label>Buffer por lado (m)<input name="buffer" type="number" min="5" max="200" value="30" required></label><label>Início previsto<input type="date" name="planStart"></label><label>Capacidade diária de rede (km)<input type="number" name="planCapacity" min="0.1" max="250" step="0.001"></label></div><p id="routeDeadline" role="status"></p>
  <div id="routeMissingData" class="route-grid" hidden>
  <label hidden>Localidade ausente na rede<input name="locality"></label>
@@ -92,7 +92,7 @@
  search.onsubmit=e=>{e.preventDefault();clearTimeout(filterTimer);return runFilter(true);};
  async function runFilter(scroll){
   if(job)return;
-  const fields=new FormData(search),blocks=M.codes(fields.get('blocks')),sections=M.sections(fields.getAll('sections')),feeders=M.codes(fields.getAll('feeder').join(' ')),zone=M.key(fields.get('zone'));
+  const fields=new FormData(search),blocks=M.codes(fields.get('blocks')),sections=M.sections(fields.getAll('sections')),feeders=M.codes(fields.get('feeder')),zone=M.key(fields.get('zone'));
   filterRequest++;if(filteredDraft){draft=[];draftId=null;paintDraft();}
   if(blocks.length>500||blocks.some(code=>!M.identifier(code))){searchStatus.textContent='Confira os códigos. Use até 500 chaves.';return;}
   const bounds=fields.has('mapArea')?window.CampoControlMap.routeBounds?.():null;
@@ -157,6 +157,14 @@
   paintDeadline();
   $('routeAssign').textContent=job?'Retomar atribuição':filteredDraft?'Publicar rota filtrada':'Atribuir rota';
   $('routeDraftList').hidden=draft.length>250;
+  const paths=M.pendingPaths(draft,new Map()),stops=M.roadStops(paths),road=$('routeRoad');
+  road.hidden=!stops.length;
+  if(stops.length){
+   $('routeNavigateNext').href=M.streetDirections(stops[0]);
+   const leg=stops.slice(0,5);
+   $('routeRoadTrip').href=leg.length>1?M.streetDirections(leg.at(-1),leg[0],leg.slice(1,-1)):M.streetDirections(leg[0]);
+   $('routeRoadTrip').textContent='Google Maps · trajeto por ruas'+(stops.length>5?' · 1ª etapa de '+Math.ceil((stops.length-1)/4):'');
+  }
   paintCandidates();
   window.CampoControlMap?.routeOverlay?.(draft,null,false,M.bufferMetres(form.elements.buffer.value));
  }
@@ -300,7 +308,7 @@
   const routes=snapshot.routes.filter(r=>(!operator||r.assignee===operator)&&(!q||M.key([r.name,r.feeder,r.locality].join(' ')).includes(q))).sort((a,b)=>a.phase-b.phase);
   const ids=new Set(routes.map(r=>r.id)),visits=snapshot.visits.filter(v=>ids.has(v.routeId)),spans=planned(routes);
   const track=visits.filter(v=>inPeriod(v.day)).reduce((n,v)=>n+(v.trackMetres||0),0);
-  const total=spans.reduce((n,s)=>n+s.metres,0),all=M.coverage(spans,visits).metres,period=M.coverage(spans,visits,v=>inPeriod(v.day)).metres;
+  const total=spans.reduce((n,s)=>n+s.metres,0),allCoverage=M.coverage(spans,visits),periodCoverage=M.coverage(spans,visits,v=>inPeriod(v.day)),all=allCoverage.metres,period=periodCoverage.metres;
   let reconciliation='';
   if(sgm){
    const totals={executed:0,pending:0,none:0,unclassified:0,noDate:0};
@@ -313,15 +321,15 @@
    }
    reconciliation=' · SGM executada no período '+km(totals.executed)+' · pendente na referência '+km(totals.pending)+' · sem OS VERA '+km(totals.none)+' · sem chave '+km(totals.unclassified)+' · demais '+km(totals.noDate);
   }
-  $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
+  $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · crédito paralelo '+km(periodCoverage.sharedMetres)+' · total creditado '+km(period+periodCoverage.sharedMetres)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
   $('routePublished').innerHTML=M.campaignParts(routes).map(parts=>{
    const r=parts[0],routeSpans=parts.flatMap(part=>part.spans),routeIds=new Set(parts.map(part=>part.id));
    const related=visits.filter(v=>routeIds.has(v.routeId)),done=M.coverage(routeSpans,related),last=related.at(-1);
-   const total=M.metres(routeSpans),remaining=Math.max(0,total-done.metres),targets=M.schedule(r.plan,total);
+   const total=M.metres(routeSpans),remaining=Math.max(0,total-done.metres),credited=done.metres+done.sharedMetres,targets=M.schedule(r.plan,total);
    const extras=[...done.shared.values()].filter(peer=>peer.covered>=peer.metres-.001),codes=[...new Set(extras.map(peer=>peer.feeder))];
    const shared=done.sharedMetres?' · '+km(done.sharedMetres)+' de outros alimentadores · '+extras.length+' vãos concluídos'+(codes.length?' ('+codes.join(', ')+')':''):'';
    const inFilter=M.coverage(routeSpans,related,v=>inPeriod(v.day)).metres;
-   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><button type="button" data-route-map="${esc(r.id)}">${remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button></div>`;
+   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><button type="button" data-route-map="${esc(r.id)}">${remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
   paintKpis();
  }
@@ -343,9 +351,9 @@
    const daily=M.dailyCoverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId))),targets=M.schedule(route.plan,M.metres(spans));
    const work=daily.filter(entry=>inPeriod(entry.day)),due=targets.filter(entry=>inPeriod(entry.day)).reduce((sum,entry)=>sum+entry.metres,0);
    if(!work.length&&!due)continue;
-   const done=work.reduce((sum,entry)=>sum+entry.metres,0);
+    const done=work.reduce((sum,entry)=>sum+entry.metres+entry.sharedMetres,0);
    const expected=targets.filter(entry=>entry.day<=asOf).reduce((sum,entry)=>sum+entry.metres,0);
-   const achieved=daily.filter(entry=>entry.day<=asOf).reduce((sum,entry)=>sum+entry.metres,0);
+    const achieved=daily.filter(entry=>entry.day<=asOf).reduce((sum,entry)=>sum+entry.metres+entry.sharedMetres,0);
    if(!rows.has(route.assignee))rows.set(route.assignee,{name:route.operator,due:0,done:0,credited:0,shared:0,track:0,days:new Set(),lag:0,expected:0});
    const row=rows.get(route.assignee);
    row.due+=due;row.done+=done;row.credited+=Math.min(done,due);row.expected+=expected;
@@ -355,7 +363,7 @@
   }
   if(!rows.size){table.textContent='Nenhuma rota com meta ou vistoria no período.';return;}
   const pct=f=>f.toLocaleString('pt-BR',{style:'percent',maximumFractionDigits:1});
-  table.innerHTML='<table><thead><tr><th>Inspetor</th><th>Meta</th><th>Rede vistoriada</th><th>Cumprimento</th><th>Rede compartilhada</th><th>GPS</th><th>Dias de saída</th><th>Situação até a data</th></tr></thead><tbody>'+[...rows.values()].map(row=>'<tr><td>'+esc(row.name)+'</td><td>'+km(row.due)+'</td><td>'+km(row.done)+'</td><td>'+(row.due?pct(row.credited/row.due):'Sem meta')+'</td><td>'+km(row.shared)+'</td><td>'+km(row.track)+'</td><td>'+row.days.size+'</td><td>'+(row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada')+'</td></tr>').join('')+'</tbody></table>';
+   table.innerHTML='<table><thead><tr><th>Inspetor</th><th>Meta</th><th>Rede vistoriada creditada</th><th>Cumprimento</th><th>Desse total, rede paralela</th><th>GPS</th><th>Dias de saída</th><th>Situação até a data</th></tr></thead><tbody>'+[...rows.values()].map(row=>'<tr><td>'+esc(row.name)+'</td><td>'+km(row.due)+'</td><td>'+km(row.done)+'</td><td>'+(row.due?pct(row.credited/row.due):'Sem meta')+'</td><td>'+km(row.shared)+'</td><td>'+km(row.track)+'</td><td>'+row.days.size+'</td><td>'+(row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada')+'</td></tr>').join('')+'</tbody></table>';
  }
  for(const id of ['routeKpiStart','routeKpiEnd','routeKpiOperator'])$(id).addEventListener('input',paintKpis);
  async function refresh(){
@@ -394,9 +402,8 @@
    return true;
   },
   feeders(values){
-   const list=$('routeFeeders'),active=new Set([...list.selectedOptions].map(option=>option.value));
    for(const value of values)if(value)feedersList.add(value);
-   list.replaceChildren(new Option('Todos os alimentadores','',false,active.has('')),...[...feedersList].sort().map(f=>new Option(f,f,false,active.has(f))));
+   $('routeFeederSuggestions').replaceChildren(...[...feedersList].sort().map(f=>new Option(f,f)));
   },
   open(){
    if(location.hash==='#routePlanner')$('routePlan').open=true;

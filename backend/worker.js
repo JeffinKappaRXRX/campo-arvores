@@ -292,7 +292,7 @@ const CampoRoutes=(()=>{
   const days=new Map();
   for(const group of campaignParts(routes.filter(r=>r.assignee===assignee))){
    const ids=new Set(group.map(r=>r.id));
-   for(const entry of dailyCoverage(group.flatMap(r=>r.spans),visits.filter(v=>ids.has(v.routeId))))days.set(entry.day,(days.get(entry.day)||0)+entry.metres);
+   for(const entry of dailyCoverage(group.flatMap(r=>r.spans),visits.filter(v=>ids.has(v.routeId))))days.set(entry.day,(days.get(entry.day)||0)+entry.metres+entry.sharedMetres);
   }
   const last=[...days].sort(([a],[b])=>b.localeCompare(a)).slice(0,20).map(([,m])=>m).sort((a,b)=>a-b);
   const middle=last.length>>1,metres=last.length%2?last[middle]:(last[middle-1]+last[middle])/2;
@@ -332,7 +332,7 @@ async function routeReference(request,env,admin){
  if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Complemento VERA incompleto. Tente novamente.',503);
  return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 }
-const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20261009-vera-20260803-v1';
+const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20260803-v2';
 async function routeGeometry(request,env,admin){
  if(!admin)throw sharedError('Rede MT do planejador restrita à gestão.',403);
  if(request.method!=='GET')throw sharedError('Use GET.',405);
@@ -971,8 +971,8 @@ async function controlAPI(request,env){try{
  if(request.method!=='GET')throw sharedError('Use GET para consultar o painel.',405);
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
- if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.0',at:new Date().toISOString()});}
- if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1';if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(r.archiveCleanupPending)return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
+ if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.1',at:new Date().toISOString()});}
+ if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
  if(p==='/api/control/map'){const data=await controlLiveUniverse(env),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
  let data=p==='/api/control/tree'?await controlLiveUniverse(env):await controlUniverse(env,u.searchParams.get('refresh')==='1');

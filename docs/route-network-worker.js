@@ -1,6 +1,6 @@
 'use strict';
 importScripts('vendor/fflate.js','route-core.js');
-const REVISION='campo-20261009-vera-20260803-v1';
+const REVISION='campo-20260803-v2';
 const endpoint='/api/routes/geometry';
 const zones=['','URBANO','RURAL'];
 let pending;

@@ -8,7 +8,7 @@ async function routeReference(request,env,admin){
  if(parts.some(part=>!part)||parts.reduce((size,part)=>size+part.byteLength,0)!==manifest.size)throw sharedError('Complemento VERA incompleto. Tente novamente.',503);
  return new Response(new Blob(parts),{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 }
-const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20261009-vera-20260803-v1';
+const ROUTE_GEOMETRY_KEY='arbora:route-geometry:campo-20260803-v2';
 async function routeGeometry(request,env,admin){
  if(!admin)throw sharedError('Rede MT do planejador restrita à gestão.',403);
  if(request.method!=='GET')throw sharedError('Use GET.',405);

@@ -283,7 +283,7 @@ const CampoRoutes=(()=>{
   const days=new Map();
   for(const group of campaignParts(routes.filter(r=>r.assignee===assignee))){
    const ids=new Set(group.map(r=>r.id));
-   for(const entry of dailyCoverage(group.flatMap(r=>r.spans),visits.filter(v=>ids.has(v.routeId))))days.set(entry.day,(days.get(entry.day)||0)+entry.metres);
+   for(const entry of dailyCoverage(group.flatMap(r=>r.spans),visits.filter(v=>ids.has(v.routeId))))days.set(entry.day,(days.get(entry.day)||0)+entry.metres+entry.sharedMetres);
   }
   const last=[...days].sort(([a],[b])=>b.localeCompare(a)).slice(0,20).map(([,m])=>m).sort((a,b)=>a-b);
   const middle=last.length>>1,metres=last.length%2?last[middle]:(last[middle-1]+last[middle])/2;
