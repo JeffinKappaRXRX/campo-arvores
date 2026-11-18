@@ -3,6 +3,9 @@ const CampoRoutes=(()=>{
  const FULL=10000;
  const text=(value,max=100)=>String(value??'').trim().slice(0,max);
  const key=value=>text(value,100).toUpperCase();
+ const codes=value=>[...new Set(String(value??'').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+ const sections=values=>[...new Set(values.map(v=>key(v).replace(/^T/,'').trim()).filter(v=>['1','2','3'].includes(v)))].sort();
+ const sectionLabel=route=>(route.sections||[route.section]).map(s=>'T'+s).join(' + ');
  const identifier=value=>/^[A-Za-z0-9_.:-]{1,100}$/.test(value||'');
  const comparePoint=(a,b)=>a[0]-b[0]||a[1]-b[1];
  const distance=(a,b)=>{
@@ -17,8 +20,8 @@ const CampoRoutes=(()=>{
     !Number.isFinite(p[0])||!Number.isFinite(p[1])||Math.abs(p[0])>180||Math.abs(p[1])>90))throw Error('Vão sem ID, extensão ou geometria válida.');
   if(line.every(p=>comparePoint(p,line[0])===0))throw Error('Vão sem geometria linear.');
   const inverted=comparePoint(line[0],line.at(-1))>0;
-  return {id,metres,feeder:key(raw.feeder),locality:key(raw.locality),block:key(raw.block),zone:key(raw.zone),section:key(raw.section).replace(/^T/,''),
-   line:inverted?[...line].reverse():line,reverse:Boolean(raw.reverse)!==inverted};
+  return {id,metres,feeder:key(raw.feeder),locality:key(raw.locality),block:key(raw.block),zone:key(raw.zone),section:key(raw.section).replace(/^T/,'').trim(),
+   ...(raw.estimated?{estimated:true}:{}),line:inverted?[...line].reverse():line,reverse:Boolean(raw.reverse)!==inverted};
  }
  const first=s=>s.line[s.reverse?s.line.length-1:0],last=s=>s.line[s.reverse?0:s.line.length-1];
  function feature(f){
@@ -27,9 +30,45 @@ const CampoRoutes=(()=>{
   const layer=key(f.properties?._class||f.properties?._layer);
   if(layer&&!/(^MT$|VAO.*MT|REDE.*MT)/.test(layer))throw Error('Selecione um vão de MT.');
   const numeric=v=>Number(String(v??'').trim().replace(',','.'));
-  const metres=numeric(p.redecompm??p.comprimentoatual??p.comprimentom??p.comprimento)||numeric(p.redecompkm)*1000;
-  return span({id:p.id??p.idvao,metres,line:f.geometry.coordinates,feeder:p.alimentador??p.feeder,
-   locality:p.localidade??p.cidade,block:p.namebloco??p.bloco,zone:p.zona,section:p.tipotrecho});
+  const recorded=numeric(p.redecompm??p.comprimentoatual??p.comprimentom??p.comprimento??p.extensaom??p.extensao)||numeric(p.redecompkm)*1000;
+  const line=f.geometry.coordinates;
+  const estimated=!(recorded>0);
+  const metres=estimated?line.slice(1).reduce((total,point,i)=>total+distance(line[i],point),0):recorded;
+  const zone=key(p.zona);
+  return span({id:p.id??p.idvao,metres,line,estimated,feeder:p.alimentador??p.feeder,
+   locality:p.localidade??p.cidade,block:p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.tipotrecho??p.trecho])[0]});
+ }
+ function order(spans,keys,start){
+  const rank=new Map(keys.map((k,i)=>[k,i])),groups=new Map(),result=[];
+  for(const s of spans){
+   const group=rank.get(s.block)??keys.length;
+   if(!groups.has(group))groups.set(group,[]);
+   groups.get(group).push(s);
+  }
+  for(const group of [...groups.keys()].sort((a,b)=>a-b)){
+   const pending=groups.get(group).slice(),ends=new Map();
+   const coordinate=p=>p.map(n=>n.toFixed(5)).join(',');
+   for(const s of pending)for(const p of [first(s),last(s)]){
+    const key=coordinate(p);ends.set(key,(ends.get(key)||0)+1);
+   }
+   if(!start){
+    const i=pending.findIndex(s=>ends.get(coordinate(first(s)))===1||ends.get(coordinate(last(s)))===1);
+    const s=pending.splice(Math.max(0,i),1)[0];
+    const reverse=ends.get(coordinate(first(s)))!==1&&ends.get(coordinate(last(s)))===1;
+    const initial={...s,reverse:s.reverse!==reverse};
+    result.push(initial);start=last(initial);
+   }
+   while(pending.length){
+    let nearest=Infinity,index=0,reverse=false;
+    for(const [i,s] of pending.entries()){
+     const a=distance(start,first(s)),b=distance(start,last(s));
+     if(Math.min(a,b)<nearest){nearest=Math.min(a,b);index=i;reverse=b<a;}
+    }
+    const s=pending.splice(index,1)[0],next={...s,reverse:s.reverse!==reverse};
+    result.push(next);start=last(next);
+   }
+  }
+  return result;
  }
  function bounds(intervals){
   return intervals.map(([start,end])=>{
@@ -83,9 +122,9 @@ const CampoRoutes=(()=>{
   return trails.reduce((sum,line)=>sum+line.slice(1).reduce((m,[lat,lon],i)=>m+distance([line[i][1],line[i][0]],[lon,lat]),0),0);
  }
  function phase(zone,section){
-  return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'')]||0;
+  return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,text,key,identifier,distance,first,last,span,feature,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;

@@ -73,7 +73,7 @@
   $('fieldRouteFinal').hidden=!active;
   $('fieldRouteQueue').textContent=(state?.outbox.length||0)+' conclusão(ões) pendente(s) de envio';
   const prior=r?against(r):null;
-  $('fieldRouteSummary').textContent=r?r.locality+' · '+r.feeder+' · T'+r.section+' '+r.zone+' · '+km(prior.metres)+' confirmados · '+km(r.spans.reduce((n,s)=>n+s.metres,0))+' planejados · início '+r.spans[0].id+' · fim '+r.spans.at(-1).id:'Baixe suas rotas com internet antes de sair.';
+  $('fieldRouteSummary').textContent=r?r.locality+' · '+r.feeder+' · '+M.sectionLabel(r)+' '+r.zone+' · '+km(prior.metres)+' confirmados · '+km(r.spans.reduce((n,s)=>n+s.metres,0))+' planejados · início '+r.spans[0].id+' · fim '+r.spans.at(-1).id:'Baixe suas rotas com internet antes de sair.';
   $('fieldRouteItems').innerHTML=r?r.spans.map((s,i)=>{
    const missing=M.remaining(prior.bySpan.get(s.id)),picked=active?.ranges[s.id]||[];
    const gps=session()?.trails?.some(trail=>{

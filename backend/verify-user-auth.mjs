@@ -31,6 +31,17 @@ assert.equal((await call('/api/routes/visit',visit,inspector)).status,200);
 assert.equal((await call('/api/routes/visit',visit,inspector)).status,200);
 assert.equal((await call('/api/routes/visit',{...visit,reason:'inconsistente'},inspector)).status,409);
 assert.equal((await call('/api/routes',undefined,root)).data.visits.length,1);
+const mixed={id:'mixed-route',name:'T1 e T2',assignee:alice.id,fromNetwork:true,locality:'Rio Branco',zone:'URBANO',spans:[
+ {...route.spans[0],locality:'',feeder:'TAN-01I9',section:'1',block:'RBR554'},
+ {...route.spans[0],id:'2581',section:'2',feeder:'FLO-01C3',block:'RBR444'}
+]};
+const mixedResult=await call('/api/routes',mixed,root);
+assert.equal(mixedResult.status,201,JSON.stringify(mixedResult.data));
+assert.deepEqual(mixedResult.data.route.sections,['1','2']);
+assert.equal(mixedResult.data.route.spans[0].locality,'RIO BRANCO');
+assert.deepEqual((await call('/api/routes',undefined,inspector)).data.routes.find(r=>r.id===mixed.id).spans.map(s=>s.block),['RBR554','RBR444']);
+assert.equal((await call('/api/routes',mixed,root)).status,200);
+
 console.log('PASS API: administração, atribuição, autenticação, privacidade e reenvio idempotente.');
 }
 

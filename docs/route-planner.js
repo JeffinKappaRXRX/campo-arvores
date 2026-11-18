@@ -5,48 +5,130 @@
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
  const panel=document.createElement('article');panel.className='panel route-card';panel.id='routePlanner';
  panel.innerHTML=`<div class="panel-head"><h3>Rotas de vistoria</h3><button type="button" id="routeRefresh">Atualizar</button></div>
- <details><summary>Planejar e atribuir</summary><form id="routePlanForm">
- <div class="route-grid"><label>Nome da rota<input name="name" maxlength="100" required></label><label>Inspetor<select name="assignee" required></select></label>
- <label>Localidade<input name="locality" required></label><label>Alimentador<input name="feeder" required></label>
- <label>Zona<select name="zone"><option>Urbano</option><option>Rural</option></select></label>
- <label>Trecho<select name="section"><option value="1">T1</option><option value="2">T2</option><option value="3">T3</option></select></label></div>
- <p>Adicione os vãos MT na ordem da vistoria. Use a rede do mapa ou importe um GeoJSON da rota.</p>
- <div class="route-buttons"><button type="button" id="routePick">Selecionar vãos no mapa</button><label>Importar GeoJSON <input id="routeImport" type="file" accept=".json,.geojson,application/geo+json"></label></div>
+ <details id="routePlan"><summary>Planejar e atribuir rota</summary>
+ <form id="routeNetworkForm">
+ <div class="route-grid">
+ <fieldset class="route-sections"><legend>Trechos da rede</legend>
+ <label><input name="sections" type="checkbox" value="1"> T1</label>
+ <label><input name="sections" type="checkbox" value="2"> T2</label>
+ <label><input name="sections" type="checkbox" value="3"> T3</label></fieldset>
+ <label>Alimentador <input name="feeder" list="routeFeeders" placeholder="Todos" autocomplete="off"><datalist id="routeFeeders"></datalist></label>
+ <label>Zona <select name="zone"><option value="">Todas</option><option value="URBANO">Urbano</option><option value="RURAL">Rural</option></select></label>
+ <label class="route-keys">Chaves <textarea name="blocks" rows="3" placeholder="RBR554&#10;RBR444" aria-describedby="routeKeyHelp"></textarea><small id="routeKeyHelp">Separe por vírgula, espaço ou quebra de linha.</small></label></div>
+ <div class="route-buttons"><button type="submit" class="primary">Filtrar rede</button><button type="button" id="routeClearNetwork">Limpar filtro</button><button type="button" id="routeFilterMap" hidden>Ver no mapa</button></div>
+ </form>
+ <p id="routeNetworkStatus" role="status">Deixe os trechos em branco para incluir todos.</p>
+ <div id="routeMatches" hidden>
+ <div class="route-buttons"><button type="button" id="routeAddAll">Adicionar todos à rota</button></div>
+ <ul id="routeCandidates" class="route-list"></ul></div>
+ <form id="routePlanForm">
+ <div class="route-buttons"><button type="button" id="routePick" aria-pressed="false">Selecionar vãos no mapa</button><label>Importar GeoJSON <input id="routeImport" type="file" accept=".json,.geojson,application/geo+json"></label></div>
  <ol id="routeDraftList" class="route-list"></ol><p id="routePlanned"></p>
- <button type="submit" class="primary">Atribuir rota</button></form></details>
- <p id="routePlannerStatus" role="status"></p>
+ <div class="route-grid"><label>Nome da rota<input name="name" maxlength="100" required></label><label>Inspetor<select name="assignee" required></select></label></div>
+ <div id="routeMissingData" class="route-grid" hidden>
+ <label hidden>Localidade ausente na rede<input name="locality"></label>
+ <label hidden>Alimentador ausente na rede<input name="feeder" list="routeFeeders"></label>
+ <label hidden>Zona ausente na rede<select name="zone"><option value="">Selecione</option><option value="URBANO">Urbano</option><option value="RURAL">Rural</option></select></label>
+ <label hidden>Trecho ausente na rede<select name="section"><option value="">Selecione</option><option value="1">T1</option><option value="2">T2</option><option value="3">T3</option></select></label></div>
+ <button type="submit" class="primary">Atribuir rota</button><p id="routePlannerStatus" role="status"></p></form></details>
+ <details id="routeHistory"><summary>Rotas atribuídas e cobertura</summary>
+
  <div class="route-grid"><label>Dia da vistoria<input id="routeDay" type="date"></label><label>Mês da vistoria<input id="routeMonth" type="month"></label>
  <label>Inspetor<select id="routeOperator"><option value="">Todos</option></select></label><label>Recorte<input id="routeFilter" type="search" placeholder="Localidade, alimentador ou rota"></label>
  <label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
- <p id="routeTotals" aria-live="polite"></p><div id="routePublished"></div>`;
- $('controlMap').before(panel);
- const form=$('routePlanForm'),status=$('routePlannerStatus');
- let draft=[],draftId=null,selecting=false,snapshot={routes:[],visits:[]},sgm=null;
+ <p id="routeTotals" aria-live="polite"></p><div id="routePublished"></div></details>`;
+ $('mapFrame').before(panel);
+ const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
+ let draft=[],candidates=[],filterKeys=[],filterApplied=false,previewComplete=false,filterRequest=0,draftId=null,selecting=false,snapshot={routes:[],visits:[]},sgm=null;
  const planned=routes=>[...new Map(routes.flatMap(r=>r.spans).map(s=>[s.id,s])).values()];
- function paintDraft(){
-  $('routePlanned').textContent=draft.length?km(draft.reduce((n,s)=>n+s.metres,0))+' · início '+draft[0].id+' · fim '+draft.at(-1).id:'Adicione pelo menos um vão.';
-  $('routeDraftList').innerHTML=draft.map((s,i)=>`<li><b>${esc(s.id)}</b> · ${km(s.metres)} · ${esc(s.block)} <button type="button" data-up="${i}" ${i===0?'disabled':''}>Subir</button> <button type="button" data-reverse="${i}">Inverter sentido</button> <button type="button" data-remove="${i}">Remover</button></li>`).join('');
+ function paintCandidates(){
+  const selected=new Set(draft.map(s=>s.id));
+  $('routeMatches').hidden=!candidates.length;
+  $('routeFilterMap').hidden=!candidates.length;
+  $('routeCandidates').innerHTML=candidates.map(({span:s})=>`<li><div><strong>${esc(s.id)}</strong><small>${esc([s.block,s.feeder,s.section?'T'+s.section:'',s.zone].filter(Boolean).join(' · '))}</small><small>${km(s.metres)}${s.estimated?' · pela geometria':''}</small></div><button type="button" data-add="${esc(s.id)}" ${selected.has(s.id)?'disabled':''}>${selected.has(s.id)?'Na rota':'Adicionar'}</button></li>`).join('');
+  const count=candidates.filter(({span})=>!selected.has(span.id)).length;
+  $('routeAddAll').disabled=!previewComplete||!count||count+draft.length>250;
+  $('routeAddAll').textContent=count===0?'Todos já estão na rota':count+draft.length>250?'Selecione até 250 vãos por rota':'Adicionar '+count+' vão(s) à rota';
+ }
+ function clearNetwork(){
+  filterRequest++;filterApplied=false;previewComplete=false;candidates=[];filterKeys=[];
+  window.CampoControlMap?.setRouteFilter(null);
+  search.querySelector('[type=submit]').disabled=false;
+  paintCandidates();
   window.CampoControlMap?.routeOverlay?.(draft,null,false);
  }
- function add(spans){
+ function editedFilters(){
+  clearNetwork();
+  searchStatus.textContent='Filtros alterados. Clique em Filtrar rede.';
+ }
+ search.addEventListener('input',editedFilters);
+ $('routeClearNetwork').onclick=()=>{search.reset();clearNetwork();searchStatus.textContent='Filtro limpo. O mapa voltou a mostrar as camadas da gestão.';};
+ $('routeFilterMap').onclick=()=>window.CampoControlMap?.setRouteFilter(candidates.map(x=>x.feature),true,true);
+ search.onsubmit=async e=>{
+  e.preventDefault();
+  const fields=new FormData(search),blocks=M.codes(fields.get('blocks')),sections=M.sections(fields.getAll('sections')),feeders=M.codes(fields.get('feeder')),zone=M.key(fields.get('zone'));
+  clearNetwork();
+  if(blocks.length>500||feeders.length>30||[...blocks,...feeders].some(code=>!M.identifier(code))){searchStatus.textContent='Confira os códigos. Use até 500 chaves e 30 alimentadores.';return;}
+  if(!blocks.length&&!sections.length&&!feeders.length&&!zone){searchStatus.textContent='Escolha ao menos um trecho, alimentador, zona ou chave.';return;}
+  const serial=filterRequest,button=search.querySelector('[type=submit]');
+  button.disabled=true;searchStatus.textContent='Buscando vãos MT na base instalada…';
+  try{
+   const result=await window.CampoControlMap.routeNetwork({blocks,feeders,sections,zone});
+   if(serial!==filterRequest)return;
+   const unique=new Map();let invalid=0;
+   for(const feature of result.features){
+    try{const span=M.feature(feature);if(!unique.has(span.id))unique.set(span.id,{span,feature});}catch{invalid++;}
+   }
+   const order=new Map(blocks.map((key,i)=>[key,i]));
+   candidates=[...unique.values()].sort((a,b)=>(order.get(a.span.block)??blocks.length)-(order.get(b.span.block)??blocks.length));
+   filterKeys=blocks;filterApplied=true;previewComplete=result.total<=1000&&!result.missingColumns;
+   const count=candidates.length.toLocaleString('pt-BR'),info=[count+' vão(s) selecionável(is) na lista e no mapa.'];
+   if(result.total>1000)info.push(result.total.toLocaleString('pt-BR')+' registros no recorte. Refine os filtros para visualizar todos e liberar a inclusão em lote.');
+   if(result.missing.length)info.push('Chaves sem vãos no recorte: '+result.missing.join(', ')+'.');
+   if(result.missingColumns)info.push('Há camadas MT sem os campos do filtro. Confira a versão da rede.');
+   if(invalid||result.features.length<Math.min(result.total,1000))info.push('Alguns registros estão sem ID, geometria ou extensão utilizável.');
+   searchStatus.textContent=info.join(' ');
+   window.CampoControlMap.setRouteFilter(candidates.map(x=>x.feature),Boolean(candidates.length));
+   paintDraft();
+  }catch(error){if(serial===filterRequest)searchStatus.textContent=error.message;}
+  finally{if(serial===filterRequest)button.disabled=false;}
+ };
+ function addCandidates(spans){try{add(M.order(spans,filterKeys,draft.length?M.last(draft.at(-1)):null),true);}catch(error){status.textContent=error.message;}}
+ $('routeAddAll').onclick=()=>{const selected=new Set(draft.map(s=>s.id));addCandidates(candidates.map(x=>x.span).filter(s=>!selected.has(s.id)));};
+ $('routeCandidates').onclick=e=>{
+  const candidate=candidates.find(x=>x.span.id===e.target.dataset.add);
+  if(candidate)addCandidates([candidate.span]);
+ };
+ function paintDraft(){
+  $('routePlanned').textContent=draft.length?km(draft.reduce((n,s)=>n+s.metres,0))+' · início '+draft[0].id+' · fim '+draft.at(-1).id:'Adicione pelo menos um vão.';
+  $('routeDraftList').innerHTML=draft.map((s,i)=>`<li><b>${esc(s.id)}</b> · ${km(s.metres)}${s.estimated?' (geometria)':''} · ${esc([s.block,s.feeder,s.section?'T'+s.section:''].filter(Boolean).join(' · '))} <button type="button" data-up="${i}" ${i===0?'disabled':''}>Subir</button> <button type="button" data-reverse="${i}">Inverter sentido</button> <button type="button" data-remove="${i}">Remover</button></li>`).join('');
+  let missing=false;
+  for(const field of ['locality','feeder','zone','section']){
+   const input=form.elements[field];
+   const required=draft.some(span=>!span[field]);
+   input.closest('label').hidden=!required;input.required=required;input.disabled=!required;missing||=required;
+  }
+  $('routeMissingData').hidden=!missing;
+  paintCandidates();
+  const matched=new Set(candidates.map(({span})=>span.id));
+  window.CampoControlMap?.routeOverlay?.(filterApplied?draft.filter(s=>matched.has(s.id)):draft,null,false);
+ }
+ function add(spans,ordered=false){
   if(!spans.length)return;
-  const first=spans[0],f=form.elements;
-  if(!f.locality.value)f.locality.value=first.locality;
-  if(!f.feeder.value)f.feeder.value=first.feeder;
-  if(!draft.length&&M.phase(first.zone,first.section)){f.zone.value=first.zone==='RURAL'?'Rural':'Urbano';f.section.value=first.section;}
   const unique=new Map(draft.map(s=>[s.id,s]));
+  let previous=draft.at(-1);
   for(const span of spans){
    if(unique.has(span.id))continue;
-   const previous=[...unique.values()].at(-1);
-   if(previous&&M.distance(M.last(previous),M.last(span))<M.distance(M.last(previous),M.first(span)))span.reverse=!span.reverse;
-   unique.set(span.id,span);
+   const reverse=!ordered&&previous&&M.distance(M.last(previous),M.last(span))<M.distance(M.last(previous),M.first(span));
+   previous=reverse?{...span,reverse:!span.reverse}:span;
+   unique.set(span.id,previous);
   }
   if(unique.size>250)throw Error('Divida o planejamento em rotas de até 250 vãos.');
   draft=[...unique.values()];draftId=null;paintDraft();
   status.textContent=draft.length+' vão(s) no plano.';
  }
  $('routePick').onclick=()=>{
-  selecting=!selecting;$('routePick').textContent=selecting?'Encerrar seleção':'Selecionar vãos no mapa';
+  selecting=!selecting;$('routePick').setAttribute('aria-pressed',selecting);$('routePick').textContent=selecting?'Encerrar seleção':'Selecionar vãos no mapa';
   status.textContent=selecting?'Clique nos vãos da rede MT abaixo. A ordem dos cliques define a rota.':'Seleção encerrada.';
  };
  $('routeImport').onchange=async e=>{
@@ -72,8 +154,9 @@
    const gaps=draft.slice(1).filter((s,i)=>M.distance(M.last(draft[i]),M.first(s))>25);
    if(gaps.length&&!confirm('Há '+gaps.length+' salto(s) entre vãos. Publique assim se houver deslocamento planejado entre eles.'))return;
    draftId??=crypto.randomUUID();
-   await api('/api/routes',{...Object.fromEntries(new FormData(form)),id:draftId,spans:draft});
-   draft=[];draftId=null;form.reset();paintDraft();await refresh();status.textContent='Rota publicada para o inspetor baixar.';
+   await api('/api/routes',{...Object.fromEntries(new FormData(form)),id:draftId,fromNetwork:true,spans:draft});
+   draft=[];draftId=null;form.reset();paintDraft();status.textContent='Rota publicada para o inspetor baixar em Minhas rotas.';
+   try{await refresh();}catch{status.textContent+=' Use Atualizar para recarregar a lista de rotas.';}
   }catch(error){status.textContent=error.message;}finally{button.disabled=false;}
  };
  function parseSgm(source){
@@ -133,12 +216,13 @@
   $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
   $('routePublished').innerHTML=routes.map(r=>{
    const related=visits.filter(v=>v.routeId===r.id),done=M.coverage(r.spans,related),last=related.at(-1),miss=r.spans.filter(s=>M.remaining(done.bySpan.get(s.id)).length);
-   return `<div class="route-result"><strong>${esc(r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · T${esc(r.section)} ${esc(r.zone)} · ${esc(r.operator)}</small><p>${km(done.metres)} confirmados · ${miss.length} vão(s) com pendência${last?' · última em '+esc(last.day):''}</p><button type="button" data-route-map="${esc(r.id)}">${miss.length?'Ver de onde retomar':'Ver cobertura'}</button></div>`;
+   return `<div class="route-result"><strong>${esc(r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p>${km(done.metres)} confirmados · ${miss.length} vão(s) com pendência${last?' · última em '+esc(last.day):''}</p><button type="button" data-route-map="${esc(r.id)}">${miss.length?'Ver de onde retomar':'Ver cobertura'}</button></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
  }
  $('routePublished').onclick=e=>{
   const route=snapshot.routes.find(r=>r.id===e.target.dataset.routeMap);if(!route)return;
   const cover=M.coverage(route.spans,snapshot.visits.filter(v=>v.routeId===route.id));
+  clearNetwork();
   window.CampoControlMap?.routeOverlay?.(route.spans,cover.bySpan,true);
  };
  async function refresh(){
@@ -152,15 +236,17 @@
   paint();
  }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
- $('routeRefresh').onclick=load;panel.querySelector('details').addEventListener('toggle',e=>{if(e.target.open)load();});
+ $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();else if(e.target.id==='routePlan'&&filterApplied)clearNetwork();});
  for(const id of ['routeDay','routeMonth','routeOperator','routeFilter'])$(id).addEventListener('input',()=>{
   if(id==='routeDay'&&$(id).value)$('routeMonth').value='';
   if(id==='routeMonth'&&$(id).value)$('routeDay').value='';
   paint();
  });
+ paintDraft();
  window.CampoRoutePlanner={
-  select(f){if(!selecting)return false;try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;},
+  select(f){if(!$('routePlan').open||(!selecting&&!filterApplied))return false;try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;},
+  feeders(values){$('routeFeeders').replaceChildren(...values.map(f=>new Option(f,f)));},
   open:load,
-  stop(){selecting=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};sgm=null;form.reset();paintDraft();paint();}
+  stop(){selecting=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};sgm=null;form.reset();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();

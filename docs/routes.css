@@ -8,3 +8,16 @@
 .route-card .route-result{padding:.75rem 0;border-top:1px solid var(--line,#879990)}
 .route-result small{display:block}
 #fieldRouteMap{height:clamp(19rem,44vh,31rem);border:1px solid var(--line,#879990);border-radius:.7rem;background:#e5eee5}
+
+.route-card .route-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr))}
+.route-card fieldset{margin:0;padding:.35rem .7rem .55rem;border:1px solid var(--line);border-radius:.5rem;min-width:0}
+.route-card .route-sections label{display:inline-flex;align-items:center;margin:.1rem .7rem .1rem 0}
+.route-card .route-sections input{width:1rem;min-height:1rem;margin:0;accent-color:#338c69}
+.route-card .route-keys{grid-column:1/-1}
+.route-card textarea{width:100%;resize:vertical;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:.5rem;padding:.55rem}
+.route-card form+form,.route-card #routeMatches+form{margin-top:1rem}
+#routeCandidates{padding:0;list-style:none;max-height:16rem}
+#routeCandidates li{display:flex;justify-content:space-between;align-items:center;gap:.8rem;border-bottom:1px solid var(--line)}
+#routeCandidates small{display:block;margin-top:.15rem}
+#routeNetworkStatus,#routePlannerStatus{overflow-wrap:anywhere}
+#mapFrame.route-network-active :is(.leaflet-controlTrees-pane,.leaflet-parqueTrees-pane,.leaflet-controlLabels-pane){visibility:hidden}

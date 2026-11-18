@@ -24,16 +24,25 @@ async function routeAPI(request,env){
   if(path==='/api/routes'&&admin){
    const {id,assignee}=input||{};
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(assignee)||!Array.isArray(input.spans)||!input.spans.length||input.spans.length>250)throw sharedError('Informe o inspetor e até 250 vãos.');
-   const name=CampoRoutes.text(input.name),locality=CampoRoutes.key(input.locality),feeder=CampoRoutes.key(input.feeder),zone=CampoRoutes.key(input.zone),section=CampoRoutes.key(input.section).replace(/^T/,'');
-   const phase=CampoRoutes.phase(zone,section);
-   if(!name||!locality||!feeder||!phase)throw sharedError('Informe nome, localidade, alimentador, zona e trecho.');
+   const {text,key,phase:priority,sections:validSections}=CampoRoutes;
+   const name=text(input.name),fallback={locality:key(input.locality),feeder:key(input.feeder),zone:key(input.zone),section:key(input.section).replace(/^T/,'')};
    let spans;
    try{spans=input.spans.map(CampoRoutes.span);}catch(error){throw sharedError(error.message);}
-   if(new Set(spans.map(s=>s.id)).size!==spans.length||spans.some(s=>s.feeder&&s.feeder!==feeder||s.locality&&s.locality!==locality||s.zone&&s.zone!==zone||s.section&&s.section!==section))throw sharedError('Revise vãos repetidos ou fora do recorte.');
+   const derive=input.fromNetwork===true;
+   if(derive)spans=spans.map(s=>({...s,locality:s.locality||fallback.locality,feeder:s.feeder||fallback.feeder,zone:s.zone||fallback.zone,section:s.section||fallback.section}));
+   if(!name||new Set(spans.map(s=>s.id)).size!==spans.length)throw sharedError('Informe o nome da rota e revise os vãos repetidos.');
+   if(derive&&spans.some(s=>!s.feeder||!s.locality||!priority(s.zone,s.section)))throw sharedError('Complete os dados ausentes na rede: localidade, alimentador, zona ou trecho.');
+   if(!derive&&(!fallback.locality||!fallback.feeder||!priority(fallback.zone,fallback.section)||spans.some(s=>Object.keys(fallback).some(k=>s[k]&&s[k]!==fallback[k]))))throw sharedError('Revise localidade, alimentador, zona e trecho dos vãos.');
+   const values=field=>[...new Set(spans.map(s=>s[field]))].sort();
+   const sections=derive?validSections(values('section')):[fallback.section];
+   const locality=derive?values('locality').join(' / '):fallback.locality;
+   const feeder=derive?values('feeder').join(' / '):fallback.feeder;
+   const zone=derive?values('zone').join(' / '):fallback.zone;
+   const section=sections[0],phase=derive?Math.min(...spans.map(s=>priority(s.zone,s.section))):priority(zone,section);
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
    await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,phase,spans,createdAt:now};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now};
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
    return json({route},201);
