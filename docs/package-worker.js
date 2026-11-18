@@ -87,7 +87,7 @@ function routeNetwork({blocks=[],feeders=[],sections=[],zone=''}){
  if(blocks.length>500||feeders.length>30||sections.length>3)throw Error('Reduza o filtro de rede.');
  const layers=currentLayers.filter(l=>l.classification==='MT'||(!l.classification&&/VAO.*MT|VAO.*REDE.*PRIM/i.test(l.table_name.normalize('NFD').replace(/[\u0300-\u036f]/g,''))));
  if(!layers.length)throw Error('A base instalada precisa de uma camada de vãos MT.');
- const features=[],found=new Set(),limit=1000;
+ const features=[],found=new Set(),limit=10000;
  let total=0,missingColumns=false;
  for(const layer of layers){
   const columns=layer.columns||rows(sourceDb,'PRAGMA table_info('+q(layer.table_name)+')').map(r=>r.name);
@@ -112,5 +112,5 @@ function routeNetwork({blocks=[],feeders=[],sections=[],zone=''}){
   const stmt=sourceDb.prepare('SELECT rowid AS _campo_rid,*'+from+' ORDER BY rowid LIMIT '+(limit-features.length)).bind(bind);
   try{while(stmt.step()){const feature=rowFeature(layer,stmt.get({}),transform);if(feature)features.push(feature);}}finally{stmt.finalize();}
  }
- return {features,total,missing:blocks.filter(code=>!found.has(code)),missingColumns};
+ return {features,total,capped:total>limit,missing:blocks.filter(code=>!found.has(code)),missingColumns};
 }

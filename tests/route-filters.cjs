@@ -44,13 +44,14 @@ const read=file=>fs.readFileSync(file,'utf8');
 
  const dom=new JSDOM('<main><div id="mapFrame"><div id="controlMap"></div></div></main>',{runScripts:'outside-only',url:'https://campo.test'});
  const w=dom.window,d=w.document,$=id=>d.getElementById(id);
- let onMap,submitted;
+ let onMap,submitted,response=network,failPart=false;
+ const attempts=[];
  w.CampoControl={authorized:()=>true,api:async(path,body)=>{
-  if(body){submitted=JSON.parse(JSON.stringify(body));return {};}
+  if(body){submitted=JSON.parse(JSON.stringify(body));attempts.push(submitted);if(failPart&&body.name.endsWith("(2/2)"))throw Error("Rede indisponível");return {};}
   return path.endsWith('users')?{users:[{id:'inspetor',name:'Inspetor',passwordConfigured:true}]}:{routes:[],visits:[]};
  }};
- w.CampoControlMap={routeNetwork:async filters=>{assert.deepEqual(JSON.parse(JSON.stringify(filters)),expected);return network;},setRouteFilter:features=>{onMap=features?Array.from(features,f=>f.properties.Id):undefined;},routeOverlay(){}};
- w.confirm=()=>true;
+ w.CampoControlMap={routeNetwork:async filters=>{assert.deepEqual(JSON.parse(JSON.stringify(filters)),expected);return response;},setRouteFilter:features=>{onMap=features?Array.from(features,f=>f.properties.Id):undefined;},routeOverlay(){}};
+ w.confirm=()=>true;w.TextEncoder=TextEncoder;
  for(const f of ['docs/route-core.js','docs/route-planner.js'])vm.runInContext(read(f),dom.getInternalVMContext());
  assert.equal($('routePlanner').nextElementSibling,$('mapFrame'));
  $('routePlan').open=true;
@@ -70,6 +71,23 @@ const read=file=>fs.readFileSync(file,'utf8');
  assert.equal(submitted.fromNetwork,true);
  assert.deepEqual(submitted.spans.map(s=>s.section),['1','2']);
  assert.deepEqual(submitted.spans.map(s=>s.block),['RBR554','RBR444']);
+ const all=Array.from({length:251},(_,i)=>({...network.features[0],properties:{...network.features[0].properties,Id:String(2000+i),'Rede Comp M':30}}));
+ response={...network,features:all,total:all.length};
+ filter.elements.feeder.value='TAN-01I9';filter.elements.zone.value='URBANO';filter.elements.blocks.value='rbr554 rbr444 rbr999';
+ filter.querySelector('[value="1"]').checked=true;filter.querySelector('[value="2"]').checked=true;
+ await filter.onsubmit(new w.Event('submit'));
+ assert.equal(onMap.length,251);
+ assert.match($('routeNetworkStatus').textContent,/7,530 km/);
+ $('routeAddAll').click();
+ form.elements.name.value='Alimentador inteiro';form.elements.assignee.value='inspetor';form.elements.locality.value='Rio Branco';
+ failPart=true;
+ await form.onsubmit(new w.Event('submit'));
+ assert.equal(attempts.at(-2).spans.length,250);
+ assert.equal(attempts.at(-1).spans.length,1);
+ assert.equal($('routeAssign').textContent,'Retomar atribuição');
+ failPart=false;
+ await form.onsubmit(new w.Event('submit'));
+ assert.deepEqual(attempts.at(-1),attempts.at(-2));
  dom.window.close();db.close();
  console.log('PASS: filtro SQL exato no MT, T1 + T2, alimentador, zona, chaves ausentes, lista/mapa e atribuição.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -4,8 +4,18 @@
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
  const panel=$('fieldRoutes'),status=$('fieldRouteStatus');
- let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0;
+ let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0,routeGeometry=null,coverageInput={},fieldOverlay=null,googleOverlay=null;
  const identity=()=>window.CampoAccount?.current()?.id;
+ const partOf=route=>/^([a-f0-9-]{36})-([1-9]\d*)$/i.exec(route.id);
+ function orderedRoutes(routes){
+  const groups=new Map();
+  for(const route of routes){
+   const group=partOf(route)?.[1]||route.id;
+   if(!groups.has(group))groups.set(group,[]);
+   groups.get(group).push(route);
+  }
+  return [...groups.values()].flatMap(parts=>parts.sort((a,b)=>Number(partOf(a)?.[2]||0)-Number(partOf(b)?.[2]||0)));
+ }
  const blank=()=>({routes:[],visits:[],outbox:[],session:null});
  async function save(next){
   const actor=owner,version=state?.version||0;
@@ -30,7 +40,8 @@
   const turn=++loadEpoch;
   const saved=await req('meta','readonly',store=>store.get(dbKey+':'+next));
   if(turn!==loadEpoch||identity()!==next)return;
-  owner=next;state=saved||blank();selected=state.session?.routeId||state.routes[0]?.id||null;currentGPS=null;
+  const last=owner===next?selected:null;
+  owner=next;state=saved||blank();selected=state.session?.routeId||(state.routes.some(r=>r.id===last)?last:orderedRoutes(state.routes)[0]?.id)||null;currentGPS=null;
   paint();
  }
  const against=route=>M.coverage(route.spans,[...state.visits,...state.outbox].filter(v=>v.routeId===route.id));
@@ -52,7 +63,7 @@
    if(owner!==actor||identity()!==actor)return;
    const receipts=new Set(remote.visits.map(v=>v.id)),next={...state,routes:remote.routes,visits:remote.visits,outbox:state.outbox.filter(v=>!receipts.has(v.id))};
    await save(next);state=next;
-   if(!route())selected=state.session?.routeId||state.routes[0]?.id||null;
+   if(!route())selected=state.session?.routeId||orderedRoutes(state.routes)[0]?.id||null;
    paint();status.textContent=state.outbox.length?'Ainda há conclusões pendentes de confirmação.':'Rotas atualizadas. Conclusões recebidas pelo painel.';
   }catch(error){status.textContent=error.message+' Os dados locais continuam salvos.';}finally{refreshing=false;}
  }
@@ -66,14 +77,33 @@
  function paint(fit=true){
   const r=route(),active=session();
   $('fieldRouteSelect').replaceChildren(new Option('Selecione uma rota',''));
-  for(const item of state?.routes||[])$('fieldRouteSelect').add(new Option(item.name+' · '+item.feeder,item.id));
+  for(const item of orderedRoutes(state?.routes||[]))$('fieldRouteSelect').add(new Option(item.name+' · '+item.feeder,item.id));
   $('fieldRouteSelect').value=r?.id||'';
   $('fieldRouteSelect').disabled=Boolean(state?.session);
   $('fieldRouteStart').disabled=!r||Boolean(state?.session);
   $('fieldRouteFinal').hidden=!active;
   $('fieldRouteQueue').textContent=(state?.outbox.length||0)+' conclusão(ões) pendente(s) de envio';
   const prior=r?against(r):null;
-  $('fieldRouteSummary').textContent=r?r.locality+' · '+r.feeder+' · '+M.sectionLabel(r)+' '+r.zone+' · '+km(prior.metres)+' confirmados · '+km(r.spans.reduce((n,s)=>n+s.metres,0))+' planejados · início '+r.spans[0].id+' · fim '+r.spans.at(-1).id:'Baixe suas rotas com internet antes de sair.';
+  const total=r?M.metres(r.spans):0;
+  const estimate=r?M.metres(r.spans.filter(s=>s.estimated)):0;
+  const street=$('fieldRouteStreet'),legend=$('fieldRouteMapLegend');
+  if(street)street.hidden=!r;
+  if(legend){legend.hidden=!r;legend.textContent=r?'Minha rota · '+km(total)+' de rede · verde: confirmado':'';}
+  if(r&&street){
+   const next=r.spans.map(s=>({s,remaining:M.remaining(M.merge([...(prior.bySpan.get(s.id)||[]),...(active?.ranges[s.id]||[])]))})).find(item=>item.remaining.length);
+   const a=M.first(r.spans[0]),b=M.last(r.spans.at(-1));
+   const start=next?.remaining.at(next.s.reverse?-1:0);
+   const point=start?M.portion(next.s,...start).at(next.s.reverse?-1:0):a;
+   $('fieldRouteNavigate').textContent=next?'Google Maps · ir ao próximo ponto':'Google Maps · ir ao início';
+   $('fieldRouteNavigate').href=M.streetDirections(point);
+   $('fieldRouteRoadTrip').href=M.streetDirections(b,a);
+  }
+  if(r!==coverageInput.route||active?.ranges!==coverageInput.ranges||state?.visits!==coverageInput.visits||state?.outbox!==coverageInput.outbox){
+   coverageInput={route:r,ranges:active?.ranges,visits:state?.visits,outbox:state?.outbox};
+   routeGeometry=r?M.mapLines(r.spans,prior.bySpan,active?.ranges):null;
+  }
+  refreshFieldOverlay();
+  $('fieldRouteSummary').textContent=r?r.locality+' · '+r.feeder+' · '+M.sectionLabel(r)+' '+r.zone+' · '+km(total)+' de rede planejada · '+km(prior.metres)+' de rede confirmada · '+km(Math.max(0,total-prior.metres))+' de rede restante · início '+r.spans[0].id+' · fim '+r.spans.at(-1).id:'Baixe suas rotas com internet antes de sair.';
   $('fieldRouteItems').innerHTML=r?r.spans.map((s,i)=>{
    const missing=M.remaining(prior.bySpan.get(s.id)),picked=active?.ranges[s.id]||[];
    const gps=session()?.trails?.some(trail=>{
@@ -91,21 +121,65 @@
    ${active&&missing.length?missing.map(([a,b])=>{const [x,y]=dir(a,b);return ` <button type="button" data-route-range="${i},${a},${b}">Confirmar ${x/100}%–${y/100}%</button>`;}).join('')+` <button type="button" data-route-part="${i}">Marcar parte</button>`:''}
    ${picked.length?` <button type="button" data-route-clear="${i}">Desmarcar</button>`:''}</li>`;
   }).join(''):'';
+  const group=r&&partOf(r)?.[1];
+  if(group)$('fieldRouteSummary').textContent+=' · '+km(M.metres(state.routes.filter(item=>partOf(item)?.[1]===group).flatMap(item=>item.spans)))+' no conjunto atribuído';
+  if(estimate)$('fieldRouteSummary').textContent+=' · '+km(estimate)+' estimados pela geometria';
   if(active)$('fieldRouteSummary').textContent+=' · '+km(M.trailMetres(active.trails))+' de trilha GPS nesta saída';
-  if(!panel.hidden)paintMap(r,prior,fit);
+  if(!panel.hidden)paintMap(r,fit);
  }
- function paintMap(r,prior,fit){
+ function drawLeaflet(target,geometry,pane){
+  const group=L.featureGroup().addTo(target),style={pane,interactive:false};
+  for(const [key,color] of [['pending',M.pendingColor],['confirmed',M.confirmedColor]]){
+   if(!geometry[key].length)continue;
+   const lines=geometry[key].map(line=>line.map(([lon,lat])=>[lat,lon]));
+   L.polyline(lines,{...style,color:M.haloColor,weight:14,opacity:.82}).addTo(group);
+   L.polyline(lines,{...style,color,weight:7,opacity:1}).addTo(group);
+  }
+  return group;
+ }
+ function refreshFieldOverlay(){
+  if(typeof fieldMap!=='undefined'&&fieldMap&&fieldOverlay?.geometry!==routeGeometry){
+   fieldOverlay?.group?.remove();
+   if(!fieldMap.getPane('myInspectionRoute'))fieldMap.createPane('myInspectionRoute').style.zIndex='455';
+   fieldOverlay={geometry:routeGeometry,group:routeGeometry?drawLeaflet(fieldMap,routeGeometry,'myInspectionRoute'):null};
+  }
+  if(typeof google!=='undefined'&&typeof googleMap!=='undefined'&&googleMap&&googleOverlay?.geometry!==routeGeometry){
+   for(const overlay of googleOverlay?.layers||[])overlay.setMap(null);
+   const layers=[];
+   if(routeGeometry){
+    for(const halo of [true,false]){
+     const overlay=new google.maps.Data({map:googleMap});
+     overlay.addGeoJson({type:'FeatureCollection',features:Object.entries(routeGeometry).filter(([,lines])=>lines.length).map(([key,lines])=>({type:'Feature',geometry:{type:'MultiLineString',coordinates:lines},properties:{key}}))});
+     overlay.setStyle(feature=>({clickable:false,strokeColor:halo?M.haloColor:feature.getProperty('key')==='confirmed'?M.confirmedColor:M.pendingColor,strokeWeight:halo?14:7,strokeOpacity:halo ? .82 : 1,zIndex:halo?10:11}));
+     layers.push(overlay);
+    }
+   }
+   googleOverlay={geometry:routeGeometry,layers};
+  }
+ }
+ window.CampoFieldRouteMap={refresh:refreshFieldOverlay};
+ $('fieldRouteOpenMap')?.addEventListener('click',()=>{
+  if(!route()||typeof view!=='function'||typeof fieldMap==='undefined'||!fieldMap)return;
+  view('inspect');
+  if($('inspect').hidden)return;
+  setMapFullscreen(true);
+  setTimeout(()=>{
+   fieldMap.invalidateSize();refreshFieldOverlay();
+   const bounds=fieldOverlay?.group?.getBounds();
+   if(!bounds?.isValid())return;
+   fieldMap.fitBounds(bounds,{padding:[45,55],maxZoom:18});
+   if(typeof google!=='undefined'&&typeof googleMap!=='undefined'&&googleMap&&!$('googleMap').hidden){
+    googleMap.fitBounds({west:bounds.getWest(),east:bounds.getEast(),south:bounds.getSouth(),north:bounds.getNorth()},55);
+   }
+   requestNetworkView();
+  },80);
+ });
+ function paintMap(r,fit){
   if(typeof L==='undefined')return;
   const target=$('fieldRouteMap');target.hidden=!r;
-  if(!r)return;
+  if(!r){layer?.remove();layer=null;return;}
   if(!map){map=L.map(target,{attributionControl:false,preferCanvas:true}).setView([-9.97,-67.81],13);L.control.scale({imperial:false}).addTo(map);}
-  map.invalidateSize();if(layer)layer.remove();layer=L.featureGroup().addTo(map);
-  const confirmed=new Map(prior.bySpan);
-  for(const s of r.spans){
-   const intervals=M.merge([...(confirmed.get(s.id)||[]),...(session()?.ranges[s.id]||[])]);
-   for(const [ranges,color] of [[M.remaining(intervals),'#cc5614'],[intervals,'#178047']])
-    for(const [a,b]of ranges)L.polyline(M.portion(s,a,b).map(([x,y])=>[y,x]),{color,weight:6}).addTo(layer);
-  }
+  map.invalidateSize();if(layer)layer.remove();layer=drawLeaflet(map,routeGeometry,'overlayPane');
   for(const [name,p]of [['Início',M.first(r.spans[0])],['Fim',M.last(r.spans.at(-1))]])L.circleMarker([p[1],p[0]],{radius:6}).addTo(layer).bindTooltip(name,{permanent:true});
   if(currentGPS)L.circleMarker([currentGPS.lat,currentGPS.lon],{radius:5,color:'#1a5fb4'}).addTo(layer);
   for(const trail of session()?.trails||[])if(trail.length>1)L.polyline(trail,{color:'#265fc2',weight:2,opacity:.7}).addTo(layer);

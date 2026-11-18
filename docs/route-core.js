@@ -38,14 +38,42 @@ const CampoRoutes=(()=>{
   return span({id:p.id??p.idvao,metres,line,estimated,feeder:p.alimentador??p.feeder,
    locality:p.localidade??p.cidade,block:p.namebloco??p.bloco??p.chave,zone:['URBANO','RURAL'].includes(zone)?zone:'',section:sections([p.tipotrecho??p.trecho])[0]});
  }
+ const metres=spans=>spans.reduce((sum,span)=>sum+span.metres,0);
+ const pendingColor='#ee344a',confirmedColor='#168756',haloColor='#fff4f0';
+ function mapLines(spans,coverage,marked={}){
+  const lines={pending:[],confirmed:[]};
+  for(const span of spans){
+   const ranges=merge([...(coverage?.get(span.id)||[]),...(Object.hasOwn(marked,span.id)?marked[span.id]:[])]);
+   for(const [state,items] of [['pending',remaining(ranges)],['confirmed',ranges]])
+    for(const [a,b] of items)lines[state].push(portion(span,a,b));
+  }
+  return lines;
+ }
+ function streetDirections(destination,origin){
+  const coords=([lon,lat])=>lat.toFixed(6)+','+lon.toFixed(6);
+  const options=new URLSearchParams({api:'1',destination:coords(destination),travelmode:'driving'});
+  if(origin)options.set('origin',coords(origin));else options.set('dir_action','navigate');
+  return 'https://www.google.com/maps/dir/?'+options;
+ }
+ function routeParts(spans){
+  const parts=[];let part=[],bytes=0;
+  const encoder=new TextEncoder();
+  for(const span of spans){
+   const size=encoder.encode(JSON.stringify(span)).length+1;
+   if(part.length===250||bytes+size>440000){parts.push(part);part=[];bytes=0;}
+   part.push(span);bytes+=size;
+  }
+  if(part.length)parts.push(part);
+  return parts;
+ }
  function order(spans,keys,start){
   const rank=new Map(keys.map((k,i)=>[k,i])),groups=new Map(),result=[];
   for(const s of spans){
-   const group=rank.get(s.block)??keys.length;
+   const group=rank.has(s.block)?rank.get(s.block):s.feeder+"|"+s.block;
    if(!groups.has(group))groups.set(group,[]);
    groups.get(group).push(s);
   }
-  for(const group of [...groups.keys()].sort((a,b)=>a-b)){
+  for(const group of [...groups.keys()].sort((a,b)=>(typeof a==='number'?a:keys.length)-(typeof b==='number'?b:keys.length))){
    const pending=groups.get(group).slice(),ends=new Map();
    const coordinate=p=>p.map(n=>n.toFixed(5)).join(',');
    for(const s of pending)for(const p of [first(s),last(s)]){
@@ -125,6 +153,6 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,metres,mapLines,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;

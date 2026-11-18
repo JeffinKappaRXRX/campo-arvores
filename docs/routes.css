@@ -20,4 +20,7 @@
 #routeCandidates li{display:flex;justify-content:space-between;align-items:center;gap:.8rem;border-bottom:1px solid var(--line)}
 #routeCandidates small{display:block;margin-top:.15rem}
 #routeNetworkStatus,#routePlannerStatus{overflow-wrap:anywhere}
-#mapFrame.route-network-active :is(.leaflet-controlTrees-pane,.leaflet-parqueTrees-pane,.leaflet-controlLabels-pane){visibility:hidden}
+#routeMapLegend,#fieldRouteMapLegend{font-weight:700;line-height:1.45}
+.route-legend-mark::before{content:'';display:inline-block;width:1.4em;height:.32em;background:#ee344a;box-shadow:0 0 0 2px #fff4f0;border-radius:.2em;margin-right:.6em;vertical-align:.18em}
+#fieldRouteMapLegend{font-size:clamp(.67rem,1.4vw,.82rem)}
+#fieldRouteStreet a{display:inline-block;padding:.6rem .85rem;border:1px solid currentColor;border-radius:.55rem}

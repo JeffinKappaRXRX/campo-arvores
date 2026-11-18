@@ -17,9 +17,10 @@
  <label class="route-keys">Chaves <textarea name="blocks" rows="3" placeholder="RBR554&#10;RBR444" aria-describedby="routeKeyHelp"></textarea><small id="routeKeyHelp">Separe por vírgula, espaço ou quebra de linha.</small></label></div>
  <div class="route-buttons"><button type="submit" class="primary">Filtrar rede</button><button type="button" id="routeClearNetwork">Limpar filtro</button><button type="button" id="routeFilterMap" hidden>Ver no mapa</button></div>
  </form>
+ <p id="routeMapLegend" class="route-legend-mark" hidden>Vermelho com halo: rede filtrada para vistoria. A rede de referência continua visível.</p>
  <p id="routeNetworkStatus" role="status">Deixe os trechos em branco para incluir todos.</p>
  <div id="routeMatches" hidden>
- <div class="route-buttons"><button type="button" id="routeAddAll">Adicionar todos à rota</button></div>
+ <div class="route-buttons"><button type="button" id="routeAddAll">Atribuir rota filtrada</button></div>
  <ul id="routeCandidates" class="route-list"></ul></div>
  <form id="routePlanForm">
  <div class="route-buttons"><button type="button" id="routePick" aria-pressed="false">Selecionar vãos no mapa</button><label>Importar GeoJSON <input id="routeImport" type="file" accept=".json,.geojson,application/geo+json"></label></div>
@@ -30,7 +31,7 @@
  <label hidden>Alimentador ausente na rede<input name="feeder" list="routeFeeders"></label>
  <label hidden>Zona ausente na rede<select name="zone"><option value="">Selecione</option><option value="URBANO">Urbano</option><option value="RURAL">Rural</option></select></label>
  <label hidden>Trecho ausente na rede<select name="section"><option value="">Selecione</option><option value="1">T1</option><option value="2">T2</option><option value="3">T3</option></select></label></div>
- <button type="submit" class="primary">Atribuir rota</button><p id="routePlannerStatus" role="status"></p></form></details>
+ <button type="submit" class="primary" id="routeAssign">Atribuir rota</button><p id="routePlannerStatus" role="status"></p></form></details>
  <details id="routeHistory"><summary>Rotas atribuídas e cobertura</summary>
 
  <div class="route-grid"><label>Dia da vistoria<input id="routeDay" type="date"></label><label>Mês da vistoria<input id="routeMonth" type="month"></label>
@@ -39,19 +40,19 @@
  <p id="routeTotals" aria-live="polite"></p><div id="routePublished"></div></details>`;
  $('mapFrame').before(panel);
  const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
- let draft=[],candidates=[],filterKeys=[],filterApplied=false,previewComplete=false,filterRequest=0,draftId=null,selecting=false,snapshot={routes:[],visits:[]},sgm=null;
+ let draft=[],candidates=[],filterKeys=[],previewComplete=false,filterRequest=0,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null;
  const planned=routes=>[...new Map(routes.flatMap(r=>r.spans).map(s=>[s.id,s])).values()];
  function paintCandidates(){
   const selected=new Set(draft.map(s=>s.id));
+  $('routeMapLegend').hidden=!candidates.length;
   $('routeMatches').hidden=!candidates.length;
   $('routeFilterMap').hidden=!candidates.length;
-  $('routeCandidates').innerHTML=candidates.map(({span:s})=>`<li><div><strong>${esc(s.id)}</strong><small>${esc([s.block,s.feeder,s.section?'T'+s.section:'',s.zone].filter(Boolean).join(' · '))}</small><small>${km(s.metres)}${s.estimated?' · pela geometria':''}</small></div><button type="button" data-add="${esc(s.id)}" ${selected.has(s.id)?'disabled':''}>${selected.has(s.id)?'Na rota':'Adicionar'}</button></li>`).join('');
-  const count=candidates.filter(({span})=>!selected.has(span.id)).length;
-  $('routeAddAll').disabled=!previewComplete||!count||count+draft.length>250;
-  $('routeAddAll').textContent=count===0?'Todos já estão na rota':count+draft.length>250?'Selecione até 250 vãos por rota':'Adicionar '+count+' vão(s) à rota';
+  $('routeCandidates').innerHTML=candidates.slice(0,250).map(({span:s})=>`<li><div><strong>${esc(s.id)}</strong><small>${esc([s.block,s.feeder,s.section?'T'+s.section:'',s.zone].filter(Boolean).join(' · '))}</small><small>${km(s.metres)}${s.estimated?' · pela geometria':''}</small></div><button type="button" data-add="${esc(s.id)}" ${selected.has(s.id)?'disabled':''}>${selected.has(s.id)?'Na rota':'Adicionar'}</button></li>`).join('');
+  $('routeAddAll').disabled=!previewComplete||!candidates.length||Boolean(job);
+  $('routeAddAll').textContent='Atribuir rota filtrada · '+km(M.metres(candidates.map(x=>x.span)));
  }
  function clearNetwork(){
-  filterRequest++;filterApplied=false;previewComplete=false;candidates=[];filterKeys=[];
+  filterRequest++;previewComplete=false;candidates=[];filterKeys=[];
   window.CampoControlMap?.setRouteFilter(null);
   search.querySelector('[type=submit]').disabled=false;
   paintCandidates();
@@ -62,10 +63,11 @@
   searchStatus.textContent='Filtros alterados. Clique em Filtrar rede.';
  }
  search.addEventListener('input',editedFilters);
- $('routeClearNetwork').onclick=()=>{search.reset();clearNetwork();searchStatus.textContent='Filtro limpo. O mapa voltou a mostrar as camadas da gestão.';};
+ $('routeClearNetwork').onclick=()=>{search.reset();clearNetwork();searchStatus.textContent='Filtro limpo.';};
  $('routeFilterMap').onclick=()=>window.CampoControlMap?.setRouteFilter(candidates.map(x=>x.feature),true,true);
  search.onsubmit=async e=>{
   e.preventDefault();
+  if(job)return;
   const fields=new FormData(search),blocks=M.codes(fields.get('blocks')),sections=M.sections(fields.getAll('sections')),feeders=M.codes(fields.get('feeder')),zone=M.key(fields.get('zone'));
   clearNetwork();
   if(blocks.length>500||feeders.length>30||[...blocks,...feeders].some(code=>!M.identifier(code))){searchStatus.textContent='Confira os códigos. Use até 500 chaves e 30 alimentadores.';return;}
@@ -81,12 +83,13 @@
    }
    const order=new Map(blocks.map((key,i)=>[key,i]));
    candidates=[...unique.values()].sort((a,b)=>(order.get(a.span.block)??blocks.length)-(order.get(b.span.block)??blocks.length));
-   filterKeys=blocks;filterApplied=true;previewComplete=result.total<=1000&&!result.missingColumns;
-   const count=candidates.length.toLocaleString('pt-BR'),info=[count+' vão(s) selecionável(is) na lista e no mapa.'];
-   if(result.total>1000)info.push(result.total.toLocaleString('pt-BR')+' registros no recorte. Refine os filtros para visualizar todos e liberar a inclusão em lote.');
+   filterKeys=blocks;previewComplete=!result.capped&&!result.missingColumns&&!invalid&&result.features.length===result.total;
+   const count=candidates.length.toLocaleString('pt-BR'),info=[count+' vão(s) · '+km(M.metres(candidates.map(x=>x.span)))+' de rede no recorte.'];
+   if(candidates.length>250)info.push('A lista exibe os primeiros 250; a atribuição usa o recorte inteiro.');
+   if(result.capped)info.push(result.total.toLocaleString('pt-BR')+' registros no recorte. Refine os filtros para visualizar todos e liberar a inclusão em lote.');
    if(result.missing.length)info.push('Chaves sem vãos no recorte: '+result.missing.join(', ')+'.');
    if(result.missingColumns)info.push('Há camadas MT sem os campos do filtro. Confira a versão da rede.');
-   if(invalid||result.features.length<Math.min(result.total,1000))info.push('Alguns registros estão sem ID, geometria ou extensão utilizável.');
+   if(invalid||result.features.length<Math.min(result.total,10000))info.push('Alguns registros estão sem ID, geometria ou extensão utilizável.');
    searchStatus.textContent=info.join(' ');
    window.CampoControlMap.setRouteFilter(candidates.map(x=>x.feature),Boolean(candidates.length));
    paintDraft();
@@ -94,14 +97,21 @@
   finally{if(serial===filterRequest)button.disabled=false;}
  };
  function addCandidates(spans){try{add(M.order(spans,filterKeys,draft.length?M.last(draft.at(-1)):null),true);}catch(error){status.textContent=error.message;}}
- $('routeAddAll').onclick=()=>{const selected=new Set(draft.map(s=>s.id));addCandidates(candidates.map(x=>x.span).filter(s=>!selected.has(s.id)));};
+ $('routeAddAll').onclick=()=>{
+  if(!previewComplete||!candidates.length||job)return;
+  if(draft.length&&!filteredDraft&&!confirm('Usar todos os vãos do filtro no lugar da seleção manual?'))return;
+  draft=M.order(candidates.map(x=>x.span),filterKeys);
+  filteredDraft=true;draftId=null;paintDraft();
+  status.textContent='Recorte pronto. Informe o nome da rota e selecione o inspetor para publicar.';
+  form.elements.name.focus();
+ };
  $('routeCandidates').onclick=e=>{
   const candidate=candidates.find(x=>x.span.id===e.target.dataset.add);
   if(candidate)addCandidates([candidate.span]);
  };
  function paintDraft(){
-  $('routePlanned').textContent=draft.length?km(draft.reduce((n,s)=>n+s.metres,0))+' · início '+draft[0].id+' · fim '+draft.at(-1).id:'Adicione pelo menos um vão.';
-  $('routeDraftList').innerHTML=draft.map((s,i)=>`<li><b>${esc(s.id)}</b> · ${km(s.metres)}${s.estimated?' (geometria)':''} · ${esc([s.block,s.feeder,s.section?'T'+s.section:''].filter(Boolean).join(' · '))} <button type="button" data-up="${i}" ${i===0?'disabled':''}>Subir</button> <button type="button" data-reverse="${i}">Inverter sentido</button> <button type="button" data-remove="${i}">Remover</button></li>`).join('');
+  $('routePlanned').textContent=draft.length?km(M.metres(draft))+' de rede a vistoriar · '+draft.length+' vão(s) · início '+draft[0].id+' · fim '+draft.at(-1).id:'Adicione pelo menos um vão.';
+  $('routeDraftList').innerHTML=draft.slice(0,250).map((s,i)=>`<li><b>${esc(s.id)}</b> · ${km(s.metres)}${s.estimated?' (geometria)':''} · ${esc([s.block,s.feeder,s.section?'T'+s.section:''].filter(Boolean).join(' · '))} <button type="button" data-up="${i}" ${i===0?'disabled':''}>Subir</button> <button type="button" data-reverse="${i}">Inverter sentido</button> <button type="button" data-remove="${i}">Remover</button></li>`).join('');
   let missing=false;
   for(const field of ['locality','feeder','zone','section']){
    const input=form.elements[field];
@@ -109,12 +119,13 @@
    input.closest('label').hidden=!required;input.required=required;input.disabled=!required;missing||=required;
   }
   $('routeMissingData').hidden=!missing;
+  $('routeAssign').textContent=job?'Retomar atribuição':filteredDraft?'Publicar rota filtrada':'Atribuir rota';
+  $('routeDraftList').hidden=draft.length>250;
   paintCandidates();
-  const matched=new Set(candidates.map(({span})=>span.id));
-  window.CampoControlMap?.routeOverlay?.(filterApplied?draft.filter(s=>matched.has(s.id)):draft,null,false);
+  window.CampoControlMap?.routeOverlay?.(draft,null,false);
  }
  function add(spans,ordered=false){
-  if(!spans.length)return;
+  if(!spans.length||job)return;
   const unique=new Map(draft.map(s=>[s.id,s]));
   let previous=draft.at(-1);
   for(const span of spans){
@@ -124,7 +135,7 @@
    unique.set(span.id,previous);
   }
   if(unique.size>250)throw Error('Divida o planejamento em rotas de até 250 vãos.');
-  draft=[...unique.values()];draftId=null;paintDraft();
+  draft=[...unique.values()];draftId=null;filteredDraft=false;paintDraft();
   status.textContent=draft.length+' vão(s) no plano.';
  }
  $('routePick').onclick=()=>{
@@ -139,25 +150,56 @@
   }catch(error){status.textContent=error.message;}finally{e.target.value='';}
  };
  $('routeDraftList').onclick=e=>{
+  if(job)return;
   const {up,reverse,remove}=e.target.dataset;
   if(remove!==undefined)draft.splice(Number(remove),1);
   else if(reverse!==undefined)draft[Number(reverse)].reverse=!draft[Number(reverse)].reverse;
   else if(up!==undefined){const i=Number(up);if(!i)return;[draft[i-1],draft[i]]=[draft[i],draft[i-1]];}
   else return;
-  draftId=null;paintDraft();
+  draftId=null;filteredDraft=false;paintDraft();
  };
  panel.addEventListener('input',e=>{if(e.target.form===form&&e.target.name)draftId=null;});
  form.onsubmit=async e=>{
-  e.preventDefault();if(!draft.length){status.textContent='Selecione pelo menos um vão.';return;}
-  const button=form.querySelector('[type=submit]');button.disabled=true;
-  try{
+  e.preventDefault();
+  if(publishing)return;
+  if(!draft.length&&!job){status.textContent='Selecione pelo menos um vão.';return;}
+  if(!job){
    const gaps=draft.slice(1).filter((s,i)=>M.distance(M.last(draft[i]),M.first(s))>25);
-   if(gaps.length&&!confirm('Há '+gaps.length+' salto(s) entre vãos. Publique assim se houver deslocamento planejado entre eles.'))return;
+   const parts=M.routeParts(draft);
+   const notices=[];
+   if(parts.length>1)notices.push('O recorte será entregue em '+parts.length+' partes numeradas no app.');
+   if(gaps.length)notices.push('Há '+gaps.length+' intervalo(s) sem continuidade entre vãos. Use as ruas para se deslocar entre eles.');
+   if(notices.length&&!confirm(notices.join(' ')+' Publicar?'))return;
    draftId??=crypto.randomUUID();
-   await api('/api/routes',{...Object.fromEntries(new FormData(form)),id:draftId,fromNetwork:true,spans:draft});
-   draft=[];draftId=null;form.reset();paintDraft();status.textContent='Rota publicada para o inspetor baixar em Minhas rotas.';
+   const fields=Object.fromEntries(new FormData(form));
+   job={index:0,parts:parts.map((spans,i)=>{
+    const suffix=' ('+(i+1)+'/'+parts.length+')';
+    return {...fields,name:parts.length===1?fields.name:fields.name.slice(0,100-suffix.length)+suffix,
+     id:parts.length===1?draftId:draftId+'-'+(i+1),fromNetwork:true,spans};
+   })};
+  }
+  const batch=job;
+  publishing=true;$('routeAssign').disabled=true;paintCandidates();
+  const locked=[...form.elements].filter(control=>control!==$('routeAssign')&&!control.disabled);
+  for(const control of locked)control.disabled=true;
+  try{
+   for(;batch.index<batch.parts.length;batch.index++){
+    status.textContent='Publicando parte '+(batch.index+1)+' de '+batch.parts.length+'…';
+    await api('/api/routes',batch.parts[batch.index]);
+    if(job!==batch)return;
+   }
+   draft=[];job=null;draftId=null;filteredDraft=false;form.reset();paintDraft();
+   status.textContent=batch.parts.length+' '+(batch.parts.length===1?'rota disponível':'partes disponíveis')+' para baixar em Minhas rotas.';
    try{await refresh();}catch{status.textContent+=' Use Atualizar para recarregar a lista de rotas.';}
-  }catch(error){status.textContent=error.message;}finally{button.disabled=false;}
+  }catch(error){
+   if(job!==batch)return;
+   status.textContent=error.message+' · '+batch.index+'/'+batch.parts.length+' parte(s) confirmada(s). Retome nesta tela para evitar duplicação.';
+   if(batch.index===0&&error.status>=400&&error.status<500){job=null;}
+  }finally{
+   publishing=false;$('routeAssign').disabled=false;
+   for(const control of locked)control.disabled=false;
+   paintDraft();
+  }
  };
  function parseSgm(source){
   source=source.replace(/^\uFEFF/,'');
@@ -216,7 +258,7 @@
   $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
   $('routePublished').innerHTML=routes.map(r=>{
    const related=visits.filter(v=>v.routeId===r.id),done=M.coverage(r.spans,related),last=related.at(-1),miss=r.spans.filter(s=>M.remaining(done.bySpan.get(s.id)).length);
-   return `<div class="route-result"><strong>${esc(r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p>${km(done.metres)} confirmados · ${miss.length} vão(s) com pendência${last?' · última em '+esc(last.day):''}</p><button type="button" data-route-map="${esc(r.id)}">${miss.length?'Ver de onde retomar':'Ver cobertura'}</button></div>`;
+   return `<div class="route-result"><strong>${esc(r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p><strong>${km(M.metres(r.spans))} de rede planejada</strong> · ${km(done.metres)} confirmados · ${miss.length} vão(s) com pendência${last?' · última em '+esc(last.day):''}</p><button type="button" data-route-map="${esc(r.id)}">${miss.length?'Ver de onde retomar':'Ver cobertura'}</button></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
  }
  $('routePublished').onclick=e=>{
@@ -236,7 +278,7 @@
   paint();
  }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
- $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();else if(e.target.id==='routePlan'&&filterApplied)clearNetwork();});
+ $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();});
  for(const id of ['routeDay','routeMonth','routeOperator','routeFilter'])$(id).addEventListener('input',()=>{
   if(id==='routeDay'&&$(id).value)$('routeMonth').value='';
   if(id==='routeMonth'&&$(id).value)$('routeDay').value='';
@@ -244,9 +286,9 @@
  });
  paintDraft();
  window.CampoRoutePlanner={
-  select(f){if(!$('routePlan').open||(!selecting&&!filterApplied))return false;try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;},
+  select(f){if(!$('routePlan').open||!selecting||job)return false;try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;},
   feeders(values){$('routeFeeders').replaceChildren(...values.map(f=>new Option(f,f)));},
   open:load,
-  stop(){selecting=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};sgm=null;form.reset();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
+  stop(){selecting=false;job=null;filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};sgm=null;form.reset();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();

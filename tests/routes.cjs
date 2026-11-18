@@ -23,17 +23,26 @@ assert.equal(s.reverse,true);
   const dom=new JSDOM(fs.readFileSync('docs/index.html','utf8'),{url:'https://example.test/',runScripts:'outside-only'}),w=dom.window,d=w.document;
   Object.defineProperty(w.navigator,'onLine',{get:()=>online});
   w.CampoAccount={current:()=>({id:'operator'}),verified:()=>online};w.req=req;w.openFieldDatabase=async()=>db;
+  const options=[];
+  w.fieldMap={getPane:()=>null,createPane:()=>({style:{}})};
+  w.L={featureGroup:()=>({addTo(){return this;},remove(){}}),polyline:(_paths,style)=>{options.push(style);return {addTo(){}};}};
   w.confirm=()=>true;w.prompt=()=>'0-50';w.AbortSignal=AbortSignal;
   w.fetch=async(url,op)=>{
    if(url.endsWith('/visit')){const v=JSON.parse(op.body);remote.set(v.id,v);return {ok:true,json:async()=>({visit:v})};}
    return {ok:true,json:async()=>({routes:[route],visits:[...remote.values()]})};
   };
   for(const f of ['docs/route-core.js','docs/route-field.js'])vm.runInContext(fs.readFileSync(f,'utf8'),dom.getInternalVMContext());
-  return {w,d,close:()=>dom.window.close(),click:id=>d.getElementById(id).click()};
+  return {w,d,options,close:()=>dom.window.close(),click:id=>d.getElementById(id).click()};
  }
  const wait=async check=>{for(let i=0;i<100;i++){if(await check())return;await new Promise(r=>setTimeout(r,10));}assert.fail('state not reached');};
  const read=()=>req('meta','readonly',s=>s.get('campo-route-state-v1:operator'));
  let app=open();app.click('fieldRouteSync');await wait(async()=>(await read())?.routes.length===1);
+ assert.match(app.d.getElementById('fieldRouteMapLegend').textContent,/0,179 km de rede/);
+ const styles=app.options.filter(o=>o.pane==='myInspectionRoute');
+ assert.equal(styles.length,2);assert(styles.every(o=>o.interactive===false));assert.equal(styles[0].weight,14);assert.equal(styles[1].color,M.pendingColor);
+ const street=new URL(app.d.getElementById('fieldRouteNavigate').href);
+ assert.equal(street.searchParams.get('dir_action'),'navigate');
+ assert.equal(street.searchParams.get('destination'),'-9.970000,-67.800000');
  online=false;app.click('fieldRouteStart');await wait(async()=>(await read())?.session);
  app.d.querySelector('[data-route-range="0,0,10000"]').click();await wait(async()=>(await read()).session.ranges.vao0);
  app.d.querySelector('[data-route-part="1"]').click();await wait(async()=>(await read()).session.ranges.vao1);
