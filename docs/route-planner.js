@@ -305,8 +305,8 @@
  function paint(){
   const day=$('routeDay').value,month=$('routeMonth').value,operator=$('routeOperator').value,q=M.key($('routeFilter').value);
   const inPeriod=value=>day?value===day:month?value.startsWith(month):true;
-  const routes=snapshot.routes.filter(r=>(!operator||r.assignee===operator)&&(!q||M.key([r.name,r.feeder,r.locality].join(' ')).includes(q))).sort((a,b)=>a.phase-b.phase);
-  const ids=new Set(routes.map(r=>r.id)),visits=snapshot.visits.filter(v=>ids.has(v.routeId)),spans=planned(routes);
+  const routes=snapshot.routes.filter(r=>(!operator||r.assignee===operator)&&(!q||M.key([r.name,r.feeder,r.locality].join(' ')).includes(q))).sort((a,b)=>a.phase-b.phase),activeRoutes=routes.filter(r=>!r.returned);
+  const ids=new Set(activeRoutes.map(r=>r.id)),visits=snapshot.visits.filter(v=>ids.has(v.routeId)),spans=planned(activeRoutes);
   const track=visits.filter(v=>inPeriod(v.day)).reduce((n,v)=>n+(v.trackMetres||0),0);
   const total=spans.reduce((n,s)=>n+s.metres,0),allCoverage=M.coverage(spans,visits),periodCoverage=M.coverage(spans,visits,v=>inPeriod(v.day)),all=allCoverage.metres,period=periodCoverage.metres;
   let reconciliation='';
@@ -324,12 +324,13 @@
   $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · crédito paralelo '+km(periodCoverage.sharedMetres)+' · total creditado '+km(period+periodCoverage.sharedMetres)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
   $('routePublished').innerHTML=M.campaignParts(routes).map(parts=>{
    const r=parts[0],routeSpans=parts.flatMap(part=>part.spans),routeIds=new Set(parts.map(part=>part.id));
-   const related=visits.filter(v=>routeIds.has(v.routeId)),done=M.coverage(routeSpans,related),last=related.at(-1);
+   const related=snapshot.visits.filter(v=>routeIds.has(v.routeId)),done=M.coverage(routeSpans,related),last=related.at(-1),returned=r.returned;
    const total=M.metres(routeSpans),remaining=Math.max(0,total-done.metres),credited=done.metres+done.sharedMetres,targets=M.schedule(r.plan,total);
    const extras=[...done.shared.values()].filter(peer=>peer.covered>=peer.metres-.001),codes=[...new Set(extras.map(peer=>peer.feeder))];
    const shared=done.sharedMetres?' · '+km(done.sharedMetres)+' de outros alimentadores · '+extras.length+' vãos concluídos'+(codes.length?' ('+codes.join(', ')+')':''):'';
    const inFilter=M.coverage(routeSpans,related,v=>inPeriod(v.day)).metres;
-   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small><p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><button type="button" data-route-map="${esc(r.id)}">${remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button></div>`;
+   const returnedText=returned?`<p><strong>DEVOLVIDA · ${esc(returned.reason)}</strong> · por ${esc(returned.actorName)} em ${esc(new Date(returned.createdAt).toLocaleString('pt-BR'))}${returned.note?' · '+esc(returned.note):''}${returned.authorizedBy?' · autorizada por '+esc(returned.authorizedBy.name):''}</p>`:'';
+   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
   paintKpis();
  }
@@ -346,7 +347,7 @@
   if(from&&through&&from>through){table.textContent='Confira o intervalo de datas.';return;}
   const inPeriod=day=>(!from||day>=from)&&(!through||day<=through),asOf=through&&through<today()?through:today();
   const rows=new Map();
-  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!assignee||route.assignee===assignee))){
+  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!route.returned&&(!assignee||route.assignee===assignee)))){
    const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
    const daily=M.dailyCoverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId))),targets=M.schedule(route.plan,M.metres(spans));
    const work=daily.filter(entry=>inPeriod(entry.day)),due=targets.filter(entry=>inPeriod(entry.day)).reduce((sum,entry)=>sum+entry.metres,0);

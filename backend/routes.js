@@ -30,8 +30,19 @@ const ROUTE_TABLES=[
  'CREATE TABLE IF NOT EXISTS campo_routes (id TEXT PRIMARY KEY, assignee TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
  'CREATE INDEX IF NOT EXISTS campo_routes_assignee ON campo_routes(assignee,created_at)',
  'CREATE TABLE IF NOT EXISTS campo_route_visits (id TEXT PRIMARY KEY, route_id TEXT NOT NULL, actor TEXT NOT NULL, data TEXT NOT NULL, received_at TEXT NOT NULL)',
- 'CREATE INDEX IF NOT EXISTS campo_route_visits_route ON campo_route_visits(route_id,received_at)'
+ 'CREATE INDEX IF NOT EXISTS campo_route_visits_route ON campo_route_visits(route_id,received_at)',
+ 'CREATE TABLE IF NOT EXISTS campo_route_returns (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL UNIQUE, route_id TEXT NOT NULL, assignee TEXT NOT NULL, actor TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)',
+ 'CREATE INDEX IF NOT EXISTS campo_route_returns_assignee ON campo_route_returns(assignee,created_at)'
 ];
+const ROUTE_RETURN_REASONS={acesso:'Acesso impedido',seguranca:'Condição insegura',rede:'Dados ou traçado da rede incorretos',area:'Fora da área ou atribuição',reprogramacao:'Reprogramação operacional',homologacao:'Homologação',outro:'Outro'};
+async function authorizeRouteHomologation(request,env,db,input){
+ const login=String(input.adminLogin||'').trim().toLowerCase(),password=input.adminPassword;
+ if(!login||login.length>254||typeof password!=='string'||!password||password.length>128)throw sharedError('Administrador ou senha incorretos.',401);
+ await campoPasswordRateLimit(request,env,'route-homologation:'+login);
+ const administrator=await db.prepare("SELECT u.id,u.name,u.role,u.blocked,c.password_hash,c.salt FROM campo_users u JOIN campo_user_credentials c ON c.user_id=u.id WHERE (c.username=? COLLATE NOCASE OR u.email=? COLLATE NOCASE) AND u.role='admin' AND u.blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle WHERE user_id=u.id AND deleted_at IS NOT NULL)").bind(login,login).first();
+ if(!await checkCampoPassword(password,administrator,env))throw sharedError('Administrador ou senha incorretos.',401);
+ return {id:administrator.id,name:administrator.name};
+}
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
@@ -39,17 +50,22 @@ async function routeAPI(request,env){
   if(path==='/api/routes/reference')return await routeReference(request,env,admin);
   if(!admin&&!actor)throw sharedError('Entre com sua conta para acessar as rotas.',403);
   const db=await adminDb(env);
+   await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
   if(path==='/api/routes'&&request.method==='GET'){
    const all=admin&&url.searchParams.get('mine')!=='1';
    if(!all&&!actor)throw sharedError('Entre com uma conta de inspetor.',403);
    try{
     const routeQuery=all?db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_routes WHERE assignee=? ORDER BY created_at DESC').bind(actor);
     const visitQuery=all?db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at'):db.prepare('SELECT data,received_at FROM campo_route_visits WHERE actor=? ORDER BY received_at').bind(actor);
-    const [a,b]=await Promise.all([routeQuery.all(),visitQuery.all()]);
-    const routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data))),ids=new Set(routes.map(route=>route.id));
+     const returnQuery=all?db.prepare('SELECT data FROM campo_route_returns ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_route_returns WHERE assignee=? ORDER BY created_at DESC').bind(actor);
+     const [a,b,c]=await Promise.all([routeQuery.all(),visitQuery.all(),returnQuery.all()]);
+     const returns=c.results.map(row=>JSON.parse(row.data)),byScope=new Map(returns.map(item=>[item.scopeId,item]));
+     let routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data))).map(route=>{const returned=byScope.get(route.campaign?.id||route.id);return returned?{...route,returned}:route;});
+     if(!all)routes=routes.filter(route=>!route.returned);
+     const ids=new Set(routes.map(route=>route.id));
     const visits=b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at})).filter(visit=>ids.has(visit.routeId));
-    return json({routes,visits});
-   }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[]});throw error;}
+     return json({routes,visits,returns});
+    }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[],returns:[]});throw error;}
   }
   if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
   const input=await sharedBody(request,500000),now=new Date().toISOString();
@@ -77,7 +93,6 @@ async function routeAPI(request,env){
    if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
-   await db.batch(ROUTE_TABLES.map(sql=>db.prepare(sql)));
    const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
    if(campaign){
     const peer=await db.prepare('SELECT assignee,data FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
@@ -87,6 +102,23 @@ async function routeAPI(request,env){
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
    return json({route},201);
   }
+   if(path==='/api/routes/return'&&actor){
+    const {id,routeId}=input||{},reasonCode=String(input.reasonCode||''),note=CampoRoutes.text(input.note,480);
+    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!ROUTE_RETURN_REASONS[reasonCode]||(reasonCode==='outro'&&!note))throw sharedError('Informe a rota e um motivo válido para a devolução.');
+    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
+    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
+    const route=JSON.parse(entry.data),scopeId=route.campaign?.id||route.id;
+    const authorizedBy=reasonCode==='homologacao'?await authorizeRouteHomologation(request,env,db,input):null;
+    const returned={id,scopeId,routeId,assignee:actor,actorName:env.CAMPO_USER?.name||route.operator||'Inspetor',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
+    const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,actor,actor,JSON.stringify(returned),now).run();
+    if(!insert.meta?.changes){
+     const row=await db.prepare('SELECT data FROM campo_route_returns WHERE scope_id=?').bind(scopeId).first(),stored=row&&JSON.parse(row.data);
+     if(stored?.id!==id)throw sharedError('Esta rota já foi devolvida.',409);
+     return json({returned:stored});
+    }
+    await realtimePublish(env,'route-return');
+    return json({returned},201);
+   }
   if(path==='/api/routes/visit'&&actor){
    const {id,routeId,startedAt,endedAt}=input||{},start=Date.parse(startedAt),end=Date.parse(endedAt);
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end>Date.now()+600000||end-start>7*86400000||
@@ -94,6 +126,7 @@ async function routeAPI(request,env){
    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
    const route=JSON.parse(entry.data),ids=new Set(route.spans.map(s=>s.id));
+    if(await db.prepare('SELECT id FROM campo_route_returns WHERE scope_id=?').bind(route.campaign?.id||route.id).first())throw sharedError('A rota já foi devolvida e não aceita novas conclusões.',409);
    const ranges=input.ranges.map(x=>{
     if(!x||!ids.has(x.spanId)||!Number.isInteger(x.start)||!Number.isInteger(x.end)||x.start<0||x.end>CampoRoutes.FULL||x.start>=x.end)throw sharedError('Vão ou faixa de vistoria inválida.');
     return {spanId:x.spanId,start:x.start,end:x.end};

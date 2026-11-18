@@ -5,6 +5,13 @@
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
  const panel=$('fieldRoutes'),status=$('fieldRouteStatus');
  let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0,routeGeometry=null,coverageInput={},fieldOverlay=null,googleOverlay=null,roadLeg=0,lastRoadSignature="",scopeTiles=null,mapScope=null;
+ const returnButton=document.createElement('button');
+ returnButton.type='button';returnButton.id='fieldRouteReturn';returnButton.className='secondary';returnButton.textContent='Devolver rota';
+ $('fieldRouteStreet')?.append(returnButton);
+ const returnDialog=document.createElement('dialog');
+ returnDialog.id='fieldRouteReturnDialog';returnDialog.className='route-return-dialog';
+ returnDialog.innerHTML=`<form id="fieldRouteReturnForm"><div class="sectionhead"><div><span class="eyebrow">DEVOLUÇÃO</span><h2>Devolver rota</h2></div><button type="button" id="fieldRouteReturnClose" class="secondary">Fechar</button></div><p>A rota voltará para a gestão e sairá de Minhas rotas. Se ela foi dividida, todas as partes serão devolvidas juntas.</p><label>Motivo<select id="fieldRouteReturnReason" required><option value="">Selecione</option><option value="acesso">Acesso impedido</option><option value="seguranca">Condição insegura</option><option value="rede">Dados ou traçado da rede incorretos</option><option value="area">Fora da área ou atribuição</option><option value="reprogramacao">Reprogramação operacional</option><option value="homologacao">Homologação</option><option value="outro">Outro</option></select></label><label>Observação<textarea id="fieldRouteReturnNote" maxlength="480" rows="3" placeholder="Detalhe o motivo quando necessário"></textarea></label><div id="fieldRouteReturnAdmin" hidden><p><strong>Homologação exige a senha de um administrador.</strong></p><label>Usuário ou e-mail do administrador<input id="fieldRouteReturnAdminLogin" maxlength="254" autocomplete="username"></label><label>Senha do administrador<input id="fieldRouteReturnAdminPassword" type="password" maxlength="128" autocomplete="current-password"></label></div><p id="fieldRouteReturnFeedback" role="status"></p><button type="submit" class="primary">Confirmar devolução</button></form>`;
+ document.body.append(returnDialog);
  const identity=()=>window.CampoAccount?.current()?.id;
  const orderedRoutes=routes=>M.campaignParts(routes).flat();
  const groupOf=r=>r?M.campaignParts(state.routes).find(parts=>parts.includes(r))||[r]:[];
@@ -87,6 +94,9 @@
   $('fieldRouteQueue').textContent=(state?.outbox.length||0)+' conclusão(ões) pendente(s) de envio';
   const group=groupOf(r),spans=group.flatMap(part=>part.spans);
   const keys=new Set(group.map(part=>part.id));
+   const pendingReturn=r&&state?.outbox.some(visit=>keys.has(visit.routeId));
+   returnButton.hidden=!r;returnButton.disabled=!r||Boolean(active)||pendingReturn||busy||refreshing;
+   returnButton.title=active?'Finalize a saída antes de devolver.':pendingReturn?'Sincronize a conclusão pendente antes de devolver.':'';
   const visits=r?[...state.visits,...state.outbox].filter(visit=>keys.has(visit.routeId)):[];
   const covered=M.coverage(spans,visits),buffer=r?M.bufferMetres(r.buffer):0;
   const total=M.metres(spans);
@@ -242,6 +252,39 @@
   });
   void loadRemote();
  };
+  const closeReturnDialog=()=>{if(typeof returnDialog.close==='function')returnDialog.close();else returnDialog.removeAttribute('open');$('fieldRouteReturnAdminPassword').value='';};
+  const showReturnDialog=()=>{if(typeof returnDialog.showModal==='function')returnDialog.showModal();else returnDialog.setAttribute('open','');};
+  $('fieldRouteReturnClose').onclick=closeReturnDialog;
+  $('fieldRouteReturnReason').onchange=e=>{
+   const protectedReason=e.target.value==='homologacao',admin=$('fieldRouteReturnAdmin');admin.hidden=!protectedReason;
+   $('fieldRouteReturnAdminLogin').required=protectedReason;$('fieldRouteReturnAdminPassword').required=protectedReason;
+   if(!protectedReason)$('fieldRouteReturnAdminPassword').value='';
+  };
+  returnButton.onclick=()=>{
+   const r=route(),group=groupOf(r),ids=new Set(group.map(part=>part.id));
+   if(!r)return;
+   if(!navigator.onLine){status.textContent='Conecte-se à internet para devolver a rota.';return;}
+   if(session()){status.textContent='Finalize a saída atual antes de devolver a rota.';return;}
+   if(state.outbox.some(visit=>ids.has(visit.routeId))){status.textContent='Sincronize a conclusão pendente antes de devolver a rota.';return;}
+   $('fieldRouteReturnForm').reset();$('fieldRouteReturnAdmin').hidden=true;$('fieldRouteReturnFeedback').textContent='';
+   const account=window.CampoAccount?.current?.()||{};$('fieldRouteReturnAdminLogin').value=account.role==='admin'?(account.username||account.email||''):'';
+   showReturnDialog();
+  };
+  $('fieldRouteReturnForm').onsubmit=async e=>{
+   e.preventDefault();const r=route();if(!r||busy||refreshing)return;
+   const reasonCode=$('fieldRouteReturnReason').value,note=$('fieldRouteReturnNote').value.trim(),feedback=$('fieldRouteReturnFeedback');
+   if(reasonCode==='outro'&&!note){feedback.textContent='Descreva o outro motivo.';return;}
+   if(!navigator.onLine){feedback.textContent='Conecte-se à internet para devolver a rota.';return;}
+   if(!confirm('Confirma a devolução desta rota para a gestão?'))return;
+   busy=true;returnButton.disabled=true;feedback.textContent='Validando e devolvendo…';
+   try{
+    const body={id:crypto.randomUUID(),routeId:r.id,reasonCode,note};
+    if(reasonCode==='homologacao'){body.adminLogin=$('fieldRouteReturnAdminLogin').value.trim();body.adminPassword=$('fieldRouteReturnAdminPassword').value;}
+    await fieldRouteApi('/api/routes/return',body);
+    const scope=r.campaign?.id||r.id,next={...state,routes:state.routes.filter(item=>(item.campaign?.id||item.id)!==scope)};
+    await save(next);state=next;selected=resumeRoute();closeReturnDialog();paint();status.textContent='Rota devolvida para a gestão.';
+   }catch(error){feedback.textContent=error.message;}finally{busy=false;$('fieldRouteReturnAdminPassword').value='';paint(false);}
+  };
  function gpsRanges(r,active,prior){
   return r.spans.flatMap(span=>{
    const done=M.merge([...(prior.bySpan.get(span.id)||[]),...(active.ranges[span.id]||[])]);

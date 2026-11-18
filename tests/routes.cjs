@@ -23,7 +23,7 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
 (async()=>{
  const db=await new Promise(resolve=>{const q=indexedDB.open('route-test',1);q.onupgradeneeded=()=>q.result.createObjectStore('meta');q.onsuccess=()=>resolve(q.result);});
  const route={id:'test-route',name:'Piloto',assignee:'operator',feeder:'TAN-01I9',locality:'RIO BRANCO',zone:'URBANO',section:'1',spans};
- const remote=new Map();let online=true;
+ const remote=new Map();let online=true,returned=false,returnBody=null;
  const req=(name,mode,get)=>new Promise((resolve,reject)=>{const txn=db.transaction(name,mode),q=get(txn.objectStore(name));txn.oncomplete=()=>resolve(q.result);txn.onabort=()=>reject(txn.error);});
  function open(){
   const dom=new JSDOM(fs.readFileSync('docs/index.html','utf8'),{url:'https://example.test/',runScripts:'outside-only'}),w=dom.window,d=w.document;
@@ -35,7 +35,8 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
   w.confirm=()=>true;w.prompt=()=>'0-50';w.AbortSignal=AbortSignal;
   w.fetch=async(url,op)=>{
    if(url.endsWith('/visit')){const v=JSON.parse(op.body);remote.set(v.id,v);return {ok:true,json:async()=>({visit:v})};}
-   return {ok:true,json:async()=>({routes:[route],visits:[...remote.values()]})};
+   if(url.endsWith('/return')){returnBody=JSON.parse(op.body);returned=true;return {ok:true,status:201,json:async()=>({returned:{routeId:route.id}})};}
+   return {ok:true,json:async()=>({routes:returned?[]:[route],visits:[...remote.values()]})};
   };
   for(const f of ['docs/route-core.js','docs/route-field.js'])vm.runInContext(fs.readFileSync(f,'utf8'),dom.getInternalVMContext());
   return {w,d,options,close:()=>dom.window.close(),click:id=>d.getElementById(id).click()};
@@ -59,17 +60,22 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
  const saved=await read();assert.equal(remote.size,1);eq(M.coverage(spans,saved.visits).metres,51.95);
  assert.deepEqual(M.remaining(M.coverage(spans,saved.visits).bySpan.get('vao1')),[[5000,10000]]);
  assert.match(app.d.getElementById('fieldRouteStatus').textContent,/recebidas/);
- app.close();db.close();console.log('PASS: seleção, sobreposição, conclusão parcial offline, reabertura, sincronização e retomada.');
+ app.click('fieldRouteReturn');app.d.getElementById('fieldRouteReturnReason').value='rede';app.d.getElementById('fieldRouteReturnNote').value='Geometria divergente';
+ app.d.getElementById('fieldRouteReturnForm').dispatchEvent(new app.w.Event('submit',{bubbles:true,cancelable:true}));
+ await wait(async()=>(await read()).routes.length===0);
+ assert.equal(returnBody.reasonCode,'rede');assert.equal('adminPassword' in returnBody,false);assert.match(app.d.getElementById('fieldRouteStatus').textContent,/devolvida/);
+ app.close();db.close();console.log('PASS: seleção, conclusão offline, retomada e devolução segura da rota.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
 (async()=>{
  const {DatabaseSync}=require('node:sqlite');
  const sql=new DatabaseSync(':memory:');
- sql.exec("CREATE TABLE campo_users(id TEXT, name TEXT, blocked INTEGER); CREATE TABLE campo_user_lifecycle(user_id TEXT, deleted_at TEXT); INSERT INTO campo_users VALUES('operator','Inspetor',0);");
+ sql.exec("CREATE TABLE campo_users(id TEXT, name TEXT, email TEXT, role TEXT, blocked INTEGER); CREATE TABLE campo_user_lifecycle(user_id TEXT, deleted_at TEXT); CREATE TABLE campo_user_credentials(user_id TEXT, username TEXT, password_hash TEXT, salt TEXT, revision INTEGER); INSERT INTO campo_users VALUES('operator','Inspetor','inspetor@example.test','inspector',0); INSERT INTO campo_users VALUES('admin','Gestor','gestor@example.test','admin',0); INSERT INTO campo_user_credentials VALUES('admin','gestor','hash','salt',1);");
  const db={prepare(text){let args=[];return {bind(...items){args=items;return this;},first(){return sql.prepare(text).get(...args);},all(){return {results:sql.prepare(text).all(...args)};},run(){return {meta:sql.prepare(text).run(...args)};}};},batch(items){return items.map(item=>item.run());}};
  const ctx=vm.createContext({Request,Response,Blob,URL,
   json:(data,status=200)=>Response.json(data,{status}),adminDb:async()=>db,isAdministrator:r=>r.headers.get('X-Test-Role')==='admin',
-  sharedBody:r=>r.json(),sharedError:(message,status=400)=>Object.assign(Error(message),{status}),centralMissingTable:error=>/no such table/.test(error.message)});
+   sharedBody:r=>r.json(),sharedError:(message,status=400)=>Object.assign(Error(message),{status}),centralMissingTable:error=>/no such table/.test(error.message),
+   campoPasswordRateLimit:async()=>{},checkCampoPassword:async(password,row)=>password==='admin-pass'&&row?.password_hash==='hash',realtimePublish:async()=>{}});
  vm.runInContext(fs.readFileSync('docs/route-core.js','utf8')+'\n'+fs.readFileSync('backend/routes.js','utf8'),ctx);
  const env={CAMPO_USER:{id:'operator'},LOGIN_GUARD:{get:async(_key,type)=>type==='json'?{parts:2,size:2}:new Uint8Array([31]).buffer}};
  const request=(path,body,admin=false,identity=env)=>ctx.routeAPI(new Request('https://example.test'+path,{method:body?'POST':'GET',headers:admin?{'X-Test-Role':'admin'}:{},body:body?JSON.stringify(body):null}),identity);
@@ -88,7 +94,17 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
  assert.deepEqual(data.routes.map(r=>r.id),['combined-1','combined-2']);
  assert(data.routes.every(r=>r.buffer===55&&r.plan.metresPerDay===9000));
  assert.deepEqual((await (await request('/api/routes',null,false,{CAMPO_USER:{id:'another'}})).json()).routes,[]);
+  assert.equal((await request('/api/routes/return',{id:'return-normal',routeId:'combined-1',reasonCode:'rede',note:'Traçado divergente'})).status,201);
+  assert.deepEqual((await (await request('/api/routes')).json()).routes,[]);
+  const returnedAdmin=await (await request('/api/routes',null,true)).json();
+  assert.equal(returnedAdmin.routes.length,2);assert(returnedAdmin.routes.every(route=>route.returned.reasonCode==='rede'));
+  const homolog={id:'homolog-route',assignee:'operator',name:'Teste de homologação',locality:'Rio Branco',feeder:'TAQ-01C1',zone:'Urbano',section:'1',fromNetwork:true,spans:[spans[2]]};
+  assert.equal((await request('/api/routes',homolog,true)).status,201);
+  assert.equal((await request('/api/routes/return',{id:'return-bad',routeId:'homolog-route',reasonCode:'homologacao',adminLogin:'gestor',adminPassword:'errada'})).status,401);
+  assert.equal((await request('/api/routes/return',{id:'return-homolog',routeId:'homolog-route',reasonCode:'homologacao',adminLogin:'gestor',adminPassword:'admin-pass'})).status,201);
+  const stored=sql.prepare("SELECT data FROM campo_route_returns WHERE scope_id='homolog-route'").get();
+  assert.equal(stored.data.includes('admin-pass'),false);assert.equal(JSON.parse(stored.data).authorizedBy.name,'Gestor');
  assert.equal((await request('/api/routes/reference')).status,403);
  assert.deepEqual([...new Uint8Array(await (await request('/api/routes/reference',null,true)).arrayBuffer())],[31,31]);
- sql.close();console.log('PASS: publicação integral, retentativa idempotente, escopo por inspetor e complemento protegido.');
+ sql.close();console.log('PASS: publicação, devolução integral e homologação protegida por senha administrativa.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

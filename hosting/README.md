@@ -20,6 +20,8 @@ A geometria e os atributos operacionais da rota vêm do mesmo GPKG preparado par
 
 O painel grava a rota na mesma base central e a libera para a conta autenticada do inspetor ao concluir a publicação. Rotas grandes podem ter partes de execução e mantêm um mapa completo da atribuição. O buffer é configurável de 5 m a 200 m por lado, com padrão de 30 m. O campo guarda localmente a saída e a fila de envio, mostra o restante por vão e continua da cobertura confirmada. A trilha GPS e a sugestão de cobertura têm indicadores distintos. A confirmação pelo inspetor registra apenas a cobertura de rede revisada. As rotas e faixas já baixadas funcionam offline. A navegação por ruas abre o Google Maps pelos pontos pendentes, em etapas quando necessário, e depende da conectividade e cobertura viária.
 
+Em **Minhas rotas**, a opção **Devolver rota** exige conexão e devolve a campanha inteira, inclusive suas partes. A ação fica bloqueada durante uma saída ou enquanto houver conclusão pendente de envio. Os motivos operacionais são registrados na base central; **Homologação** exige usuário/e-mail e senha de uma conta administrativa ativa. A validação ocorre no servidor, recebe limitação de tentativas e não persiste a senha. Rotas devolvidas saem da carteira do inspetor, permanecem identificadas na gestão e não entram como planejamento ativo nos totais ou KPIs.
+
 Validação de desenvolvimento com `node tests/route-filters.cjs`, `node tests/routes.cjs` e `node backend/verify-pages.mjs`. A publicação usa `node backend/build.mjs` e `node hosting/build-release.mjs`.
 
 ## Mapa unificado e plano de poda por ciclo — 16/11/2026
