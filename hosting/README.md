@@ -293,3 +293,6 @@ O cadastro ativo de VERA e campo é a fonte da contagem de árvores. As linhas d
 
 
 Em Vegetação → Mapa, a visão geral, o mapa, as janelas de ciclo e a carteira por poste compartilham o filtro e o mesmo endereço. Parâmetros e diretórios abre um diálogo. A carga local é mantida na página atual, e a opção de publicação central usa a conta de gestão. Os diretórios informados ficam no navegador; para ler o arquivo, selecione-o no diálogo.
+
+
+O filtro de conjuntos usa o cadastro `resumo.conjuntos` para converter o código em nome e aceita seleção múltipla. O perímetro usa RURAL e URBANO. Sem a base do Excel disponível, a tela estima o ciclo usando a última poda por poste do Parque de Poda ou a data de criação da OS aberta. As OS abertas são associadas pelo ID do poste, com prioridade para a criação mais recente. O corte do consolidado é identificado na tela. Os valores que exigem histórico de execução e quantidades do Excel são sinalizados como indisponíveis na previsão estimada.

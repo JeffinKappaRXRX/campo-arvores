@@ -68,3 +68,13 @@
 #cycleRows th button,#cycleRows td button{min-height:26px;padding:3px 6px;font-size:inherit}
 #cycleRows td:first-child a{margin-inline-start:6px}
 @media(max-width:900px){.cycle-overview-grid,#cycleMapTools{grid-template-columns:minmax(0,1fr)}}
+
+.cycle-multi-field{position:relative;min-width:0;padding-bottom:0}
+.cycle-multi-field>span{display:block;font-size:12px;font-weight:600}
+.cycle-multi{margin-top:5px}
+.cycle-multi>summary{min-height:38px;padding:9px 24px 9px 11px}
+.cycle-multi .msel-pop{width:min(330px,80vw);z-index:850}
+.cycle-multi .msel-lista{max-height:245px;overflow:auto}
+#cycleFilters .cycle-multi .msel-lista label{display:flex;align-items:center;gap:4px;padding:6px 4px}
+#cycleFilters .cycle-multi .msel-lista label[hidden]{display:none}
+#cycleFilters .cycle-multi input[type=checkbox]{flex:0 0 16px}

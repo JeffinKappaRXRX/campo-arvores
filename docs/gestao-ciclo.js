@@ -6,7 +6,7 @@
  const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char]);
  const route=()=>['#mapa','#c-mapa'].includes(location.hash), endpoint='/api/ciclo-poda';
  const statusColors={'Atrasada':'#be3b39','Pendente (OS aberta)':'#b96121','No ciclo atual':'#236eba','Próximos ciclos':'#237344',
-  'Fora do Prazo':'#be3b39','Urgente (< 30 dias)':'#b96121','Dentro do Prazo':'#237344','Sem dados':'#798982','Sem data':'#798982','Atualizada em campo':'#18747b','Sem ciclo vinculado':'#18747b'};
+  'Fora do Prazo':'#be3b39','Urgente (< 30 dias)':'#b96121','Dentro do Prazo':'#237344','Sem dados':'#798982','Sem data':'#798982','Atualizada em campo':'#18747b','Sem ciclo vinculado':'#18747b','SS aberta':'#754b91','SS aberta sem OS':'#754b91'};
  const labels={poste:'Poste com OS de poda',ss:'Poste com SS de poda',ambos:'Poste com OS e SS',arvore:'Árvore individual',faixa:'Limpeza de faixa'};
  const icon=(kind,ring='#526c62')=>{
   const tree='<path d="M20 7a5 5 0 0 0-5 5 4 4 0 0 0 0 8h10a4 4 0 0 0 0-8 5 5 0 0 0-5-5Z" fill="#38934f"/><path d="M20 16v9" stroke="#654530" stroke-width="2"/>';
@@ -40,8 +40,11 @@
  <label>Importar configuração<input id="cycleDirectoryFile" type="file" accept=".json,application/json"></label>
  <button type="submit">Salvar diretórios neste navegador</button></form>
  <p id="cycleDirStatus" class="small">Use os caminhos como referência para escolher o arquivo. O navegador pede que você selecione o arquivo para liberar o acesso.</p></dialog>
- <form id="cycleFilters" class="cycle-filters"><label>Ciclo<select name="cycle"></select></label>
- <label>Polo<select name="polo"></select></label><label>Conjunto<select name="conj"></select></label>
+ <form id="cycleFilters" class="cycle-filters"><label>Ciclo<select name="cycle" disabled><option value="">Aguardando base de ciclo</option></select></label>
+ <label>Polo<select name="polo"></select></label><div class="cycle-multi-field"><span>Conjunto</span><details class="msel cycle-multi" id="cycleConj">
+ <summary>Todos os conjuntos</summary><div class="msel-pop"><input type="search" id="cycleConjSearch" placeholder="Buscar conjunto" aria-label="Buscar conjunto">
+ <div class="cycle-actions"><button type="button" id="cycleConjAll">Selecionar todos</button><button type="button" id="cycleConjClear">Limpar seleção</button></div>
+ <div class="msel-lista" id="cycleConjOptions"></div></div></details></div>
  <label>Alimentador<select name="alim"></select></label><label>Trecho<select name="trecho"></select></label>
  <label>Perímetro<select name="perim"></select></label><label>VERA no poste<select name="vera"><option value="">Todos</option><option value="com">Com VERA</option><option value="sem">Sem VERA</option></select></label>
  <label>Situação<select name="state"></select></label><label>Buscar poste, árvore ou chave<input name="query" type="search" autocomplete="off"></label>
@@ -62,10 +65,47 @@
  ledger.innerHTML=`<div class="panel-head"><div><h3>Carteira por poste</h3><p id="cycleLedgerCount" class="small"></p></div><div class="cycle-actions"><label>Exibir <select id="cycleLedgerView"><option value="postes">Postes e serviços</option><option value="arvores">Árvores individuais</option></select></label><button id="cycleCsv" type="button">Exportar CSV filtrado</button></div></div>
  <div id="cycleDetail" aria-live="polite"></div><div id="cycleRows"></div><div class="cycle-pages"><button type="button" id="cyclePrev">Anterior</button><span id="cyclePage"></span><button type="button" id="cycleNext">Próxima</button></div>`;
  summary.after(ledger);
- let structures=new Map(),structureGeneration='', structureRequest=null;
+ let structures=new Map(),conjuntos={},structureGeneration='', structureRequest=null;
  let source=null,localSource=false,revision='',params=null,windows=[],now=0,allRows=[],visible=[],treeRows=[],stats=[],page=0,map=null,markers=null,links=null,markerByRow=new Map(),zoomTimer,filterTimer,epoch=0,loading=null,request=null,publishing=false,lastHash=false,needsFit=false;
  const filters=$('cycleFilters'),parameterForm=$('cycleParameters');
- const fields=filters.elements;
+ const unknownConj='SEM CONJUNTO IDENTIFICADO';
+ const fields=filters.elements,selectedConj=new Set(),conjMenu=$('cycleConj'),conjSearch=$('cycleConjSearch');
+ function paintConjSummary(){
+  conjMenu.querySelector('summary').textContent=selectedConj.size===1?[...selectedConj][0]:selectedConj.size?selectedConj.size+' conjuntos':'Todos os conjuntos';
+ }
+ function searchConj(){
+  const query=CP.norm(conjSearch.value);
+  for(const label of $('cycleConjOptions').children)label.hidden=!CP.norm(label.textContent).includes(query);
+ }
+ function setConj(all){
+  selectedConj.clear();
+  for(const input of $('cycleConjOptions').querySelectorAll('input')){
+   input.checked=all;if(all)selectedConj.add(input.value);
+  }
+  paintConjSummary();update();
+ }
+ $('cycleConjAll').onclick=()=>setConj(true);
+ $('cycleConjClear').onclick=()=>setConj(false);
+ conjSearch.oninput=searchConj;
+ $('cycleConjOptions').onchange=event=>{
+  const input=event.target;if(input.checked)selectedConj.add(input.value);else selectedConj.delete(input.value);
+  paintConjSummary();
+ };
+ conjMenu.ontoggle=()=>{if(conjMenu.open)conjSearch.focus();};
+ document.addEventListener('click',event=>{if(conjMenu.open&&!conjMenu.contains(event.target))conjMenu.open=false;});
+ function populateConj(rows){
+  const values=[...new Set(rows.map(r=>r.conj||unknownConj))].sort(collator.compare);
+  const available=new Set(values);
+  for(const value of selectedConj)if(!available.has(value))selectedConj.delete(value);
+  const root=$('cycleConjOptions');
+  if(root.dataset.values!==JSON.stringify(values)){
+   root.dataset.values=JSON.stringify(values);
+   root.innerHTML=values.map(value=>'<label><input type="checkbox" value="'+esc(value)+'"'+(selectedConj.has(value)?' checked':'')+'><span>'+esc(value)+'</span></label>').join('');
+   searchConj();
+  }
+  paintConjSummary();
+ }
+
  const pageSize=40;
  let sorting={column:'created',ascending:false},ledgerRows=[];
  const plannedOnly=fields.scheduled;
@@ -97,27 +137,51 @@
   input.innerHTML=options([['','Todos'],...[...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true})).map(value=>[value,value])]);
   input.value=[...input.options].some(option=>option.value===old)?old:'';
  }
+ function enriched(row){
+  const central=structures.get(CP.postId(row.id));
+  const territory=CP.territory(row,conjuntos,central);
+  if(!central)return {...row,...territory};
+  const kind=row.kind==='faixa'?'faixa':central.ss?(central.os||/PODA/.test(CP.norm(row.tipo))?'ambos':'ss'):'poste';
+  return {...central,...row,...territory,kind,point:row.point||central.point,criacao:row.criacao??central.criacao,
+   execucao:row.execucao??central.execucao,status:row.status||central.status,statusSGM:row.statusSGM||row.status||central.statusSGM,
+   tipo:row.tipo||central.tipo,equipe:row.equipe||central.equipe};
+ }
+ function centralOnly(row){
+  const kind=row.ss?(row.os?'ambos':'ss'):'poste';
+  return {...row,...CP.territory(row,conjuntos),kind,
+   groupStatus:row.osOpen?'Pendente (OS aberta)':row.ssWithoutOS?'SS aberta sem OS':row.ssOpen?'SS aberta':'Sem ciclo vinculado'};
+ }
+ let effectivePosts=[];
+ function collectPosts(){
+  effectivePosts=(source?.postes||[]).map(enriched);
+  for(const [id,row] of structures)if(!source?.index.has(id))effectivePosts.push(centralOnly(row));
+ }
  function populate(){
-  const currentTrecho=fields.trecho.value;
-  const rows=[...(source?.postes||[]),...structures.values(),...treeRows];
-  for(const name of ['polo','conj','alim','trecho','perim'])copyOptions(name,rows.map(r=>String(r[name]||'')));
-  const tramo=fields.trecho;
-  for(const [code,text] of [['T1+T2','T1 + T2'],['T1+T2+T3','T1 + T2 + T3']])tramo.insertBefore(new Option(text,code),tramo.options[1]);
-  if(currentTrecho.startsWith('T1+'))tramo.value=currentTrecho;
-  const status=['Atrasada','Pendente (OS aberta)','No ciclo atual','Próximos ciclos','Sem data','Fora do Prazo','Urgente (< 30 dias)','Dentro do Prazo','Sem dados','Sem ciclo vinculado','Atualizada em campo'];
-  copyOptions('state',status);
+  const rows=[...effectivePosts,...treeRows];
+  for(const name of ['polo','alim'])copyOptions(name,rows.map(r=>String(r[name]||'')));
+  populateConj(rows);
+  for(const [name,values] of [['perim',['RURAL','URBANO']],['trecho',['T1','T2','T3','T1+T2','T1+T2+T3']]]){
+   const select=fields[name],old=select.value;
+   select.innerHTML=options([['','Todos'],...values.map(value=>[value,value.replaceAll('+',' + ')])]);
+   select.value=values.includes(old)?old:'';
+  }
+  copyOptions('state',rows.flatMap(row=>[...CP.statuses(row)]));
  }
  function takeTrees(){
+  const index=new Map(effectivePosts.map(row=>[CP.postId(row.id),row]));
   treeRows=CP.overlay(source,window.CampoParque?.unifiedSnapshot()).map(tree=>{
-   const id=CP.postId(tree.posteGIS),plan=source?.index.get(id),structure=structures.get(id);
-   const post=plan?{...structure,...plan,point:plan.point||structure?.point}:structure;
-   return {...tree,kind:'arvore',post,point:CP.location(tree.lat,tree.lon),conj:post?.conj,perim:post?.perim,polo:tree.polo||post?.polo,
-    trecho:tree.trecho||post?.trecho,alim:tree.alim||post?.alim,chave:tree.chave||post?.chave,groupStatus:tree.prazo||(tree.live?'Atualizada em campo':'Sem dados')};
+   const post=index.get(CP.postId(tree.posteGIS));
+   return {...tree,...CP.territory({...tree,perim:tree.perim||tree.zona},conjuntos,post),kind:'arvore',post,
+    point:CP.location(tree.lat,tree.lon),groupStatus:tree.prazo||(tree.live?'Atualizada em campo':'Sem dados')};
   });
  }
  function recalc(){
   plannedOnly.disabled=!source;
-  if(!source){windows=[];takeTrees();populate();render();return;}
+  if(!source){
+   windows=[];fields.cycle.innerHTML=options([['','Aguardando base de ciclo']]);fields.cycle.disabled=true;
+   collectPosts();takeTrees();populate();render();return;
+  }
+  fields.cycle.disabled=false;
   now=params.today||CP.hojeSerial();windows=CP.janelas(params,params.count);
   const selected=Number(fields.cycle.value)||Math.min(params.count,CP.cicloAtual(params,now));
   fields.cycle.innerHTML=options(windows.map(j=>[j.k,j.rotulo]));fields.cycle.value=String(Math.min(selected,params.count));
@@ -125,17 +189,20 @@
   const eq=(a,b)=>a==null&&b==null||a!=null&&b!=null&&Math.abs(a-b)<1e-6;
   source.postes.forEach((p,i)=>{
    p.calc=CP.calcula(p,params,now,Math.max(4,params.count));p.kind=CP.service(p);p.groupStatus=p.calc.S;
+   if(source.estimated&&p.status==='PENDENTE')p.calc.origem='Criação da OS aberta';
    const check=source.check[i];
+   if(!check)return;
    if(eq(p.calc.P,check[0])&&eq(p.calc.Q,check[1])&&p.calc.prev.slice(0,4).every((date,j)=>eq(date,check[j+3])))aligned++;
   });
   const scenario=['inicio','janela','padrao','faixa'].some(k=>params[k]!==source.par[k]);
-  $('cycleCheck').textContent=scenario?'Simulação com premissas ajustadas nesta tela.':nums(aligned)+' de '+nums(source.postes.length)+' registros coincidem com o Excel em próximo retorno, ciclo e datas C1–C4.';
+  $('cycleCheck').textContent=source.estimated?'Previsão do consolidado com as premissas de ciclo abaixo. Importe o Excel para conferir suas datas e quantidades.':scenario?'Simulação com premissas ajustadas nesta tela.':nums(aligned)+' de '+nums(source.postes.length)+' registros coincidem com o Excel em próximo retorno, ciclo e datas C1–C4.';
   $('cycleGrowth').innerHTML=table(['Classe de crescimento','Rebrota de referência (m/ano)','Ciclo (meses)','Referência'],source.classes)+
    table(['Rede','Rede nua (m)','Rede protegida (m)','Zona de risco (m)'],source.par.it||[]);
-  takeTrees();populate();render();
+  collectPosts();takeTrees();populate();render();
  }
  function attributes(row){
-  for(const name of ['polo','conj','alim','perim'])if(fields[name].value&&fields[name].value!==String(row[name]||''))return false;
+  for(const name of ['polo','alim','perim'])if(fields[name].value&&fields[name].value!==String(row[name]||''))return false;
+  if(selectedConj.size&&!selectedConj.has(row.conj||unknownConj))return false;
   if(fields.trecho.value&&!CP.filtroTrecho('T'+CP.norm(row.trecho).replace(/^T/,'').trim(),fields.trecho.value))return false;
   if(fields.vera.value&&((row.kind==='arvore'?row.origin==='vera':(row.nvera||row.vera)>0)!==(fields.vera.value==='com')))return false;
   return true;
@@ -143,34 +210,30 @@
  function render(){
   if(!active())return;
   const k=Number(fields.cycle.value)||1,sit=fields.state.value,q=CP.norm(fields.query.value),scheduled=Boolean(source)&&plannedOnly.checked;
-  const passes=row=>(!sit||sit===row.groupStatus)&&(!q||CP.norm([row.id,row.posteGIS,row.esp,row.espVera,row.idsVera,row.alim,row.conj,row.chave].join(' ')).includes(q));
-  const posts=source?.postes||[], ledgerPosts=posts.map(row=>{
-   const link=structures.get(CP.postId(row.id));
-   if(!link)return row;
-   if(row.kind==='faixa'&&!link.ss&&!link.os)return row;
-   const kind=row.kind==='faixa'&&!link.ss?'faixa':link.ss?(link.os||/PODA/.test(CP.norm(row.tipo))?'ambos':'ss'):'poste';
-   return {...link,...row,kind,point:row.point||link.point};
-  });
-  for(const [id,row] of structures){
-   if(source?.index.has(id))continue;
-   ledgerPosts.push({...row,kind:row.ss?(row.os?'ambos':'ss'):'poste',groupStatus:'Sem ciclo vinculado'});
+  const passes=row=>(!sit||CP.statuses(row).has(sit))&&(!q||CP.norm([row.id,row.posteGIS,row.esp,row.espVera,row.idsVera,row.alim,row.conj,row.chave,row.orderId].join(' ')).includes(q));
+  const posts=source?.postes||[],ledgerPosts=effectivePosts;
+  for(const [i,row] of posts.entries()){
+   const effective=ledgerPosts[i];
+   row.fg=attributes(effective)&&CP.norm(row.cat)!=='OUTROS (NAO PODA)'&&passes(effective);
+   effective.fg=row.fg;
   }
-  for(const [i,row] of posts.entries())row.fg=attributes(ledgerPosts[i])&&CP.norm(row.cat)!=='OUTROS (NAO PODA)'&&passes(ledgerPosts[i]);
   const layers=new Set([...$('cycleMapTools').querySelectorAll('[data-cycle-layer]:checked')].map(input=>input.dataset.cycleLayer));
   const postRows=ledgerPosts.filter((row,i)=>(i<posts.length?posts[i].fg:attributes(row)&&passes(row))&&(!scheduled||CP.isNum(row.calc?.prev[k-1])));
   const trees=treeRows.filter(row=>attributes(row)&&passes(row)&&(!scheduled||!row.post?.calc||CP.isNum(row.post.calc.prev[k-1])));
   allRows=[...postRows,...trees];
   visible=allRows.filter(row=>layers.has(row.kind));
-  stats=windows.map(j=>CP.gerencial(posts,source.execs,params,j.k,windows));
-  $('cycleFilterCount').textContent=nums(postRows.length)+' postes e serviços · '+nums(trees.length)+' árvores no recorte. '+(scheduled?'Postes filtrados pela previsão de C'+k+'.':'Inclui postes sem previsão na janela.');
+  const forecastPosts=ledgerPosts.slice(0,posts.length);
+  stats=windows.map(j=>CP.gerencial(forecastPosts,source.execs,params,j.k,windows));
+  $('cycleFilterCount').textContent=nums(postRows.length)+' postes e serviços · '+nums(trees.length)+' árvores no recorte. '+(scheduled?'Postes filtrados pela previsão de C'+k+'.':'Inclui postes sem previsão na janela.')+(scheduled&&!postRows.length&&sit?' Confira o recorte com Só previstos na janela desmarcado.':'');
   paintMetrics(k,trees,postRows);refreshLedger();paintMap();
  }
  const table=(heads,rows)=>'<div class="cycle-table"><table><thead><tr>'+heads.map(v=>'<th scope="col">'+esc(v)+'</th>').join('')+
-  '</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  '</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(v=>'<td>'+esc(v==null||v===''?'—':v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
  function paintMetrics(k,trees,posts){
-  const m=stats[k-1];
-  const cards=m?[['Postes previstos',m.postes],['Pontos de poda previstos',m.arv],['Executado no SGM',m.exec],['Avanço da janela',m.arv?pct.format(m.exec/m.arv):'—'],
-   ['OS abertas (pontos)',m.pend],['Atrasos herdados (pontos)',m.atras],['Limpeza de faixa (qtd.)',m.faixa]]:[];
+  const m=stats[k-1],estimated=source?.estimated;
+  const executed=value=>estimated?'—':nums(value),advance=(total,real)=>estimated||!total?'—':pct.format(real/total);
+  const cards=m?[['Postes previstos',m.postes],['Pontos de poda previstos'+(estimated?' · estimativa':''),m.arv],['Executado no SGM',estimated?'—':m.exec],['Avanço da janela',advance(m.arv,m.exec)],
+   ['OS abertas (pontos)',m.pend],['Atrasos herdados (pontos)',m.atras],['Limpeza de faixa (qtd.)',estimated?'—':m.faixa]]:[];
   const vera=trees.filter(t=>t.origin==='vera').length,campo=trees.filter(t=>t.origin==='campo').length;
   cards.push(['Árvores individuais no recorte',trees.length],['Base VERA',vera],['Novas árvores do campo',campo],
    ['Referências provisórias do Excel',trees.length-vera-campo],
@@ -178,18 +241,19 @@
   $('cycleMetrics').innerHTML=cards.filter(([label,value])=>label!=='Referências provisórias do Excel'||value).map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(typeof value==='number'?nums(value):value)+'</strong></div>').join('');
   const missing='<p class="small">Carregue o arquivo em <button type="button" data-cycle-settings>Parâmetros e diretórios</button> para ver as previsões e o realizado por janela.</p>';
   const polos=['BRA','CZS','RBR'];
-  $('cycleWindows').innerHTML=m?table(['Ciclo','Janela','Postes','Pontos de poda',...polos,'Executado','OS aberta','Avanço'],
+  const centralNote='<p class="small">Previsão estimada a partir da última poda e das OS abertas por poste. O realizado por poste e a limpeza de faixa da janela dependem do Excel do ciclo.</p>';
+  $('cycleWindows').innerHTML=m?(estimated?centralNote:'')+table(['Ciclo','Janela','Postes','Pontos de poda',...polos,'Executado','OS aberta','Avanço'],
    windows.map((j,i)=>{
     const r=stats[i];
-    return ['C'+j.k+(j.k===k?' · selecionado':''),CP.fmt(j.ini)+' a '+CP.fmt(j.fim),nums(r.postes),nums(r.arv),...polos.map(p=>nums(r.polo[p])),nums(r.exec),nums(r.pend),r.arv?pct.format(r.exec/r.arv):'—'];
+    return ['C'+j.k+(j.k===k?' · selecionado':''),CP.fmt(j.ini)+' a '+CP.fmt(j.fim),nums(r.postes),nums(r.arv),...polos.map(p=>nums(r.polo[p])),executed(r.exec),nums(r.pend),advance(r.arv,r.exec)];
    })):missing;
   const monthLabel=new Intl.DateTimeFormat('pt-BR',{month:'short',year:'2-digit',timeZone:'UTC'});
   const max=Math.max(1,...(m?.mes||[]).map(x=>Math.max(x.arv,x.exec)));
-  $('cycleMonthly').innerHTML=m?'<h4>Distribuição mensal · C'+k+'</h4><p class="small">Previsto e executado em pontos de poda</p><div class="cycle-month-chart">'+
-   m.mes.map(x=>'<div class="cycle-month" title="'+esc(CP.fmt(x.ini)+' a '+CP.fmt(x.fim)+' · '+nums(x.arv)+' previstos · '+nums(x.exec)+' executados')+'"><div><span style="height:'+100*x.arv/max+'%"></span><span style="height:'+100*x.exec/max+'%"></span></div><small>'+esc(monthLabel.format(new Date(dateIso(x.ini)+'T12:00:00Z')))+ '</small></div>').join('')+'</div>'+
-   table(['Período','Postes','Previsto',...polos,'Executado','Avanço'],m.mes.map(x=>[CP.fmt(x.ini)+' a '+CP.fmt(x.fim),nums(x.postes),nums(x.arv),...polos.map(p=>nums(x.polo[p])),nums(x.exec),x.arv?pct.format(x.exec/x.arv):'—'])):'';
+  $('cycleMonthly').innerHTML=m?'<h4>Distribuição mensal · C'+k+'</h4><p class="small">'+(estimated?'Previsto estimado em pontos de poda':'Previsto e executado em pontos de poda')+'</p><div class="cycle-month-chart">'+
+   m.mes.map(x=>'<div class="cycle-month" title="'+esc(CP.fmt(x.ini)+' a '+CP.fmt(x.fim)+' · '+nums(x.arv)+' previstos'+(estimated?'':' · '+nums(x.exec)+' executados'))+'"><div><span style="height:'+100*x.arv/max+'%"></span><span style="height:'+100*x.exec/max+'%"></span></div><small>'+esc(monthLabel.format(new Date(dateIso(x.ini)+'T12:00:00Z')))+ '</small></div>').join('')+'</div>'+
+   table(['Período','Postes','Previsto',...polos,'Executado','Avanço'],m.mes.map(x=>[CP.fmt(x.ini)+' a '+CP.fmt(x.fim),nums(x.postes),nums(x.arv),...polos.map(p=>nums(x.polo[p])),executed(x.exec),advance(x.arv,x.exec)])):'';
   $('cycleSets').innerHTML=m?'<h4>Por conjunto · C'+k+'</h4>'+table(['Conjunto','Polo','Postes','Pontos de poda','T1','T2','T3','OS aberta','Atraso','Executado'],
-   Object.entries(m.conj).sort((a,b)=>b[1].arv-a[1].arv).map(([name,x])=>[name,x.polo,...['postes','arv','T1','T2','T3','pend','atras','exec'].map(v=>nums(x[v]))])):'';
+   Object.entries(m.conj).sort((a,b)=>b[1].arv-a[1].arv).map(([name,x])=>[name,x.polo,...['postes','arv','T1','T2','T3','pend','atras','exec'].map(v=>v==='exec'?executed(x.exec):nums(x[v]))])):'';
   const distribution=new Map(),rhythm=new Map();
   for(const row of source?.postes||[]){
    if(!row.fg)continue;
@@ -206,7 +270,7 @@
  const columns=[
   ['id','ID',r=>r.id],['kind','Serviço',r=>labels[r.kind]],['post','Poste',r=>r.posteGIS||r.id],
   ['feeder','Alimentador',r=>r.alim],['set','Conjunto',r=>r.conj],['hub','Polo',r=>r.polo],['segment','Trecho',r=>r.trecho],['zone','Perímetro',r=>r.perim],
-  ['key','Chave',r=>r.chave],['type','Tipo da última OS',r=>r.tipo],['status','Status SGM',r=>r.status],['situation','Situação',r=>r.groupStatus],
+  ['key','Chave',r=>r.chave],['type','Tipo da OS',r=>r.tipo],['status','Status SGM',r=>r.statusSGM||r.status],['osId','OS aberta',r=>r.orderId],['situation','Situação',r=>r.groupStatus],
   ['created','Última criação',r=>r.criacao,CP.fmt],['executed','Última execução',r=>r.execucao,CP.fmt],
   ['months','Ciclo (meses)',r=>r.calc?.J],['basis','Origem do ciclo',r=>r.calc?.origem],['last','Ciclo da última poda',r=>r.calc?.cicloUlt],
   ['next','Próxima poda',r=>r.calc?.P,CP.fmt],['forecast','Previsão no ciclo',r=>r.calc?.prev[Number(fields.cycle.value)-1],CP.fmt],['rhythm','Ritmo',r=>r.calc?.W],
@@ -237,7 +301,7 @@
    '</tr></thead><tbody>'+rows.map((row,i)=>{
     const locate=row.point?'<button type="button" data-cycle-map="'+(start+i)+'" aria-label="Ver '+esc(row.id)+' no mapa">Localizar</button>':'';
     const ext=row.point?'<a target="_blank" rel="noopener noreferrer" href="https://maps.google.com/?q='+row.point.join(',')+'">Google Maps</a>':'';
-    return '<tr><td>'+locate+ext+'</td>'+rowValues(row).map((v,n)=>n===0?'<td><button type="button" class="link-button" data-cycle-row="'+(start+i)+'">'+esc(v)+'</button></td>':'<td>'+esc(v)+'</td>').join('')+'</tr>';
+    return '<tr><td>'+locate+ext+'</td>'+rowValues(row).map((v,n)=>n===0?'<td><button type="button" class="link-button" data-cycle-row="'+(start+i)+'">'+esc(v)+'</button></td>':'<td>'+esc(v==null||v===''?'—':v)+'</td>').join('')+'</tr>';
    }).join('')+'</tbody></table></div>':'<p>Nenhum registro neste recorte.</p>';
   $('cyclePage').textContent='Página '+(page+1)+' de '+total+' · '+nums(ledgerRows.length)+' registros';
   $('cyclePrev').disabled=!page;$('cycleNext').disabled=page>=total-1;
@@ -248,7 +312,7 @@
   const rows=row.kind==='arvore'?[
    ['Espécie',row.esp],['Situação',row.groupStatus],['Prazo no Excel',row.prazo],['Necessita poda',row.poda],['Local da árvore',({publico:'Público',privado:'Privado'})[row.site]],
    ['Poste',row.posteGIS],['Altura (m)',row.altura],['DAP (cm)',row.dap],['Risco',row.classe],['Ação',row.acao],['Motivo',row.motivo],['Levantamento',CP.fmt(row.dataLev)]
-  ]:[['Situação',row.groupStatus],['Última OS',row.tipo],['Status SGM',row.status],['Criação',CP.fmt(row.criacao)],['Última execução',CP.fmt(row.execucao)],
+  ]:[['Situação',row.groupStatus],['Última OS',row.tipo],['Status SGM',row.statusSGM||row.status],['OS aberta',row.orderId],['Criação',CP.fmt(row.criacao)],['Última execução',CP.fmt(row.execucao)],
    ['Próximo retorno',CP.fmt(row.calc?.P)],['Retorno seguinte',CP.fmt(row.calc?.U)],['Ciclo',row.calc?row.calc.J+' meses · '+row.calc.origem:''],
    ['Previsões',row.calc?.prev.slice(0,params.count).map((value,i)=>value==null?'':'C'+(i+1)+' '+CP.fmt(value)).filter(Boolean).join(' · ')],
    ['Pontos de poda',row.arv],['Quantidade de faixa',row.faixa],['Equipe',row.equipe],['Árvores VERA',row.idsVera],['Espécies VERA',row.espVera]];
@@ -324,7 +388,7 @@
     if(!active()||token!==epoch)return;
     revision=meta.revision||'';
     if(localSource)return;
-    if(!revision){$('cycleSource').textContent='Mapa e carteira disponíveis. Carregue o Excel em Parâmetros e diretórios para ver as previsões.';if(!source)recalc();return;}
+    if(!revision){if(!source){$('cycleSource').textContent='Carregando o Parque de Poda e o SGM…';recalc();}return;}
     if(!force&&source?.revision===revision)return;
     $('cycleSource').textContent='Carregando a base de ciclo…';
     const response=await fetch(endpoint,{cache:'no-store',signal});
@@ -346,14 +410,24 @@
    try{
     const meta=await window.CampoControl.api('/api/central/meta');
     if(token!==epoch||!active())return;
-    if(!meta.manifest?.parque_postes){$('cycleSSStatus').textContent='Parque de Poda com vínculos de SS indisponível.';return;}
-    if(meta.generation===structureGeneration)return;
-    const rows=await Central.rowsFromGeneration(meta,'parque_postes');
+    if(!meta.manifest?.parque_postes){$('cycleSSStatus').textContent='Parque de Poda com vínculos de SS indisponível.';if(!source)$('cycleSource').textContent='Carregue o Excel em Parâmetros e diretórios para ver as previsões.';return;}
+    if(structureGeneration&&meta.generation===structureGeneration)return;
+    const [rows,orders,metadata]=await Promise.all([
+     Central.rowsFromGeneration(meta,'parque_postes'),
+     meta.manifest.os_abertas?Central.rowsFromGeneration(meta,'os_abertas'):[],
+     meta.manifest.resumo?Central.dataFromGeneration(meta,'resumo'):{}
+    ]);
     if(token!==epoch||!active())return;
-    structures=CP.structureSources(rows);structureGeneration=meta.generation;
+    conjuntos=metadata.conjuntos||{};
+    structures=CP.structureSources(rows,orders);structureGeneration=meta.generation;
     const ss=[...structures.values()].filter(row=>row.ss);
     $('cycleSSStatus').textContent=nums(ss.length)+' postes vinculados a SS de poda · '+nums(ss.filter(row=>row.ssWithoutOS).length)+' com SS aberta sem OS.';
-    takeTrees();populate();render();
+    if(!source||source.estimated){
+     source=CP.centralPlan(structures,conjuntos,metadata.corteOs||meta.updatedAt);
+     params=params||defaults();updateParameters();
+     $('cycleSource').textContent='Parque de Poda / SGM · previsão estimada '+(metadata.corteOs?'· corte do SGM em '+metadata.corteOs.split(' ')[0].split('-').reverse().join('/'):'');
+    }
+    recalc();
    }catch(e){if(token===epoch)$('cycleSSStatus').textContent='Parque de Poda: '+e.message;}
    finally{if(token===epoch)structureRequest=null;}
   })();
@@ -407,7 +481,7 @@
  };
  parameterForm.onreset=event=>{event.preventDefault();if(source){params=defaults();updateParameters();recalc();}};
  const update=()=>{page=0;needsFit=true;$('cycleDetail').replaceChildren();render();};
- filters.onchange=update;filters.onsubmit=event=>event.preventDefault();
+ filters.onchange=event=>{if(event.target===fields.cycle&&source)plannedOnly.checked=true;if(event.target!==conjSearch)update();};filters.onsubmit=event=>event.preventDefault();
  fields.query.oninput=()=>{clearTimeout(filterTimer);filterTimer=setTimeout(update,220);};
  $('cycleMapTools').onchange=render;
  $('cycleFit').onclick=fit;
@@ -444,7 +518,7 @@
   if(!on){if($('cycleSettings').open)$('cycleSettings').close();markers?.clearLayers();links?.clearLayers();}else if(!entering){paintMap();}
  }
  window.CampoCycle={attach,active,visibility,stop(){
-  epoch++;structures=new Map();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;localSource=false;revision='';params=null;windows=[];allRows=[];ledgerRows=[];visible=[];plannedOnly.disabled=true;fields.cycle.replaceChildren();treeRows=[];stats=[];lastHash=false;
+  epoch++;structures=new Map();conjuntos={};effectivePosts=[];selectedConj.clear();paintConjSummary();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;localSource=false;revision='';params=null;windows=[];allRows=[];ledgerRows=[];visible=[];plannedOnly.disabled=true;fields.cycle.replaceChildren();treeRows=[];stats=[];lastHash=false;
   for(const id of ['cycleSource','cycleRefreshStatus','cycleSSStatus','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows','cycleBreakdown','cycleLedgerCount','cyclePage','cycleFilterCount'])$(id).replaceChildren();
   $('cycleFile').value='';
   visibility();

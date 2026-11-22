@@ -133,18 +133,65 @@ CP.overlay = (source,snapshot) => {
     return row;
   });
 };
-if(typeof module!=='undefined')module.exports=CP;
-
-CP.structureSources = rows => {
+CP.structureSources = (rows, orders=[]) => {
+  const latest=CP.latestPruningOrders(orders);
   const posts=new Map();
   for(const row of rows){
     const id=CP.postId(row.id);
     if(!id)continue;
     const ss=Number(row.nSS)||0,os=(Number(row.nEx)||0)+(Number(row.nAb)||0)+(Number(row.nSem)||0);
-    if(!ss&&!os)continue;
-    posts.set(id,{id:'226-'+id,vera:row.vera,ss,ssOpen:row.ssAb||0,ssWithoutOS:row.ssSem||0,os,
-      polo:row.polo,conj:row.conj,alim:row.alim,chave:row.chave,trecho:row.tr,perim:row.per,
-      point:CP.location(Number(row.lat),Number(row.lon))});
+    const order=latest.get(id),osOpen=Math.max((Number(row.nAb)||0)+(Number(row.nSem)||0),order?1:0);
+    if(!ss&&!os&&!order)continue;
+    const execucao=CP.centralDate(row.ult);
+    const criada=CP.centralDate(order?.criada)??(CP.norm(row.baseF)==='CRIACAO DA OS'?CP.centralDate(row.base):null);
+    posts.set(id,{id:'226-'+id,vera:row.vera,ss,ssOpen:row.ssAb||0,ssWithoutOS:row.ssSem||0,os:Math.max(os,order?1:0),osOpen,arvE:row.arvE,cat:row.cat,execucao,
+      criacao:criada,tipo:order?.desc||order?.tipo||(execucao!=null?'PODA':''),statusSGM:order?.status||(osOpen?'':execucao!=null?'EXECUTADA':''),
+      status:osOpen?'PENDENTE':'',orderId:order?.os,equipe:order?.eqProg||row.eq,
+      polo:row.polo||order?.polo,conj:row.conj||order?.conj,alim:row.alim||order?.alim,chave:row.chave||order?.chave,
+      trecho:CP.segment(row.tr)||CP.segment(order?.tr),perim:CP.perimeter(row.per)||CP.perimeter(order?.per),
+      point:CP.location(Number(row.lat),Number(row.lon))||CP.location(Number(order?.lat),Number(order?.lon))});
   }
   return posts;
 };
+
+// O consolidado usa dias desde 01/01/2020; o ciclo trabalha com datas seriais do Excel.
+const CENTRAL_DATE = CP.DATE(2020,1,1);
+CP.centralDate = day => Number.isInteger(day) && day>=0 && day<20000 ? CENTRAL_DATE+day : null;
+CP.perimeter = value => ({R:'RURAL',RURAL:'RURAL',U:'URBANO',URBANO:'URBANO',URBANA:'URBANO'})[CP.norm(value)]||'';
+CP.segment = value => {
+  const number=CP.norm(value).replace(/^T\s*/,'');
+  return /^[1-3]$/.test(number)?'T'+number:'';
+};
+CP.territory = (row,names,linked={}) => {
+  const name=String(row.conj||linked.conj||'').trim();
+  const conjunto=names[name]||(!/^\d+$/.test(name)?name:linked.conj);
+  return {conj:conjunto&&!/^\d+$/.test(String(conjunto))?String(conjunto).toLocaleUpperCase('pt-BR'):'',
+    perim:CP.perimeter(row.perim)||CP.perimeter(linked.perim),trecho:CP.segment(row.trecho)||CP.segment(linked.trecho),
+    polo:CP.norm(row.polo||linked.polo),alim:CP.norm(row.alim||linked.alim),chave:row.chave||linked.chave||''};
+};
+CP.latestPruningOrders = rows => {
+  const index=new Map();
+  for(const order of rows){
+    if(CP.norm(order.tipo)!=='PODA'||order.expurgo||!/^\d+$/.test(CP.postId(order.poste)))continue;
+    const id=CP.postId(order.poste),previous=index.get(id);
+    if(!previous||(order.criada??-1)>(previous.criada??-1)||order.criada===previous.criada&&Number(order.os)>Number(previous.os))index.set(id,order);
+  }
+  return index;
+};
+CP.statuses = row => {
+  const statuses=new Set([row.groupStatus,row.post?.groupStatus].filter(Boolean));
+  const structure=row.post||row;
+  if(structure.ssWithoutOS>0)statuses.add('SS aberta sem OS');
+  if(structure.ssOpen>0)statuses.add('SS aberta');
+  if(structure.osOpen>0||structure.status==='PENDENTE')statuses.add('Pendente (OS aberta)');
+  return statuses;
+};
+CP.centralPlan = (posts,names,updatedAt) => {
+  const postes=[...posts.values()].map(row=>({...row,...CP.territory(row,names),nvera:row.vera,arv:row.arvE,cycleQtyBasis:'Estimativa do Parque de Poda'}));
+  const index=new Map(postes.map(row=>[CP.postId(row.id),row]));
+  // Mesmas janelas do arquivo de referência. O consolidado fornece as datas observadas por poste.
+  return {postes,index,arvores:[],execs:[],check:[],classes:[],estimated:true,
+    par:{inicio:CP.DATE(2026,10,2),janela:6,padrao:6,faixa:12},source:{local:'Parque de Poda / SGM',modificado:updatedAt}};
+};
+
+if(typeof module!=='undefined')module.exports=CP;

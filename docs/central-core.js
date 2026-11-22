@@ -40,7 +40,8 @@ const Central=(()=>{
  }
  function decodificaLinhas(t){if(!t)return [];const ch=Object.keys(t.c),cols=ch.map(c=>{const v=t.c[c];return Array.isArray(v)?v:v.i.map(i=>v.k[i]);}),o=new Array(t.n);for(let i=0;i<t.n;i++){const r={};for(let j=0;j<ch.length;j++)r[ch[j]]=cols[j][i];o[i]=r;}return o;}
  function linhasRaw(nome){return objetos[nome]||(dados[nome]?(objetos[nome]=decodificaLinhas(dados[nome])):[]);}
- async function rowsFromGeneration(meta,name){return decodificaLinhas(await baixar(name,meta.generation,meta.manifest[name].parts));}
+ async function dataFromGeneration(meta,name){return baixar(name,meta.generation,meta.manifest[name].parts);}
+ async function rowsFromGeneration(meta,name){return decodificaLinhas(await dataFromGeneration(meta,name));}
  const norm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
  const primeiro=(r,ks)=>{for(const k of ks)if(r?.[k]!=null&&String(r[k]).trim()!=='')return r[k];return '';};
  function indiceDimensoes(){if(dimensoesCache)return dimensoesCache;const porChave=new Map(),porAlim=new Map();for(const k of linhasRaw('chaves')){const chave=norm(primeiro(k,['chave','name','chaveOriginal','chave_original'])),alim=norm(primeiro(k,['alim','alimentador','alimentador_'])),d={plano:primeiro(k,['plano','planoConsolidado','plano_consolidado']),polo:primeiro(k,['polo','POLO']),localidade:primeiro(k,['localidade','municipio','município','mun'])};if(chave)porChave.set(chave,d);if(alim){let a=porAlim.get(alim);if(!a)porAlim.set(alim,a={plano:new Set(),polo:new Set(),localidade:new Set()});for(const x of ['plano','polo','localidade'])if(d[x])a[x].add(norm(d[x]));}}return dimensoesCache={porChave,porAlim};}
@@ -78,5 +79,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {lista,em,tem,um,bin,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,rowsFromGeneration,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {lista,em,tem,um,bin,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,dataFromGeneration,rowsFromGeneration,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();
