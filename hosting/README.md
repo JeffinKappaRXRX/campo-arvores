@@ -290,3 +290,6 @@ Em **Base de atualização e premissas**, publique um Controle Man V1.xlsx salvo
 O vínculo de uma árvore de campo ao catálogo é feito pelo ID explícito da árvore. O ID do poste liga a árvore à estrutura e à ficha do ciclo. Inspeções sincronizadas atualizam o mapa e a lista através do fluxo central, mantendo a execução do SGM como fonte do realizado. O extrato do Excel e os marcadores de campo têm a mesma seleção geográfica.
 
 O cadastro ativo de VERA e campo é a fonte da contagem de árvores. As linhas de árvores do Excel complementam os dados pelo ID. O Parque de Poda fornece as contagens de SS e OS por ID de poste. O mapa sinaliza cada origem e mantém as fichas sem vínculo de ciclo disponíveis. Novas versões do Excel podem ser publicadas pela gestão.
+
+
+Em Vegetação → Mapa, a visão geral, o mapa, as janelas de ciclo e a carteira por poste compartilham o filtro e o mesmo endereço. Parâmetros e diretórios abre um diálogo. A carga local é mantida na página atual, e a opção de publicação central usa a conta de gestão. Os diretórios informados ficam no navegador; para ler o arquivo, selecione-o no diálogo.

@@ -142,7 +142,7 @@ CP.structureSources = rows => {
     if(!id)continue;
     const ss=Number(row.nSS)||0,os=(Number(row.nEx)||0)+(Number(row.nAb)||0)+(Number(row.nSem)||0);
     if(!ss&&!os)continue;
-    posts.set(id,{id:'226-'+id,ss,ssOpen:row.ssAb||0,ssWithoutOS:row.ssSem||0,os,
+    posts.set(id,{id:'226-'+id,vera:row.vera,ss,ssOpen:row.ssAb||0,ssWithoutOS:row.ssSem||0,os,
       polo:row.polo,conj:row.conj,alim:row.alim,chave:row.chave,trecho:row.tr,perim:row.per,
       point:CP.location(Number(row.lat),Number(row.lon))});
   }

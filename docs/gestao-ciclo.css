@@ -31,3 +31,40 @@
 .cycle-popup dt{font-weight:650}
 .cycle-popup dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:690px){.cycle-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.cycle-on #workspace>#cycleSummary{display:block}
+.cycle-on #routePlanner,.cycle-on #routeKpis{display:none}
+#cycleSummary[hidden]{display:none}
+#cycleSummary,#cycleLedger,#cycleMetrics,#cycleMapTools{scroll-margin-top:16px}
+#cycleLedger h3,#cycleSummary h3{margin-top:0}
+#cycleLedgerCount{margin:4px 0 0}
+.cycle-actions,.cycle-jumps{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cycle-jumps{margin-top:12px}
+.cycle-jumps button{min-height:34px;padding:6px 12px}
+#cycleSettings{max-width:min(940px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:20px}
+#cycleSettings::backdrop{background:#171723af}
+#cycleDirectories{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+#cycleFilters input[type=checkbox],#cycleMapTools input[type=checkbox]{appearance:auto;width:16px;height:16px;margin:0 4px 0 0;vertical-align:middle;accent-color:var(--green)}
+#cycleFilters label:last-child{padding:8px 0}
+#cycleMapTools{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center}
+#cycleMapStatus{grid-column:1/-1}
+.cycle-map-legend label{white-space:nowrap}
+.cycle-color-legend{grid-column:1/-1}
+.cycle-color-legend div{display:flex;gap:6px 14px;flex-wrap:wrap;padding-top:8px}
+.cycle-color-legend span{display:flex;align-items:center;gap:5px;font-size:12px}
+.cycle-color-legend i{width:12px;height:12px;border:2px solid var(--ring);border-radius:50%}
+.cycle-overview-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+.cycle-overview-grid h4,#cycleSets h4{margin:16px 0 6px}
+.cycle-month-chart{display:flex;gap:8px;overflow:auto;padding:0 3px 6px;border-bottom:1px solid var(--line)}
+.cycle-month{flex:1 0 40px;min-width:0;text-align:center}
+.cycle-month>div{height:112px;display:flex;align-items:end;justify-content:center;gap:4px;border-bottom:1px solid var(--line)}
+.cycle-month span{width:min(18px,40%);border-radius:3px 3px 0 0;background:#25845f}
+.cycle-month span+span{background:#548dd3}
+.cycle-month small{display:block;font-size:10px;margin-top:3px}
+.cycle-balance{display:grid;grid-template-columns:minmax(112px,1fr) minmax(36px,1.25fr) max-content;align-items:center;gap:8px;font-size:12px;margin:8px 0}
+.cycle-balance i{width:var(--length);height:8px;background:var(--bar);border-radius:6px}
+#cycleRows .cycle-table{max-height:590px;overflow:auto}
+#cycleRows thead th{position:sticky;top:0;background:var(--soft);z-index:1}
+#cycleRows th button,#cycleRows td button{min-height:26px;padding:3px 6px;font-size:inherit}
+#cycleRows td:first-child a{margin-inline-start:6px}
+@media(max-width:900px){.cycle-overview-grid,#cycleMapTools{grid-template-columns:minmax(0,1fr)}}

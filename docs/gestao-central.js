@@ -12,7 +12,7 @@
   if(!liberado&&carregado){quadro.src='about:blank';carregado=false;}
   if(voltou&&liberado){dispatchEvent(new Event('resize'));$(location.hash.slice(1))?.scrollIntoView();}
   const titulo=$('gestaoTitulo');
-  if(titulo)titulo.textContent=!on&&liberado?(n==='mapa'?'Plano de ciclo de poda':'Inspeções e vegetação'):'Gestão da distribuição';
+  if(titulo)titulo.textContent=!on&&liberado?(window.CampoCycle?.active()?'Plano de ciclo de poda':'Inspeções e vegetação'):'Gestão da distribuição';
   window.CampoCycle?.visibility();marca();}
  addEventListener('hashchange',aplica);
  new MutationObserver(aplica).observe(work,{attributes:true,attributeFilter:['hidden']});
