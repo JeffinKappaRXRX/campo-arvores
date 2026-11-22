@@ -280,3 +280,13 @@ A camada leve `18_Vaos_BT_secundario` preserva `Id` e `NAME BLOCO`, mas não pre
 No aparelho autenticado, `bt-feeder-lookup.js` baixa a relação e mantém uma cópia offline privada. Tocar em um vão BT passa a preencher ID e alimentador como na MT; a indexação de uma base nova também associa o alimentador ao vão. Valores SOG e vazios não são promovidos a alimentador. Se não houver relação inequívoca, o app mantém o alimentador atual e não inventa dado.
 
 Fonte conciliada em 06/11/2026: 114.535 vãos BT, 95.510 com alimentador operacional inequívoco, representados por 11.660 blocos e 20 IDs diretos. Outros 19.025 registros da origem estavam sem alimentador confiável e permanecem sem preenchimento automático. A varredura central corrigiu 10 cadastros exclusivamente BT com divergência, gerando nova versão e evento de sincronização para cada um; cadastros MT/BT não foram alterados pelo ID de vão MT.
+
+## Plano de ciclo de poda integrado
+
+O endereço `gestao.html#c-mapa` abre o plano baseado em Controle Man V1 no mapa existente da gestão. O mapa usa o mesmo pacote GPKG, índice local e perfis de rede usados no campo. A rede MT central serve de referência enquanto o pacote completo é preparado. As camadas distinguem poste com poda, árvore individual e limpeza de faixa. A tabela e o CSV mantêm itens sem coordenada.
+
+Em **Base de atualização e premissas**, publique um Controle Man V1.xlsx salvo após recálculo ou um extrato do Ciclo Poda. A gestão lê Ciclo Poda, Base Poda SGM, BASE ÁRVORES e Crescimento Espécies em segundo plano e publica a versão como uma transação na base privada. Os parâmetros importados são aplicados ao abrir. Os ajustes de cenário ficam na tela em uso. O painel confere próximo retorno, ciclo e datas C1–C4 com os resultados do Excel. Os arquivos de rede corporativa do Windows e os links privados de origem não são incluídos nos arquivos públicos.
+
+O vínculo de uma árvore de campo ao catálogo é feito pelo ID explícito da árvore. O ID do poste liga a árvore à estrutura e à ficha do ciclo. Inspeções sincronizadas atualizam o mapa e a lista através do fluxo central, mantendo a execução do SGM como fonte do realizado. O extrato do Excel e os marcadores de campo têm a mesma seleção geográfica.
+
+A carga inicial e as atualizações usam o formulário de importação da gestão.

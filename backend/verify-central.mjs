@@ -43,3 +43,30 @@ await call('/api/central/premissas',{premissas:{marcoInsp:null}},auth);pm=(await
 // O VERA não é tocado por este envio.
 assert.equal((await call('/api/vera/trees',undefined,auth)).status,200);
 console.log('central ok');
+
+// A publicação de ciclo usa a sessão de gestão e uma versão esperada.
+const {gzipSync,gunzipSync}=await import('node:zlib');
+const cycle='/api/ciclo-poda',initial={
+ parametros:{inicio:46297,janela:6,padrao:6,faixa:12},checagem_excel:[[null]],
+ postes:{campos:['id'],linhas:[['226-1']],dic:{}},arvores:{campos:['id'],linhas:[['11']],dic:{}},execucoes:[]
+};
+const cycleCall=(suffix,auth,body)=>app.fetch(new Request('https://api.test'+cycle+suffix,{
+ method:body?'POST':'GET',headers:{Origin:env.APP_ORIGIN,'Content-Type':'application/gzip',Cookie:auth?.cookie||''},body:body?gzipSync(JSON.stringify(body)):undefined
+}),env);
+assert.equal((await cycleCall('?meta=1')).status,401);
+assert.equal((await cycleCall('?meta=1',inspector)).status,403);
+assert.equal((await cycleCall('',inspector,initial)).status,403);
+assert.equal((await cycleCall('',auth)).status,404);
+assert.equal((await cycleCall('',auth,{})).status,400);
+const first=await cycleCall('',auth,initial);
+assert.equal(first.status,200);
+const initialRevision=(await first.json()).revision;
+const fetchCycle=await cycleCall('',auth);
+assert.equal(fetchCycle.headers.get('x-cycle-revision'),initialRevision);
+assert.deepEqual(JSON.parse(gunzipSync(Buffer.from(await fetchCycle.arrayBuffer()))),initial);
+assert.equal((await cycleCall('',auth,initial)).status,409);
+const second=await cycleCall('?base='+initialRevision,auth,{...initial,execucoes:[['226-1',46299,8]]});
+assert.equal(second.status,200);
+assert.equal((await cycleCall('?base='+initialRevision,auth,initial)).status,409);
+assert.equal(sql.prepare('SELECT count(*) AS n FROM campo_cycle_snapshot').get().n,2);
+console.log('Ciclo de poda: autenticação, leitura privada, publicação e rejeição de versão antiga.');

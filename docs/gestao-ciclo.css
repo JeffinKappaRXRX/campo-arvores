@@ -1,0 +1,33 @@
+#cycleManagement[hidden],#cycleLedger[hidden],#cycleMapTools[hidden]{display:none}
+.cycle-on #workspace>:not(#cycleManagement):not(.cycle-map-row):not(#cycleLedger),
+.cycle-on .cycle-map-row>:not(#mapa),.cycle-on #parqueToggle,.cycle-on #parqueMenu,
+.cycle-on #mapa .panel-head .eyebrow,.cycle-on #mapa #networkFeeder,.cycle-on #mapa label:has(>#networkFeeder){display:none}
+.cycle-on .cycle-map-row{grid-template-columns:minmax(0,1fr)}
+.cycle-on #mapFrame{height:clamp(360px,65vh,790px)}
+.cycle-on #mapa.map-expanded #mapFrame{height:100%}
+#cycleManagement .panel-head h2{margin:0}
+#cycleManagement .panel-head p{margin:6px 0 0}
+#cycleManagement details{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px}
+#cycleManagement summary{cursor:pointer;font-weight:650}
+#cycleSettings form,.cycle-filters{display:grid;align-items:end;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+#cycleFilters label,#cycleSettings label{font-size:12px;font-weight:600}
+#cycleFilters select,#cycleFilters input:not([type=checkbox]),#cycleSettings input{display:block;width:100%;margin-top:5px}
+#cycleUpload button{justify-self:start}
+.cycle-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px}
+.cycle-metrics div{display:grid;min-height:74px;gap:6px;padding:11px;background:var(--soft);border:1px solid var(--line);border-radius:8px}
+.cycle-metrics span{font-size:12px}
+.cycle-metrics strong{font-size:23px}
+#cycleMapTools{display:flex;align-items:center;gap:8px 16px;margin:0 0 10px;flex-wrap:wrap}
+.cycle-map-legend{display:flex;flex-wrap:wrap;gap:6px 12px}
+.cycle-map-legend label{display:inline-flex;align-items:center;gap:4px;font-size:12px}
+.cycle-map-legend svg{width:23px;height:23px}
+.cycle-marker{background:none;border:0}
+.cycle-cluster span{position:absolute;top:-6px;left:24px;display:block;padding:1px 5px;background:#203b31;color:#fff;border:1px solid #fff;border-radius:10px;font-size:10px;font-weight:700}
+.cycle-table{overflow:auto;max-width:100%;margin:8px 0}
+.cycle-table td{white-space:nowrap}
+.cycle-pages{display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px}
+.cycle-popup{padding:5px 0}
+.cycle-popup dl{display:grid;grid-template-columns:minmax(84px,max-content) 1fr;gap:4px 8px;line-height:1.35}
+.cycle-popup dt{font-weight:650}
+.cycle-popup dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:690px){.cycle-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
