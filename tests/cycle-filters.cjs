@@ -42,6 +42,7 @@ assert.equal(CP.calcula(model.index.get('100'),model.par,today,4).P,CP.DATE(2026
  w.CampoControlMap={cycleMode(){}};
  w.sourceFixtures={posts,orders,catalog};
  vm.runInContext("const Central={rowsFromGeneration:async(_,name)=>name==='parque_postes'?sourceFixtures.posts:sourceFixtures.orders,dataFromGeneration:async()=>({conjuntos:sourceFixtures.catalog,corteOs:'2026-11-04'})};",ctx);
+ vm.runInContext(read('ciclo-conjuntos.js'),ctx);
  vm.runInContext(read('ciclo-poda-core.js'),ctx);
  vm.runInContext('CP.hojeSerial=()=>CP.DATE(2026,11,22)',ctx);
  vm.runInContext(read('gestao-ciclo.js'),ctx);

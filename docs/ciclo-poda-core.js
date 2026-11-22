@@ -127,7 +127,7 @@ CP.overlay = (source,snapshot) => {
     const base=link?reference.get(CP.treeId(link)):null;
     const row={...base,id:entry.id,origin:field?'campo':'vera',live,recordId:entry.campoId||raw.id,
       esp:entry.especies||raw.species||base?.esp,classe:entry.classe||base?.classe,alim:entry.alimentador||raw.feeder||base?.alim,
-      trecho:entry.trecho||base?.trecho,chave:entry.chave||base?.chave,polo:entry.polo||base?.polo,posteGIS:entry.poste||raw.pole||base?.posteGIS,
+      trecho:entry.trecho||base?.trecho,chave:entry.chave||base?.chave,polo:entry.polo||base?.polo,conj:entry.conjunto||entry.conj||base?.conj,posteGIS:entry.poste||raw.pole||base?.posteGIS,
       lat:entry.lat??base?.lat,lon:entry.lon??base?.lon,altura:entry.altura??raw.height??base?.altura,dap:entry.dap??base?.dap,
       acao:entry.acao||base?.acao,motivo:entry.motivo||base?.motivo,poda:raw.poda,site:raw.treeSite};
     return row;

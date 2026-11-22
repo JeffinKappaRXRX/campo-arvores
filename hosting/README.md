@@ -296,3 +296,6 @@ Em Vegetação → Mapa, a visão geral, o mapa, as janelas de ciclo e a carteir
 
 
 O filtro de conjuntos usa o cadastro `resumo.conjuntos` para converter o código em nome e aceita seleção múltipla. O perímetro usa RURAL e URBANO. Sem a base do Excel disponível, a tela estima o ciclo usando a última poda por poste do Parque de Poda ou a data de criação da OS aberta. As OS abertas são associadas pelo ID do poste, com prioridade para a criação mais recente. O corte do consolidado é identificado na tela. Os valores que exigem histórico de execução e quantidades do Excel são sinalizados como indisponíveis na previsão estimada.
+
+
+Em Parâmetros e diretórios, a camada de polígonos dos conjuntos pode ser aberta diretamente de um GeoPackage. Selecione a camada e seu campo de nome ou código. A geometria é projetada para WGS84 pelo leitor de GeoPackage. O cruzamento completa vínculos faltantes de árvores e postes. Chaves e alimentadores entram quando o cadastro associa o identificador a um conjunto único. A carteira mostra a origem do vínculo e o painel informa a cobertura. Os polígonos importados ficam disponíveis neste navegador.

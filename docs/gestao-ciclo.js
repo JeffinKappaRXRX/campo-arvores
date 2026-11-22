@@ -20,7 +20,7 @@
  const serial=s=>s?CP.DATE(...s.split('-').map(Number)):null;
  const active=()=>route()&&window.CampoControl?.authorized();
  const section=document.createElement('section');section.id='cycleManagement';section.className='panel';section.hidden=true;
- section.innerHTML=`<div class="panel-head"><div><h2>Plano de ciclo de poda</h2><p id="cycleSource" class="small" role="status"></p><p id="cycleSSStatus" class="small" role="status"></p><span id="cycleRefreshStatus" class="small" role="status"></span></div><div class="cycle-actions"><button type="button" id="cycleReload">Atualizar dados</button><button type="button" id="cycleOpenSettings">Parâmetros e diretórios</button></div></div>
+ section.innerHTML=`<div class="panel-head"><div><h2>Plano de ciclo de poda</h2><p id="cycleSource" class="small" role="status"></p><p id="cycleSSStatus" class="small" role="status"></p><p id="cycleGeoCoverage" class="small" role="status"></p><span id="cycleRefreshStatus" class="small" role="status"></span></div><div class="cycle-actions"><button type="button" id="cycleReload">Atualizar dados</button><button type="button" id="cycleOpenSettings">Parâmetros e diretórios</button></div></div>
  <nav class="cycle-jumps" aria-label="Seções do plano"><button data-cycle-jump="cycleMetrics">Visão geral</button><button data-cycle-jump="cycleMapTools">Mapa</button><button data-cycle-jump="cycleSummary">Ciclos</button><button data-cycle-jump="cycleLedger">Carteira por poste</button></nav>
  <dialog id="cycleSettings" aria-labelledby="cycleSettingsTitle"><div class="panel-head"><h2 id="cycleSettingsTitle">Parâmetros e diretórios</h2><button type="button" id="cycleCloseSettings" autofocus>Fechar</button></div>
  <h3>Arquivo de ciclo</h3>
@@ -33,6 +33,14 @@
  <label>Número de ciclos<input name="count" type="number" min="2" max="12" value="4" required></label>
  <label>Data de referência<input name="today" type="date"></label><button type="submit">Recalcular cenário</button><button type="reset">Premissas do Excel</button></form>
  <p id="cycleCheck" class="small"></p><div id="cycleGrowth"></div>
+ <h3>Polígonos dos conjuntos elétricos</h3>
+ <form id="cycleGeoForm">
+ <label>GeoPackage de conjuntos<input id="cycleGeoFile" type="file" accept=".gpkg"></label>
+ <label hidden>Camada<select id="cycleGeoLayer"></select></label>
+ <label hidden>Campo de nome ou código<select id="cycleGeoColumn"></select></label>
+ <button type="submit" id="cycleGeoApply" disabled>Vincular por área</button>
+ </form>
+ <p id="cycleGeoStatus" class="small" role="status">Selecione o GeoPackage do QGIS para cruzar os pontos com os polígonos.</p>
  <h3>Diretórios de origem</h3><form id="cycleDirectories">
  <label>Servidor<input name="SERVIDOR" placeholder="Caminho do arquivo no servidor"></label>
  <label>Notebook<input name="NOTEBOOK" placeholder="Caminho do arquivo no notebook"></label>
@@ -66,6 +74,7 @@
  <div id="cycleDetail" aria-live="polite"></div><div id="cycleRows"></div><div class="cycle-pages"><button type="button" id="cyclePrev">Anterior</button><span id="cyclePage"></span><button type="button" id="cycleNext">Próxima</button></div>`;
  summary.after(ledger);
  let structures=new Map(),conjuntos={},structureGeneration='', structureRequest=null;
+ let references=null,polygonIndex=null,polygonSource=null,geoRestored=false,geoWorker=null,geoLayers=[];
  let source=null,localSource=false,revision='',params=null,windows=[],now=0,allRows=[],visible=[],treeRows=[],stats=[],page=0,map=null,markers=null,links=null,markerByRow=new Map(),zoomTimer,filterTimer,epoch=0,loading=null,request=null,publishing=false,lastHash=false,needsFit=false;
  const filters=$('cycleFilters'),parameterForm=$('cycleParameters');
  const unknownConj='SEM CONJUNTO IDENTIFICADO';
@@ -137,9 +146,13 @@
   input.innerHTML=options([['','Todos'],...[...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true})).map(value=>[value,value])]);
   input.value=[...input.options].some(option=>option.value===old)?old:'';
  }
+ function resolveArea(territory,point){
+  const {conj,method}=CycleConjuntos.resolve(territory.conj,territory,point,polygonIndex,references);
+  return {...territory,conj,conjMethod:method};
+ }
  function enriched(row){
   const central=structures.get(CP.postId(row.id));
-  const territory=CP.territory(row,conjuntos,central);
+  const territory=resolveArea(CP.territory(row,conjuntos,central),row.point||central?.point);
   if(!central)return {...row,...territory};
   const kind=row.kind==='faixa'?'faixa':central.ss?(central.os||/PODA/.test(CP.norm(row.tipo))?'ambos':'ss'):'poste';
   return {...central,...row,...territory,kind,point:row.point||central.point,criacao:row.criacao??central.criacao,
@@ -148,7 +161,7 @@
  }
  function centralOnly(row){
   const kind=row.ss?(row.os?'ambos':'ss'):'poste';
-  return {...row,...CP.territory(row,conjuntos),kind,
+  return {...row,...resolveArea(CP.territory(row,conjuntos),row.point),kind,
    groupStatus:row.osOpen?'Pendente (OS aberta)':row.ssWithoutOS?'SS aberta sem OS':row.ssOpen?'SS aberta':'Sem ciclo vinculado'};
  }
  let effectivePosts=[];
@@ -171,9 +184,15 @@
   const index=new Map(effectivePosts.map(row=>[CP.postId(row.id),row]));
   treeRows=CP.overlay(source,window.CampoParque?.unifiedSnapshot()).map(tree=>{
    const post=index.get(CP.postId(tree.posteGIS));
-   return {...tree,...CP.territory({...tree,perim:tree.perim||tree.zona},conjuntos,post),kind:'arvore',post,
-    point:CP.location(tree.lat,tree.lon),groupStatus:tree.prazo||(tree.live?'Atualizada em campo':'Sem dados')};
+   const point=CP.location(Number(tree.lat),Number(tree.lon));
+   const territory=CP.territory({...tree,perim:tree.perim||tree.zona},conjuntos,post);
+   // Preserve a declared or explicitly linked name; test the tree point itself for other links.
+   if(post?.conjMethod&&post.conjMethod!=='Cadastro ou poste'&&!tree.conj)territory.conj='';
+   const location=resolveArea(territory,point);
+   if(!location.conj&&post?.conj){location.conj=post.conj;location.conjMethod='Vínculo pelo poste';}
+   return {...tree,...location,kind:'arvore',post,point,groupStatus:tree.prazo||(tree.live?'Atualizada em campo':'Sem dados')};
   });
+  updateCoverage();
  }
  function recalc(){
   plannedOnly.disabled=!source;
@@ -269,7 +288,7 @@
  summary.onclick=e=>{if(e.target.closest('[data-cycle-settings]'))$('cycleSettings').showModal();};
  const columns=[
   ['id','ID',r=>r.id],['kind','Serviço',r=>labels[r.kind]],['post','Poste',r=>r.posteGIS||r.id],
-  ['feeder','Alimentador',r=>r.alim],['set','Conjunto',r=>r.conj],['hub','Polo',r=>r.polo],['segment','Trecho',r=>r.trecho],['zone','Perímetro',r=>r.perim],
+  ['feeder','Alimentador',r=>r.alim],['set','Conjunto',r=>r.conj],['setMethod','Vínculo do conjunto',r=>r.conjMethod],['hub','Polo',r=>r.polo],['segment','Trecho',r=>r.trecho],['zone','Perímetro',r=>r.perim],
   ['key','Chave',r=>r.chave],['type','Tipo da OS',r=>r.tipo],['status','Status SGM',r=>r.statusSGM||r.status],['osId','OS aberta',r=>r.orderId],['situation','Situação',r=>r.groupStatus],
   ['created','Última criação',r=>r.criacao,CP.fmt],['executed','Última execução',r=>r.execucao,CP.fmt],
   ['months','Ciclo (meses)',r=>r.calc?.J],['basis','Origem do ciclo',r=>r.calc?.origem],['last','Ciclo da última poda',r=>r.calc?.cicloUlt],
@@ -277,7 +296,7 @@
   ['qty','Pontos de poda',r=>r.arv],['range','Qtd. faixa',r=>r.faixa],['team','Equipe',r=>r.equipe],['ss','SS no parque',r=>r.ss],
   ['ssOpen','SS aberta sem OS',r=>r.ssWithoutOS],['os','OS no parque',r=>r.os],['species','Espécie',r=>r.esp||r.espVera]
  ];
- const treeKeys=new Set(['id','post','species','feeder','set','hub','segment','zone','key','situation']);
+ const treeKeys=new Set(['id','post','species','feeder','set','setMethod','hub','segment','zone','key','situation']);
  const tableColumns=()=> $('cycleLedgerView').value==='arvores'?columns.filter(([key])=>treeKeys.has(key)):columns;
  function rowValues(row){return tableColumns().map(([, ,read,format])=>format?format(read(row)):read(row));}
  function refreshLedger(){
@@ -318,7 +337,7 @@
    ['Pontos de poda',row.arv],['Quantidade de faixa',row.faixa],['Equipe',row.equipe],['Árvores VERA',row.idsVera],['Espécies VERA',row.espVera]];
   if(row.ss)rows.push(['SS de poda no poste',row.ss],['SS abertas',row.ssOpen],['SS abertas sem OS',row.ssWithoutOS]);
   if(row.os)rows.push(['OS de poda no parque',row.os]);
-  rows.unshift(['Alimentador',row.alim],['Trecho',row.trecho],['Chave',row.chave]);
+  rows.unshift(['Conjunto',row.conj],['Vínculo do conjunto',row.conjMethod],['Alimentador',row.alim],['Trecho',row.trecho],['Chave',row.chave]);
   const list=document.createElement('dl');for(const [label,value] of rows)if(value!=null&&value!==''){
    const term=document.createElement('dt'),desc=document.createElement('dd');term.textContent=label;desc.textContent=value;list.append(term,desc);
   }
@@ -412,13 +431,16 @@
     if(token!==epoch||!active())return;
     if(!meta.manifest?.parque_postes){$('cycleSSStatus').textContent='Parque de Poda com vínculos de SS indisponível.';if(!source)$('cycleSource').textContent='Carregue o Excel em Parâmetros e diretórios para ver as previsões.';return;}
     if(structureGeneration&&meta.generation===structureGeneration)return;
-    const [rows,orders,metadata]=await Promise.all([
+    const [rows,orders,metadata,keys]=await Promise.all([
      Central.rowsFromGeneration(meta,'parque_postes'),
      meta.manifest.os_abertas?Central.rowsFromGeneration(meta,'os_abertas'):[],
-     meta.manifest.resumo?Central.dataFromGeneration(meta,'resumo'):{}
+     meta.manifest.resumo?Central.dataFromGeneration(meta,'resumo'):{},
+     meta.manifest.chaves?Central.rowsFromGeneration(meta,'chaves').catch(()=>[]):[]
     ]);
     if(token!==epoch||!active())return;
     conjuntos=metadata.conjuntos||{};
+    references=CycleConjuntos.indexReferences(keys,conjuntos);
+    if(polygonSource)try{preparePolygons(polygonSource);}catch(error){$('cycleGeoStatus').textContent=error.message;}
     structures=CP.structureSources(rows,orders);structureGeneration=meta.generation;
     const ss=[...structures.values()].filter(row=>row.ss);
     $('cycleSSStatus').textContent=nums(ss.length)+' postes vinculados a SS de poda · '+nums(ss.filter(row=>row.ssWithoutOS).length)+' com SS aberta sem OS.';
@@ -433,6 +455,105 @@
   })();
   return structureRequest;
  }
+ function updateCoverage(){
+  if(!treeRows.length){$('cycleGeoCoverage').textContent='';return;}
+  const missing=treeRows.filter(tree=>!tree.conj),byArea=treeRows.filter(tree=>tree.conjMethod==='Polígono do conjunto').length;
+  const without=missing.filter(tree=>!tree.point).length;
+  const label=nums(treeRows.length-missing.length)+' de '+nums(treeRows.length)+' árvores com conjunto identificado';
+  $('cycleGeoCoverage').textContent=label+(byArea?' · '+nums(byArea)+' pelo polígono':'')+
+   (missing.length?' · '+nums(missing.length)+' pendentes'+(without?', incluindo '+nums(without)+' sem coordenada':''):'')+'.';
+ }
+ function accessPolygonCache(value){
+  return new Promise((resolve,reject)=>{
+   const open=indexedDB.open('campo-ciclo-conjuntos',1);
+   open.onupgradeneeded=()=>open.result.createObjectStore('layers');
+   open.onerror=()=>reject(open.error);open.onblocked=()=>reject(Error('Armazenamento local ocupado.'));
+   open.onsuccess=()=>{
+    const db=open.result,tx=db.transaction('layers',value?'readwrite':'readonly');
+    const store=tx.objectStore('layers'),request=value?store.put(value,'primary'):store.get('primary');
+    tx.oncomplete=()=>{db.close();resolve(request.result);};
+    tx.onabort=()=>{db.close();reject(tx.error);};
+   };
+  });
+ }
+ function preparePolygons(data){
+  const index=CycleConjuntos.spatial(data.features,'name',conjuntos);
+  polygonSource=data;polygonIndex=index;
+  $('cycleGeoStatus').textContent=data.file+' · '+nums(index.names)+' conjuntos · '+nums(index.polygons)+' polígonos'+
+   (index.skipped||data.skipped?' · '+nums(index.skipped+(data.skipped||0))+' feições sem uso por nome ou geometria':'')+'.';
+ }
+ function refreshGeography(){collectPosts();takeTrees();populate();render();}
+ async function restorePolygons(){
+  if(geoRestored)return;
+  geoRestored=true;const token=epoch;
+  try{
+   const saved=await accessPolygonCache();
+   if(!saved||epoch!==token||!active()||polygonSource)return;
+   // Numeric fields need the official code/name dictionary before being resolved.
+   polygonSource=saved;
+   if(!Object.keys(conjuntos).length&&saved.features.every(f=>/^\d+$/.test(f.properties.name)))return;
+   preparePolygons(saved);refreshGeography();
+  }catch(error){if(token===epoch&&polygonSource)$('cycleGeoStatus').textContent=error.message;}
+ }
+ function chooseGeoColumn(){
+  const layer=geoLayers[Number($('cycleGeoLayer').value)],field=$('cycleGeoColumn');
+  if(!layer)return;
+  const preferred=layer.columns.find(name=>/^(?:NOMECONJUNTO|NOMECONJ|NOMCONJ|CONJUNTONOME|CONJUNTONOMECLATURA|NOME|NAME|CONJUNTO)$/.test(CP.norm(name).replace(/[^A-Z0-9]/g,'')))||
+    layer.columns.find(name=>/^(?:CODCONJ|CODIGOCONJUNTO|CODID|CODCONJUNTO|CONJ)$/.test(CP.norm(name).replace(/[^A-Z0-9]/g,'')));
+  field.innerHTML=options([['','Selecione o campo'],...layer.columns.map(name=>[name,name])]);
+  field.value=preferred||'';
+  $('cycleGeoApply').disabled=!field.value;
+ }
+ $('cycleGeoLayer').onchange=chooseGeoColumn;
+ $('cycleGeoColumn').onchange=event=>{$('cycleGeoApply').disabled=!event.target.value;};
+ $('cycleGeoFile').onchange=async event=>{
+  const file=event.target.files[0],note=$('cycleGeoStatus'),token=epoch;
+  $('cycleGeoApply').disabled=true;geoWorker?.terminate();geoWorker=null;geoLayers=[];
+  for(const id of ['cycleGeoLayer','cycleGeoColumn'])$(id).closest('label').hidden=true;
+  if(!file)return;
+  note.textContent='Lendo camadas do GeoPackage…';
+  try{
+   if(!/\.gpkg$/i.test(file.name)||!file.size||file.size>128*1024*1024)throw Error('Selecione um GeoPackage de polígonos com até 128 MB.');
+   const buffer=await file.arrayBuffer();
+   if(token!==epoch||event.target.files[0]!==file)return;
+   const worker=new Worker('gpkg-worker.js');geoWorker=worker;
+   worker.onerror=()=>{if(geoWorker===worker){worker.terminate();geoWorker=null;for(const id of ['cycleGeoFile','cycleGeoLayer','cycleGeoColumn'])$(id).disabled=false;note.textContent='Falha ao abrir GeoPackage neste navegador.';}};
+   worker.onmessage=async({data})=>{
+    if(geoWorker!==worker||token!==epoch)return;
+    try{
+     if(data.action==='error')throw Error(data.message);
+     if(data.action==='inspect'){
+      geoLayers=data.layers.filter(layer=>/POLYGON|^GEOMETRY$/i.test(layer.geometry_type_name)&&layer.count>0);
+      if(!geoLayers.length)throw Error('Nenhuma camada de polígonos encontrada.');
+      const layer=$('cycleGeoLayer');
+      layer.innerHTML=options(geoLayers.map((item,i)=>[i,item.table_name]));
+      layer.value=String(Math.max(0,geoLayers.findIndex(item=>CP.norm(item.table_name).includes('CONJUNTO'))));
+      layer.closest('label').hidden=false;$('cycleGeoColumn').closest('label').hidden=false;
+      chooseGeoColumn();note.textContent='Confira a camada e o campo de identificação.';
+     }
+     if(data.action==='import'){
+      const field=$('cycleGeoColumn').value;
+      const saved={file:file.name,skipped:data.skipped||0,features:data.collection.features.map(feature=>({
+       geometry:feature.geometry,properties:{name:String(feature.properties?.[field]??'').trim()}}))};
+      preparePolygons(saved);refreshGeography();
+      try{await accessPolygonCache(saved);}catch{if(token===epoch)note.textContent+=' Carga preservada até fechar a página.';}
+      worker.terminate();geoWorker=null;event.target.value='';
+      for(const id of ['cycleGeoLayer','cycleGeoColumn'])$(id).closest('label').hidden=true;
+     }
+    }catch(error){if(token===epoch)note.textContent=error.message;}
+    finally{if(token===epoch){$('cycleGeoFile').disabled=false;$('cycleGeoLayer').disabled=false;$('cycleGeoColumn').disabled=false;$('cycleGeoApply').disabled=!geoWorker||!$('cycleGeoColumn').value;}}
+   };
+   worker.postMessage({action:'inspect',buffer},[buffer]);
+  }catch(error){if(token===epoch)note.textContent=error.message;}
+ };
+ $('cycleGeoForm').onsubmit=event=>{
+  event.preventDefault();
+  const layer=geoLayers[Number($('cycleGeoLayer').value)];
+  if(!geoWorker||!layer||!$('cycleGeoColumn').value)return;
+  for(const id of ['cycleGeoFile','cycleGeoLayer','cycleGeoColumn','cycleGeoApply'])$(id).disabled=true;
+  $('cycleGeoStatus').textContent='Cruzando a posição das árvores e dos postes com os polígonos…';
+  geoWorker.postMessage({action:'import',layers:[layer]});
+ };
  function readFile(file){
   return new Promise((resolve,reject)=>{
    const worker=new Worker('ciclo-poda-import.js');
@@ -513,14 +634,16 @@
   document.body.classList.toggle('cycle-on',on);section.hidden=ledger.hidden=summary.hidden=tools.hidden=!on;
   window.CampoControlMap?.cycleMode(on);
   if(entering){
-   needsFit=true;paintMap();void load();void loadStructures();void window.CampoParque?.refresh();
+   needsFit=true;paintMap();void restorePolygons();void load();void loadStructures();void window.CampoParque?.refresh();
   }
   if(!on){if($('cycleSettings').open)$('cycleSettings').close();markers?.clearLayers();links?.clearLayers();}else if(!entering){paintMap();}
  }
  window.CampoCycle={attach,active,visibility,stop(){
-  epoch++;structures=new Map();conjuntos={};effectivePosts=[];selectedConj.clear();paintConjSummary();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;localSource=false;revision='';params=null;windows=[];allRows=[];ledgerRows=[];visible=[];plannedOnly.disabled=true;fields.cycle.replaceChildren();treeRows=[];stats=[];lastHash=false;
-  for(const id of ['cycleSource','cycleRefreshStatus','cycleSSStatus','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows','cycleBreakdown','cycleLedgerCount','cyclePage','cycleFilterCount'])$(id).replaceChildren();
-  $('cycleFile').value='';
+  epoch++;geoWorker?.terminate();geoWorker=null;geoRestored=false;geoLayers=[];polygonSource=null;polygonIndex=null;references=null;structures=new Map();conjuntos={};effectivePosts=[];selectedConj.clear();paintConjSummary();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;localSource=false;revision='';params=null;windows=[];allRows=[];ledgerRows=[];visible=[];plannedOnly.disabled=true;fields.cycle.replaceChildren();treeRows=[];stats=[];lastHash=false;
+  for(const id of ['cycleSource','cycleRefreshStatus','cycleSSStatus','cycleGeoCoverage','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows','cycleBreakdown','cycleLedgerCount','cyclePage','cycleFilterCount'])$(id).replaceChildren();
+  $('cycleFile').value='';$('cycleGeoFile').value='';$('cycleGeoApply').disabled=true;
+  for(const id of ['cycleGeoLayer','cycleGeoColumn']){$(id).disabled=false;$(id).closest('label').hidden=true;}
+  $('cycleGeoFile').disabled=false;
   visibility();
  }};
  addEventListener('campo-unified-data',()=>{if(active()){takeTrees();populate();render();}});

@@ -1,0 +1,53 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const {spatial,indexReferences,resolve}=require('../docs/ciclo-conjuntos.js');
+const names={'1':'Taquari','2':'Tangará'};
+const rectangle=(west,south,east,north)=>[[west,south],[east,south],[east,north],[west,north],[west,south]];
+const square=(coordinates,name)=>({geometry:{type:'Polygon',coordinates},properties:{name}});
+const left=square([rectangle(-68,-11,-67,-9),rectangle(-67.9,-10.5,-67.7,-10.2)],'1');
+const right=square([rectangle(-67,-11,-66,-9)],'TANGARÁ');
+const reference=indexReferences([{chave:'RBR-01',alim:'TAQ-01C1, DUP',conj:1},{chave:'RBR-02',alim:'TAN-01C1; DUP',conj:2}],names);
+const index=spatial([left,right],'name',names);
+assert.equal(index.lookup([-9.5,-67.5]),'TAQUARI');
+assert.equal(index.lookup([-10.4,-67.8]),'');
+assert.equal(index.lookup([-10,-67]),'');
+assert.equal(index.lookup([-10,-66.8]),'TANGARÁ');
+assert.equal(index.lookup([-12,-68]),'');
+assert.equal(index.lookup(null),'');
+assert.equal(spatial([left,square([rectangle(-67.6,-11,-66,-9)],'2')],'name',names).lookup([-10,-67.5]),'');
+assert.equal(reference.feeder('DUP'),'');
+assert.equal(reference.key('rbr-01'),'TAQUARI');
+assert.equal(reference.feeder('TAN-01C1'),'TANGARÁ');
+assert.deepEqual(resolve('',{chave:'RBR-02'},[-9.5,-67.5],index,reference),{conj:'TAQUARI',method:'Polígono do conjunto'});
+assert.deepEqual(resolve('',{chave:'RBR-02'},null,index,reference),{conj:'TANGARÁ',method:'Chave da rede'});
+assert.deepEqual(resolve('TANGARÁ',{},[-9.5,-67.5],index,reference),{conj:'TANGARÁ',method:'Cadastro ou poste'});
+
+(async()=>{
+ const docs=path.resolve(__dirname,'../docs');
+ const initSqlJs=require(path.join(docs,'vendor/sql-wasm.js'));
+ const sqlite=await initSqlJs({locateFile:name=>path.join(docs,'vendor',name)});
+ // Small real SQLite/GeoPackage, queried through the browser worker's existing protocol.
+ const db=new sqlite.Database();
+ db.run(`CREATE TABLE gpkg_geometry_columns(table_name TEXT,column_name TEXT,geometry_type_name TEXT,srs_id INTEGER);
+ INSERT INTO gpkg_geometry_columns VALUES('limites','geom','POLYGON',4326);
+ CREATE TABLE limites(nome TEXT,geom BLOB);`);
+ const vertices=rectangle(-68,-11,-67,-9);
+ const geom=Buffer.alloc(8+1+4+4+4+16*vertices.length);
+ geom.write('GP');geom.writeUInt8(1,3);geom.writeInt32LE(4326,4);geom.writeUInt8(1,8);geom.writeUInt32LE(3,9);
+ geom.writeUInt32LE(1,13);geom.writeUInt32LE(vertices.length,17);
+ vertices.forEach(([x,y],i)=>{geom.writeDoubleLE(x,21+16*i);geom.writeDoubleLE(y,29+16*i);});
+ db.run('INSERT INTO limites VALUES (?,?)',['TAQUARI',new Uint8Array(geom)]);
+ const messages=[];
+ const context=vm.createContext({importScripts(){},postMessage:data=>messages.push(data),initSqlJs:async()=>sqlite,URL,Uint8Array,
+  self:{location:{href:'https://arbora.test/gpkg-worker.js'}}});
+ for(const file of ['gpkg-reader.js','gpkg-worker.js'])vm.runInContext(fs.readFileSync(path.join(docs,file),'utf8'),context);
+ await context.onmessage({data:{action:'inspect',buffer:db.export().buffer}});
+ assert.equal(messages[0].layers[0].columns[0],'nome');
+ await context.onmessage({data:{action:'import',layers:messages[0].layers}});
+ const imported=spatial(messages[1].collection.features,'nome',names);
+ assert.equal(imported.lookup([-9.5,-67.5]),'TAQUARI');
+ db.close();
+ console.log('PASS GeoPackage real, polígono, buraco, divisa, sobreposição e vínculo cadastral.');
+})().catch(error=>{console.error(error);process.exitCode=1;});
