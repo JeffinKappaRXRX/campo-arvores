@@ -119,27 +119,32 @@ CP.source = data => {
     source:data.fonte||{},generated:data.gerado_em,classes:data.classes||[]};
 };
 CP.overlay = (source,snapshot) => {
-  const retired=new Set((snapshot?.mergedIds||[]).map(CP.treeId));
-  const current=new Map(), other=[];
-  for(const entry of snapshot?.trees||[]){
-    if(!entry.raw&&!entry.campoId)continue;
-    const raw=entry.raw||{}, recordId=String(entry.campoId||raw.id||entry.id);
-    const id=raw.externalId||(/^vera-/i.test(recordId)?recordId:entry.campoId?entry.id:'');
-    const row={id:recordId,esp:entry.especies||raw.species,classe:entry.classe,alim:entry.alimentador||raw.feeder,
-      trecho:entry.trecho,chave:entry.chave,polo:entry.polo,posteGIS:entry.poste||raw.pole,
-      lat:entry.lat,lon:entry.lon,poda:raw.poda,site:raw.treeSite,recordId,live:true};
-    if(id)current.set(CP.treeId(id),row);else other.push(row);
-  }
-  const result=[];
-  for(const tree of source?.arvores||[]){
-    const id=CP.treeId(tree.id);
-    if(retired.has(id))continue;
-    const update=current.get(id);current.delete(id);
-    const merged={...tree};
-    for(const [key,value] of Object.entries(update||{}))if(value!=null&&value!=='')merged[key]=value;
-    merged.id=tree.id;
-    result.push(merged);
-  }
-  return [...result,...current.values(),...other].filter(tree=>!retired.has(CP.treeId(tree.id)));
+  const reference=new Map((source?.arvores||[]).map(row=>[CP.treeId(row.id),row]));
+  if(!snapshot?.catalogReady)return [...reference.values()].map(row=>({...row,origin:'excel'}));
+  return (snapshot.trees||[]).map(entry=>{
+    const raw=entry.raw||{}, field=entry.origem==='Campo (prévia)', live=Boolean(entry.raw||entry.campoId);
+    const link=raw.externalId||(/^vera-/i.test(entry.id)||!field?entry.id:'');
+    const base=link?reference.get(CP.treeId(link)):null;
+    const row={...base,id:entry.id,origin:field?'campo':'vera',live,recordId:entry.campoId||raw.id,
+      esp:entry.especies||raw.species||base?.esp,classe:entry.classe||base?.classe,alim:entry.alimentador||raw.feeder||base?.alim,
+      trecho:entry.trecho||base?.trecho,chave:entry.chave||base?.chave,polo:entry.polo||base?.polo,posteGIS:entry.poste||raw.pole||base?.posteGIS,
+      lat:entry.lat??base?.lat,lon:entry.lon??base?.lon,altura:entry.altura??raw.height??base?.altura,dap:entry.dap??base?.dap,
+      acao:entry.acao||base?.acao,motivo:entry.motivo||base?.motivo,poda:raw.poda,site:raw.treeSite};
+    return row;
+  });
 };
 if(typeof module!=='undefined')module.exports=CP;
+
+CP.structureSources = rows => {
+  const posts=new Map();
+  for(const row of rows){
+    const id=CP.postId(row.id);
+    if(!id)continue;
+    const ss=Number(row.nSS)||0,os=(Number(row.nEx)||0)+(Number(row.nAb)||0)+(Number(row.nSem)||0);
+    if(!ss&&!os)continue;
+    posts.set(id,{id:'226-'+id,ss,ssOpen:row.ssAb||0,ssWithoutOS:row.ssSem||0,os,
+      polo:row.polo,conj:row.conj,alim:row.alim,chave:row.chave,trecho:row.tr,perim:row.per,
+      point:CP.location(Number(row.lat),Number(row.lon))});
+  }
+  return posts;
+};

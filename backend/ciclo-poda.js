@@ -1,17 +1,26 @@
+const CYCLE_SEED='arbora:pruning-cycle:2026-11-22';
 const CYCLE_SIZE=4500000;
 const CYCLE_TABLE='CREATE TABLE IF NOT EXISTS campo_cycle_snapshot (name TEXT PRIMARY KEY, revision TEXT NOT NULL, changed TEXT NOT NULL, parts INTEGER NOT NULL, data TEXT)';
 async function cicloPodaAPI(request,env){
  try{
   if(!isAdministrator(request,env))throw sharedError('Ciclo de poda restrito à gestão.',403);
   const db=await adminDb(env),url=new URL(request.url);
-  let current;
-  try{current=await db.prepare("SELECT revision,changed,parts FROM campo_cycle_snapshot WHERE name='active'").first();}
+  let active;
+  try{active=await db.prepare("SELECT revision,changed,parts FROM campo_cycle_snapshot WHERE name='active'").first();}
   catch(error){if(!centralMissingTable(error))throw error;}
+  const seed=active?null:await env.LOGIN_GUARD?.get(CYCLE_SEED,'json');
+  const current=active||(Number.isInteger(seed?.parts)&&seed.parts>0&&seed.parts<=20&&seed.revision?seed:null);
   if(request.method==='GET'){
    if(url.searchParams.get('meta')==='1')return json({revision:current?.revision||null,changed:current?.changed||null});
    if(!current)throw sharedError('Importe o Controle Man V1.xlsx para ativar o plano.',404);
-   const {results}=await db.prepare("SELECT data FROM campo_cycle_snapshot WHERE revision=? AND name<>'active' ORDER BY name").bind(current.revision).all();
-   const archive=results.length===current.parts?new Blob(results.map(row=>Uint8Array.from(atob(row.data),char=>char.charCodeAt(0)))):null;
+   let archive;
+   if(active){
+    const {results}=await db.prepare("SELECT data FROM campo_cycle_snapshot WHERE revision=? AND name<>'active' ORDER BY name").bind(current.revision).all();
+    archive=results.length===current.parts?new Blob(results.map(row=>Uint8Array.from(atob(row.data),char=>char.charCodeAt(0)))):null;
+   }else{
+    const parts=await Promise.all(Array.from({length:seed.parts},(_,i)=>env.LOGIN_GUARD.get(CYCLE_SEED+':'+i,'arrayBuffer')));
+    if(parts.every(Boolean))archive=new Blob(parts);
+   }
    if(!archive?.size||archive.size>CYCLE_SIZE)throw sharedError('Base de ciclo incompleta. Atualize e tente novamente.',409);
    return new Response(archive,{headers:{'Content-Type':'application/gzip','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Cycle-Revision':current.revision}});
   }
@@ -39,7 +48,7 @@ async function cicloPodaAPI(request,env){
    parts.push(btoa(raw));
   }
   // One transaction: readers see either the previous snapshot or all parts of the new one.
-  const old=current?.revision||'';
+  const old=active?.revision||'';
   const guard="COALESCE((SELECT revision FROM campo_cycle_snapshot WHERE name='active'),'')=?";
   const batch=parts.map((part,i)=>db.prepare('INSERT INTO campo_cycle_snapshot SELECT ?,?,?,?,? WHERE '+guard)
     .bind(revision+':'+String(i).padStart(3,'0'),revision,changed,0,part,old));

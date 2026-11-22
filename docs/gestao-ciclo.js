@@ -6,11 +6,12 @@
  const route='#c-mapa', endpoint='/api/ciclo-poda';
  const statusColors={'Atrasada':'#be3b39','Pendente (OS aberta)':'#b96121','No ciclo atual':'#236eba','Próximos ciclos':'#237344',
   'Fora do Prazo':'#be3b39','Urgente (< 30 dias)':'#b96121','Dentro do Prazo':'#237344','Atualizada em campo':'#18747b','Sem ciclo vinculado':'#18747b'};
- const labels={poste:'Poste com poda',arvore:'Árvore individual',faixa:'Limpeza de faixa'};
+ const labels={poste:'Poste com OS de poda',ss:'Poste com SS de poda',ambos:'Poste com OS e SS',arvore:'Árvore individual',faixa:'Limpeza de faixa'};
  const icon=(kind,ring='#526c62')=>{
   const tree='<path d="M20 7a5 5 0 0 0-5 5 4 4 0 0 0 0 8h10a4 4 0 0 0 0-8 5 5 0 0 0-5-5Z" fill="#38934f"/><path d="M20 16v9" stroke="#654530" stroke-width="2"/>';
   const pole='<path d="M10 7v17m-4-13h8" fill="none" stroke="#31443f" stroke-width="2.4" stroke-linecap="round"/>';
-  const symbol=kind==='poste'?pole+tree:kind==='faixa'?'<path d="M7 22h18M8 19l4-8 3 5 4-8 5 10M15 18l-3 5m10-6-2 6" fill="none" stroke="#8a602b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>':'<g transform="translate(-4)">'+tree+'</g>';
+  const badge=kind==='ss'||kind==='ambos'?'<rect x="2" y="20" width="15" height="10" rx="3" fill="'+(kind==='ss'?'#754b91':'#255c99')+'"/><text x="9.5" y="27.5" font-size="7" font-weight="700" fill="white" text-anchor="middle">'+(kind==='ss'?'SS':'+SS')+'</text>':'';
+  const symbol=['poste','ss','ambos'].includes(kind)?pole+tree+badge:kind==='faixa'?'<path d="M7 22h18M8 19l4-8 3 5 4-8 5 10M15 18l-3 5m10-6-2 6" fill="none" stroke="#8a602b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>':'<g transform="translate(-4)">'+tree+'</g>';
   return '<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="#fff" stroke="'+ring+'" stroke-width="2.8"/>'+symbol+'</svg>';
  };
  const options=items=>items.map(([value,text])=>'<option value="'+esc(value)+'">'+esc(text)+'</option>').join('');
@@ -18,7 +19,7 @@
  const serial=s=>s?CP.DATE(...s.split('-').map(Number)):null;
  const active=()=>location.hash===route&&window.CampoControl?.authorized();
  const section=document.createElement('section');section.id='cycleManagement';section.className='panel';section.hidden=true;
- section.innerHTML=`<div class="panel-head"><div><h2>Plano de ciclo de poda</h2><p id="cycleSource" class="small" role="status"></p><a id="cycleLegacy" href="#c-mapa-anterior" hidden>Abrir o plano anterior</a></div><button type="button" id="cycleReload">Atualizar</button></div>
+ section.innerHTML=`<div class="panel-head"><div><h2>Plano de ciclo de poda</h2><p id="cycleSource" class="small" role="status"></p><p id="cycleSSStatus" class="small" role="status"></p><a id="cycleLegacy" href="#c-mapa-anterior" hidden>Abrir o plano anterior</a></div><button type="button" id="cycleReload">Atualizar</button></div>
  <details id="cycleSettings"><summary>Base de atualização e premissas</summary>
  <form id="cycleUpload"><label>Controle Man V1.xlsx ou extrato do Ciclo Poda<input id="cycleFile" type="file" accept=".xlsx,.js,.json" required></label><button type="submit">Publicar atualização</button></form>
  <p class="small">A planilha precisa estar salva após o recálculo no Excel. A gestão importa as quatro abas do ciclo e recalcula as previsões aqui.</p>
@@ -46,6 +47,7 @@
  ledger.innerHTML=`<div class="panel-head"><h3>Base filtrada</h3><button id="cycleCsv" type="button">Exportar CSV</button></div>
  <div id="cycleDetail" aria-live="polite"></div><div id="cycleRows"></div><div class="cycle-pages"><button type="button" id="cyclePrev">Anterior</button><span id="cyclePage"></span><button type="button" id="cycleNext">Próxima</button></div>`;
  mapPanel.parentElement.after(ledger);
+ let structures=new Map(),structureGeneration='', structureRequest=null;
  let source=null,revision='',params=null,windows=[],now=0,allRows=[],visible=[],treeRows=[],stats=[],page=0,map=null,markers=null,links=null,markerByRow=new Map(),zoomTimer,filterTimer,epoch=0,loading=null,request=null,publishing=false,lastHash=false,needsFit=false;
  const filters=$('cycleFilters'),parameterForm=$('cycleParameters');
  const fields=filters.elements;
@@ -60,7 +62,7 @@
   input.value=[...input.options].some(option=>option.value===old)?old:'';
  }
  function populate(){
-  const rows=[...(source?.postes||[]),...treeRows];
+  const rows=[...(source?.postes||[]),...structures.values(),...treeRows];
   for(const name of ['polo','conj','alim','trecho','perim'])copyOptions(name,rows.map(r=>String(r[name]||'')));
   const status=['Atrasada','Pendente (OS aberta)','No ciclo atual','Próximos ciclos','Sem data','Fora do Prazo','Urgente (< 30 dias)','Dentro do Prazo','Sem dados','Sem ciclo vinculado','Atualizada em campo'];
   copyOptions('state',status);
@@ -99,10 +101,20 @@
   if(!active())return;
   const k=Number(fields.cycle.value)||1,sit=fields.state.value,q=CP.norm(fields.query.value);
   const passes=row=>(!sit||sit===row.groupStatus)&&(!q||CP.norm([row.id,row.posteGIS,row.esp,row.espVera,row.idsVera,row.alim,row.conj,row.chave].join(' ')).includes(q));
-  const posts=source?.postes||[];
+  const posts=source?.postes||[], ledgerPosts=posts.map(row=>{
+   const link=structures.get(CP.postId(row.id));
+   if(!link)return row;
+   if(row.kind==='faixa'&&!link.ss&&!link.os)return row;
+   const kind=row.kind==='faixa'&&!link.ss?'faixa':link.ss?(link.os||/PODA/.test(CP.norm(row.tipo))?'ambos':'ss'):'poste';
+   return {...link,...row,kind,point:row.point||link.point};
+  });
+  for(const [id,row] of structures){
+   if(source?.index.has(id))continue;
+   ledgerPosts.push({...row,kind:row.ss?(row.os?'ambos':'ss'):'poste',groupStatus:'Sem ciclo vinculado'});
+  }
   for(const row of posts)row.fg=attributes(row)&&CP.norm(row.cat)!=='OUTROS (NAO PODA)'&&passes(row);
   const layers=new Set([...$('cycleMapTools').querySelectorAll('[data-cycle-layer]:checked')].map(input=>input.dataset.cycleLayer));
-  const postRows=posts.filter(row=>row.fg&&(!fields.scheduled.checked||CP.isNum(row.calc.prev[k-1])));
+  const postRows=ledgerPosts.filter((row,i)=>(i<posts.length?posts[i].fg:attributes(row)&&passes(row))&&(!fields.scheduled.checked||CP.isNum(row.calc?.prev[k-1])));
   const trees=treeRows.filter(row=>attributes(row)&&passes(row)&&(!fields.scheduled.checked||CP.isNum(row.post?.calc?.prev[k-1])));
   allRows=[...postRows,...trees];
   visible=allRows.filter(row=>layers.has(row.kind));
@@ -115,9 +127,11 @@
   const m=stats[k-1];
   const cards=m?[['Postes previstos',m.postes],['Pontos de poda previstos',m.arv],['Executado no SGM',m.exec],['Avanço da janela',m.arv?pct.format(m.exec/m.arv):'—'],
    ['OS abertas (pontos)',m.pend],['Atrasos herdados (pontos)',m.atras],['Limpeza de faixa (qtd.)',m.faixa]]:[];
-  cards.push(['Árvores individuais no recorte',trees.length],['Inspeções sincronizadas',trees.filter(t=>t.live).length],
+  const vera=trees.filter(t=>t.origin==='vera').length,campo=trees.filter(t=>t.origin==='campo').length;
+  cards.push(['Árvores individuais no recorte',trees.length],['Base VERA',vera],['Novas árvores do campo',campo],
+   ['Referências provisórias do Excel',trees.length-vera-campo],
    ['Serviços sem coordenada',posts.filter(p=>!p.point).length+trees.filter(t=>!t.point).length]);
-  $('cycleMetrics').innerHTML=cards.map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(typeof value==='number'?nums(value):value)+'</strong></div>').join('');
+  $('cycleMetrics').innerHTML=cards.filter(([label,value])=>label!=='Referências provisórias do Excel'||value).map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(typeof value==='number'?nums(value):value)+'</strong></div>').join('');
   $('cycleMonthly').innerHTML=m?'<h4>Por mês · C'+k+'</h4>'+table(['Período','Postes','Pontos de poda','Executado','Avanço'],m.mes.map(x=>[CP.fmt(x.ini)+' a '+CP.fmt(x.fim),nums(x.postes),nums(x.arv),nums(x.exec),x.arv?pct.format(x.exec/x.arv):'—'])):'';
   $('cycleSets').innerHTML=m?'<h4>Por conjunto · C'+k+'</h4>'+table(['Conjunto','Polo','Postes','Pontos de poda','T1','T2','T3','OS aberta','Atraso','Executado'],
    Object.entries(m.conj).sort((a,b)=>b[1].arv-a[1].arv).map(([name,x])=>[name,x.polo,...['postes','arv','T1','T2','T3','pend','atras','exec'].map(v=>nums(x[v]))])):'';
@@ -125,8 +139,8 @@
    windows.map((j,i)=>['C'+j.k,CP.fmt(j.ini),CP.fmt(j.fim),...['postes','arv','exec','pend'].map(key=>nums(stats[i][key]))])):'';
  }
  const rowValues=row=>[labels[row.kind],row.id,row.posteGIS||(row.kind!=='arvore'?row.id:''),row.esp||row.espVera,row.alim,row.trecho,row.chave,row.groupStatus,
-  CP.fmt(row.execucao),CP.fmt(row.calc?.P),CP.fmt(row.calc?.prev[Number(fields.cycle.value)-1]),row.arv,row.faixa,row.equipe];
- const heads=['Serviço','ID','Poste','Espécie','Alimentador','Trecho','Chave','Situação','Última execução','Próxima poda','Previsão no ciclo','Pontos de poda','Qtd. faixa','Equipe'];
+  CP.fmt(row.execucao),CP.fmt(row.calc?.P),CP.fmt(row.calc?.prev[Number(fields.cycle.value)-1]),row.arv,row.faixa,row.equipe,row.os,row.ss,row.ssWithoutOS];
+ const heads=['Serviço','ID','Poste','Espécie','Alimentador','Trecho','Chave','Situação','Última execução','Próxima poda','Previsão no ciclo','Pontos de poda','Qtd. faixa','Equipe','OS no parque','SS no parque','SS aberta sem OS'];
  function paintRows(){
   const total=Math.max(1,Math.ceil(allRows.length/pageSize));page=Math.min(page,total-1);
   const start=page*pageSize, rows=allRows.slice(start,start+pageSize);
@@ -142,9 +156,11 @@
    ['Espécie',row.esp],['Situação',row.groupStatus],['Prazo no Excel',row.prazo],['Necessita poda',row.poda],['Local da árvore',({publico:'Público',privado:'Privado'})[row.site]],
    ['Poste',row.posteGIS],['Altura (m)',row.altura],['DAP (cm)',row.dap],['Risco',row.classe],['Ação',row.acao],['Motivo',row.motivo],['Levantamento',CP.fmt(row.dataLev)]
   ]:[['Situação',row.groupStatus],['Última OS',row.tipo],['Status SGM',row.status],['Criação',CP.fmt(row.criacao)],['Última execução',CP.fmt(row.execucao)],
-   ['Próximo retorno',CP.fmt(row.calc.P)],['Retorno seguinte',CP.fmt(row.calc.U)],['Ciclo',row.calc.J+' meses · '+row.calc.origem],
-   ['Previsões',row.calc.prev.slice(0,params.count).map((value,i)=>value==null?'':'C'+(i+1)+' '+CP.fmt(value)).filter(Boolean).join(' · ')],
+   ['Próximo retorno',CP.fmt(row.calc?.P)],['Retorno seguinte',CP.fmt(row.calc?.U)],['Ciclo',row.calc?row.calc.J+' meses · '+row.calc.origem:''],
+   ['Previsões',row.calc?.prev.slice(0,params.count).map((value,i)=>value==null?'':'C'+(i+1)+' '+CP.fmt(value)).filter(Boolean).join(' · ')],
    ['Pontos de poda',row.arv],['Quantidade de faixa',row.faixa],['Equipe',row.equipe],['Árvores VERA',row.idsVera],['Espécies VERA',row.espVera]];
+  if(row.ss)rows.push(['SS de poda no poste',row.ss],['SS abertas',row.ssOpen],['SS abertas sem OS',row.ssWithoutOS]);
+  if(row.os)rows.push(['OS de poda no parque',row.os]);
   rows.unshift(['Alimentador',row.alim],['Trecho',row.trecho],['Chave',row.chave]);
   const list=document.createElement('dl');for(const [label,value] of rows)if(value!=null&&value!==''){
    const term=document.createElement('dt'),desc=document.createElement('dd');term.textContent=label;desc.textContent=value;list.append(term,desc);
@@ -218,11 +234,31 @@
     source=CP.source(data);revision=response.headers.get('X-Cycle-Revision')||meta.revision;params=defaults();
     updateParameters();recalc();
     $('cycleSource').textContent=[source.source.local,source.source.modificado?'Salvo em '+source.source.modificado:'',
-     nums(source.postes.length)+' registros de poste',nums(source.arvores.length)+' árvores VERA',nums(source.execs.length)+' execuções SGM'].filter(Boolean).join(' · ');
+     nums(source.postes.length)+' registros de poste',nums(source.arvores.length)+' referências de árvore no Excel',nums(source.execs.length)+' execuções SGM'].filter(Boolean).join(' · ');
    }catch(error){if(token===epoch&&error.name!=='AbortError'){$('cycleSource').textContent=error.message;$('cycleLegacy').hidden=Boolean(source);}}
    finally{if(token===epoch){loading=null;request=null;}}
   })();
   return loading;
+ }
+ async function loadStructures(){
+  if(!active()||structureRequest)return;
+  const token=epoch;
+  structureRequest=(async()=>{
+   try{
+    const meta=await window.CampoControl.api('/api/central/meta');
+    if(token!==epoch||!active())return;
+    if(!meta.manifest?.parque_postes){$('cycleSSStatus').textContent='Parque de Poda com vínculos de SS indisponível.';return;}
+    if(meta.generation===structureGeneration)return;
+    const rows=await Central.rowsFromGeneration(meta,'parque_postes');
+    if(token!==epoch||!active())return;
+    structures=CP.structureSources(rows);structureGeneration=meta.generation;
+    const ss=[...structures.values()].filter(row=>row.ss);
+    $('cycleSSStatus').textContent=nums(ss.length)+' postes vinculados a SS de poda · '+nums(ss.filter(row=>row.ssWithoutOS).length)+' com SS aberta sem OS.';
+    populate();render();
+   }catch(e){if(token===epoch)$('cycleSSStatus').textContent='Parque de Poda: '+e.message;}
+   finally{if(token===epoch)structureRequest=null;}
+  })();
+  return structureRequest;
  }
  function readFile(file){
   return new Promise((resolve,reject)=>{
@@ -269,7 +305,7 @@
  fields.query.oninput=()=>{clearTimeout(filterTimer);filterTimer=setTimeout(update,220);};
  $('cycleMapTools').onchange=render;
  $('cycleFit').onclick=fit;
- $('cycleReload').onclick=()=>{void load(true);void window.CampoParque?.refresh();};
+ $('cycleReload').onclick=()=>{void load(true);void loadStructures();void window.CampoParque?.refresh();};
  $('cyclePrev').onclick=()=>{page--;paintRows();};$('cycleNext').onclick=()=>{page++;paintRows();};
  $('cycleRows').onclick=event=>{
   const target=event.target.closest('[data-cycle-row]');if(!target)return;
@@ -287,13 +323,13 @@
   document.body.classList.toggle('cycle-on',on);section.hidden=ledger.hidden=tools.hidden=!on;
   window.CampoControlMap?.cycleMode(on);
   if(entering){
-   needsFit=true;paintMap();void load();void window.CampoParque?.refresh();
+   needsFit=true;paintMap();void load();void loadStructures();void window.CampoParque?.refresh();
   }
   if(!on){markers?.clearLayers();links?.clearLayers();}else if(!entering){paintMap();}
  }
  window.CampoCycle={attach,active,visibility,stop(){
-  epoch++;request?.abort();request=null;loading=null;source=null;revision='';params=null;windows=[];allRows=[];visible=[];treeRows=[];stats=[];lastHash=false;
-  for(const id of ['cycleSource','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows'])$(id).replaceChildren();
+  epoch++;structures=new Map();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;revision='';params=null;windows=[];allRows=[];visible=[];treeRows=[];stats=[];lastHash=false;
+  for(const id of ['cycleSource','cycleSSStatus','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows'])$(id).replaceChildren();
   $('cycleFile').value='';
   visibility();
  }};
