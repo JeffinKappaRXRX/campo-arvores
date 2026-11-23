@@ -19,6 +19,8 @@ const CarteiraTerritorial = (() => {
  const modes = {viva:'Linha viva · T1/T2',radial:'Radial · <400 clientes',manobra:'Com manobra · <400 residuais',
   bt:'DEOP · Poda BT',rural:'T3 rural · Florestcon/LF',situacional:'T3 urbano · situacional',
   avaliacao:'Avaliação operacional'};
+ const perimeter=value=>({R:'RURAL',U:'URBANO',URBANA:'URBANO'}[norm(value)]||norm(value));
+ const flag=value=>value===1||value===true||value==='1';
  function family(value) {
   const text = norm(value);
   if (/FAIXA/.test(text)) return 'faixa';
@@ -141,7 +143,7 @@ const CarteiraTerritorial = (() => {
    if(item&&number(row.decCj)!==null)item.months.push(row);
   }
   for (const [key,item] of names) {
-   const current=item.months.filter(row=>Number(row.ano)===year);
+   const current=item.months.filter(row=>Number(row.ano)===year&&Number(row.mes)<=cut);
    const historic=item.months.filter(row=>Number(row.ano)===year-1);
    const historicMonths=new Set(historic.map(row=>Number(row.mes)));
    const required=Array.from({length:13-firstRemaining},(_,i)=>firstRemaining+i);
@@ -163,7 +165,7 @@ const CarteiraTerritorial = (() => {
     const data=causes.get(cause)||{cause,kind:family(cause),dec:0};
     data.dec+=Number(row.decCj);causes.set(cause,data);
    }
-   Object.assign(item,{year,cut,ytd,projected,remainder,next,currentLimit,nextLimit,causes:[...causes.values()].sort((a,b)=>b.dec-a.dec),
+   Object.assign(item,{year,cut,cutoff:cutText.slice(0,10),ytd,projected,remainder,next,currentLimit,nextLimit,causes:[...causes.values()].sort((a,b)=>b.dec-a.dec),
     gap:projected!==null&&currentLimit!=null?projected-currentLimit:null,
     nextGap:next!==null&&nextLimit!=null?next-nextLimit:null,
     projectionSource:remainder!==null?(!required.length?'Ano fechado':'Sazonalidade do ano anterior'):projected!==null?'Anualizado da base central':'Dados insuficientes',
@@ -173,31 +175,46 @@ const CarteiraTerritorial = (() => {
  }
  function classify(row,key={},program={}) {
   const pruning=row.asset==='poda'||row.asset==='faixa';
-  const t=norm(row.trecho), rural=norm(row.perim)==='RURAL';
+  const t=norm(row.trecho), zone=perimeter(row.perim), rural=zone==='RURAL';
   const lm=positive(row.moLM), lv=positive(row.moLV);
-  const clients=positive(program.cli)??positive(key.cli)??positive(row.clients);
-  const transfer=program.manobra&&program.na?positive(program.transf):null;
-  const residual=transfer>0&&clients!==null?Math.max(0,clients-transfer):null;
-  const modeBT=pruning&&/\bBT\b/.test(norm(row.voltage||row.tensao||row.tipo));
+  const studiedClients=positive(program.cli);
+  const clientCounts=[studiedClients,positive(key.cli),positive(row.clients)].filter(value=>value!==null);
+  const clients=clientCounts.length?Math.max(...clientCounts):null;
+  const listedNA=new Set((Array.isArray(key.na)?key.na:[]).map(norm));
+  const studiedNA=norm(program.na);
+  const matchedNA=studiedNA&&listedNA.has(studiedNA);
+  const transfer=flag(program.manobra)&&matchedNA?positive(program.transf):null;
+  const residual=transfer>0&&studiedClients!==null&&transfer<=studiedClients?clients-transfer:null;
+  const radial=flag(program.radial)&&!flag(program.manobra)&&!key.isNA&&clients!==null&&clients<400;
+  const volt=norm(row.voltage||row.tensao||row.tipo);
+  const modeBT=pruning&&/\bBT\b/.test(volt)&&!/\bMT\b/.test(volt);
   const kv=positive(row.kv), clearance=kv>=10&&kv<15?1.38:kv>=30&&kv<36?1.58:null;
   const mtDistance=positive(row.mtDistance), limitIT=positive(row.distIT);
   const minimum=clearance===null?null:Math.max(clearance,limitIT||0);
-  const deop=modeBT?'Poda BT':!pruning?'':lv>0&&!(lm>0)?'MO LV · equipe de linha viva':
-   minimum===null||mtDistance===null?'MT · sem medida e/ou tensão':mtDistance<=clearance?'MT · dentro do raio controlado':
-   mtDistance<=minimum?'MT · dentro do limite informado pela IT':lm>0&&!(lv>0)&&limitIT!==null?'MT · avaliar apoio DEOP (MO LM)':'MT · revisar MO LV/LM e IT 0265';
+  const teamIT=norm(row.teamIT);
+  let deop='';
+  if(pruning){
+   if(modeBT)deop='BT · triagem DEOP';
+   else if(/VIVA|DESLIG/.test(teamIT)||lv>0&&!(lm>0))deop='MT · linha viva ou desligamento em avaliação';
+   else if(minimum===null||mtDistance===null)deop='MT · faltam distância ou tensão';
+   else if(mtDistance<=minimum)deop='MT · dentro do limite registrado';
+   else if(lm>0&&!(lv>0)&&limitIT>0&&/^LINHA MORTA/.test(teamIT)&&positive(row.mtMeasured)!==null)deop='MT · avaliar apoio DEOP com MO LM e medição';
+   else deop='MT · revisar medida, MO e IT 0265';
+  }
   const situational=Boolean(row.situational);
   let mode='avaliacao';
-  if (modeBT) mode='bt';
-  else if(t==='T3'&&!rural&&norm(row.perim)==='URBANO'&&!situational) mode='situacional';
+  if(pruning&&t==='T3'&&zone==='URBANO'&&!situational) mode='situacional';
+  else if (modeBT) mode='bt';
   else if((t==='T1'||t==='T2')&&(row.lv||lv>0)&&(!(lm>0)||Boolean(row.lv))) mode='viva';
-  else if(pruning&&t==='T3'&&rural&&row.asset==='faixa') mode='rural';
-  else if(clients!==null&&clients<400&&row.chave&&!key.isNA) mode='radial';
+  else if(radial&&row.chave) mode='radial';
   else if(residual!==null&&residual<400&&row.chave&&!key.isNA) mode='manobra';
-  if(pruning&&t==='T3'&&rural&&mode!=='avaliacao'&&mode!=='bt') {
-   return {mode, team:'Florestcon/LF',clients,residual,deop,transfer,na:program.na||''};
-  }
-  const team={viva:'Linha viva',bt:'DEOP BT',radial:'Linha morta',manobra:'Linha morta',rural:'Florestcon/LF'}[mode]||'';
-  return {mode,team,clients,residual,deop,transfer,na:program.na||''};
+  else if(pruning&&t==='T3'&&rural) mode='rural';
+  const ruralCrew=pruning&&t==='T3'&&rural&&mode!=='bt';
+  const team=ruralCrew?'Florestcon/LF':({viva:'Linha viva',bt:'DEOP BT',radial:'Linha morta',manobra:'Linha morta'})[mode]||'';
+  const reviewReason=mode==='rural'&&row.asset!=='faixa'?'Validar modalidade e condições para T3 rural':
+   mode==='avaliacao'&&flag(program.manobra)&&!matchedNA?'Conferir NA do estudo com a hierarquia trifásica':
+   mode==='avaliacao'&&clients!==null&&clients<400?'Confirmar topologia radial no estudo':'';
+  return {mode,team,clients,residual,deop,transfer,na:matchedNA?program.na:'',reviewReason};
  }
  function score(row,dec,today) {
   const date=number(row.due), days=date===null?null:date-today;
@@ -244,6 +261,7 @@ const CarteiraTerritorial = (() => {
   const ranked=[...rows].sort((a,b)=>b.score-a.score||String(a.id).localeCompare(String(b.id),'pt-BR',{numeric:true}));
   function review(row) {
    if(row.mode==='situacional')return 'T3 urbano · requer demanda registrada';
+   if(row.reviewReason)return row.reviewReason;
    if(!row.team)return 'Revisão operacional';
    if(row.impacts?.length&&['radial','manobra'].includes(row.mode))return 'Órgão essencial · validar impacto com o COI';
    const money=budget[row.resource];
@@ -287,6 +305,6 @@ const CarteiraTerritorial = (() => {
    return {...row,planned:best.selected.has(row.id),reason,review:!eligible.has(row.id)};
   })};
  }
- return {norm,number,positive,pole,types,modes,family,pointIn,distance,route,roadOrder,decSummary,classify,score,impactIndex,budgetKey,budgets,optimize};
+ return {norm,number,positive,pole,perimeter,types,modes,family,pointIn,distance,route,roadOrder,decSummary,classify,score,impactIndex,budgetKey,budgets,optimize};
 })();
 if(typeof module!=='undefined')module.exports=CarteiraTerritorial;

@@ -6,15 +6,15 @@ const SigoraAcre = [
  ['upa-cidade-do-povo','UPA Cidade do Povo','upa','Rio Branco',[-10.0253666,-67.7527422],'https://observatorio.saude.ac.gov.br/acompanhamento/upa-cidade-do-povo/'],
  ['upa-via-verde','UPA Via Verde','upa','Rio Branco',[-9.9814374,-67.8473148],'https://observatorio.saude.ac.gov.br/acompanhamento/upa-via-verde/'],
  ['upa-tucuma','UPA Tucumã','upa','Rio Branco',[-9.9508972,-67.8580793],'https://www.openstreetmap.org/relation/19899799'],
- ['huerb','HUERB · Pronto-socorro de Rio Branco','emergencia','Rio Branco',[-9.96494,-67.81522],'https://td.med.br/estabelecimento/hospital-geral-de-clinicas-de-rio-branco-2001578'],
+ ['huerb','HUERB · Pronto-socorro de Rio Branco','emergencia','Rio Branco',[-9.9649084,-67.8144025],'https://www.openstreetmap.org/way/444339590','Av. Nações Unidas, 700 · Bosque','https://www.gov.br/saude/pt-br/assuntos/saude-de-a-a-z/a/animais-peconhentos/hospitais-de-referencia/acre'],
  ['fundhacre','FUNDHACRE','hospital','Rio Branco',[-9.96600,-67.85465],'https://td.med.br/estabelecimento/fundhacre-2001586'],
  ['hospital-jurua','Hospital Regional do Juruá','hospital','Cruzeiro do Sul',[-7.59525,-72.68328],'https://www.openstreetmap.org/node/9173556517'],
  ['hospital-alto-acre','Hospital Regional do Alto Acre · Wildy Viana','hospital','Brasiléia',[-10.991440,-68.760351],'https://buscacomercio.com/cidades/brasileia/hospitais-e-clinicas/hospital-regional-do-alto-acre-wildy-viana'],
  ['detran-boa-esperanca','DETRAN · Unidade Boa Esperança','transito','Rio Branco',[-9.9545783,-67.8249920],'https://www.openstreetmap.org/way/648612575'],
  ['deracre','DERACRE · sede','infra','Rio Branco',[-9.9845542,-67.8061791],'https://estado.ac.gov.br/orgao-entidades/autarquias-publicas/'],
- ['imac','IMAC · sede','ambiental','Rio Branco',null,'https://imac.ac.gov.br/'],
- ['idaf','IDAF · sede','ambiental','Rio Branco',null,'https://estado.ac.gov.br/orgao-entidades/autarquias-publicas/'],
+ ['imac','IMAC · sede','ambiental','Rio Branco',null,null,'Av. Paulo Lemos de Moura · Portal da Amazônia','https://www.mpac.mp.br/mpac-participa-da-inauguracao-da-nova-sede-do-imac-em-rio-branco/'],
+ ['idaf','IDAF · sede','ambiental','Rio Branco',[-10.0231846,-67.7989338],'https://maps.app.goo.gl/aCPYxcdFL24P2JRH9','Rodovia AC-40, 1.054 · Loteamento Santa Helena','https://idaf.ac.gov.br/contate-nos/'],
  ['palacio-rio-branco','Palácio Rio Branco','governo','Rio Branco',[-9.974722,-67.809722],'https://pt.wikipedia.org/wiki/Pal%C3%A1cio_Rio_Branco_(Acre)'],
  ['sefaz','SEFAZ · sede','governo','Rio Branco',[-9.9747401,-67.8085026],'https://www.openstreetmap.org/way/648632563'],
  ['bombeiros-rbr','Corpo de Bombeiros · Estrada do Amapá','servico','Rio Branco',[-10.0109072,-67.8059525],'https://www.openstreetmap.org/way/607509326']
-].map(([id,nome,tipo,municipio,point,source])=>({id,nome,tipo,municipio,point,source}));
+].map(([id,nome,tipo,municipio,point,source,address,addressSource])=>({id,nome,tipo,municipio,point,source,address,addressSource}));

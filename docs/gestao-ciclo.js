@@ -54,7 +54,7 @@
  <div class="cycle-actions"><button type="button" id="cycleConjAll">Selecionar todos</button><button type="button" id="cycleConjClear">Limpar seleção</button></div>
  <div class="msel-lista" id="cycleConjOptions"></div></div></details></div>
  <label>Alimentador<select name="alim"></select></label><label>Trecho<select name="trecho"></select></label>
- <label>Perímetro<select name="perim"></select></label><label>VERA no poste<select name="vera"><option value="">Todos</option><option value="com">Com VERA</option><option value="sem">Sem VERA</option></select></label>
+ <label>Perímetro<select name="perim"></select></label><label>Origem do ponto<select name="vera"><option value="">Todos</option><option value="com">Com VERA</option><option value="sem">Sem VERA</option><option value="excel">Referência provisória do Excel</option></select></label>
  <label>Situação<select name="state"></select></label><label>Chave<select name="chave"></select></label><label>Buscar poste, árvore ou chave<input name="query" type="search" autocomplete="off"></label>
  <label><span><input name="scheduled" type="checkbox"> Só previstos nas janelas</span></label><button type="reset">Limpar filtros</button></form>
  <p id="cycleFilterCount" class="small" role="status"></p><div id="cycleMetrics" class="cycle-metrics"></div>`;
@@ -230,10 +230,14 @@
   const inWindows=calc=>windowIds.some(index=>CP.isNum(calc?.prev[index-1]));
   const segments=[...values.trecho];
   const passes=row=>{
-   for(const name of ['polo','alim','perim','chave'])if(values[name].size&&!values[name].has(String(row[name]||'')))return false;
+   for(const name of ['polo','alim','chave'])if(values[name].size&&!values[name].has(String(row[name]||'')))return false;
+   if(values.perim.size&&!values.perim.has(CarteiraTerritorial.perimeter(row.perim)))return false;
    if(selectedConj.size&&!selectedConj.has(row.conjCode||unknownConj))return false;
    if(segments.length&&!segments.some(value=>CP.filtroTrecho(row.trecho,value)))return false;
-   if(row.kind!=='estrutura'&&values.vera.size&&!values.vera.has((row.kind==='arvore'?row.origin!=='campo':(row.nvera||row.vera)>0)?'com':'sem'))return false;
+   if(row.kind!=='estrutura'&&values.vera.size){
+    const origin=row.kind==='arvore'?({vera:'com',campo:'sem'}[row.origin]||'excel'):((row.nvera||row.vera)>0?'com':'sem');
+    if(!values.vera.has(origin))return false;
+   }
    if(values.state.size&&![...CP.statuses(row)].some(value=>values.state.has(value)))return false;
    if(q&&!CP.norm([row.id,row.posteGIS,row.esp,row.espVera,row.idsVera,row.alim,row.conj,row.chave,row.orderId,row.tipo].join(' ')).includes(q))return false;
    return !area||CycleConjuntos.pointInArea(row.point,area);

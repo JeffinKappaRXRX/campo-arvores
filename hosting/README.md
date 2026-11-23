@@ -1,5 +1,13 @@
 # Publicação no endereço oficial
 
+## Carteira territorial 2027
+
+O acesso fica em Manutenção → Carteira territorial 2027. O recorte por chave, conjunto, alimentador, ciclo e área livre é compartilhado com o mapa. A carteira separa estruturas e poda, VERA e campo, modalidade, recurso e triagem DEOP. Os painéis de pacotes distinguem radial e manobra. A classificação radial exige essa indicação no estudo e menos de 400 clientes. A manobra exige NA coincidente com a hierarquia trifásica e estimativa de transferência compatível com o estudo. A equipe responsável e o COI avaliam a execução.
+
+Os órgãos usam um catálogo de localização pública. Os vínculos elétricos entram pelo cadastro confirmado e ficam no acesso de gestão. O HUERB usa um ponto dentro do perímetro mapeado, com endereço oficial indicado. A sugestão por ruas usa apenas paradas do catálogo público e depende da cobertura do roteador. Pontos privados continuam disponíveis para montar a sequência e exportar em KML.
+
+O ciclo e referências de MO por poste, VERA e hierarquia podem ser lidos do extrato privado em `/api/ciclo-poda`. O painel mostra separadamente o corte da OS e do DEC da base central. A projeção usa o apurado no corte e a sazonalidade histórica, com comparação aos limites anuais da ANEEL. A triagem DEOP usa evidência do poste e da árvore. Custos e horas desconhecidos ficam em revisão. A previsão das equipes é estimada pelo histórico e admite disponibilidade informada para 2027.
+
 ## Conjuntos elétricos e recorte territorial
 
 O painel de gestão carrega `conjuntos_geo` da mesma geração autenticada do D1. O GeoPackage original permanece privado. Execute `python tools/import-conjuntos.py ARQUIVO.gpkg --output SAIDA.geojson` com as dependências de `tools/requirements-conjuntos.txt` e uma saída fora do repositório. O importador valida a camada `22_conjunto_eletrico` e reprojeta EPSG:31979 para EPSG:4326, em longitude e latitude, sem simplificar a geometria.

@@ -25,9 +25,9 @@
   return decision?.status||'Sem simulação';
  }
  C.views.simular={
-  mod:'man',eyebrow:'MANUTENÇÃO',titulo:'Simular carteira de OS',precisa:['os_abertas'],filtros:['alim','pri','recurso'],
+  mod:'man',eyebrow:'MANUTENÇÃO',titulo:'Simular carteira de OS',precisa:['os_abertas'],filtros:['alim','chave','pri','recurso'],
   render(filters,el){
-   const rows=C.linhas('os_abertas').filter(r=>C.em(filters.alim,r.alim)&&C.em(filters.pri,r.pri)&&C.em(filters.recurso,r.recurso));
+   const rows=C.linhas('os_abertas').filter(r=>C.em(filters.alim,r.alim)&&C.keyMatches(filters.chave,r.chave)&&C.em(filters.pri,r.pri)&&C.em(filters.recurso,r.recurso));
    const pool=M.candidates(rows,C.linhasRaw('chaves'));
    const demand={capex:0,opex:0,poda:0,viva:0,morta:0};
    for(const item of pool.ordem){

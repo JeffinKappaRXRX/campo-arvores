@@ -69,8 +69,10 @@ const GestaoTerritorial = (() => {
   for(const order of orders){
    const text=order.classe||order.serv||order.desc||order.tipo;
    if(order.expurgo||/INSPECAO/.test(T.norm(order.tipo))||/EXECUTADA|CANCELAD|INATIV/.test(T.norm(order.status)))continue;
-   const asset=T.family(text);
-   const assets=new Set([asset,...String(order.serv||'').split(/[|,]/).filter(Boolean).map(T.family).filter(x=>x!=='estrutura')]);
+   const detected=T.family(text);
+   const details=String(order.serv||'').split(/[|,]/).filter(Boolean).map(T.family).filter(x=>x!=='estrutura');
+   const asset=detected==='estrutura'?(details[0]||T.family(order.desc)):detected;
+   const assets=new Set([asset,...details]);
    if(asset==='poda'||asset==='faixa'||!order.os)continue;
    const id=String(order.interv||order.id||[order.os,order.poste,asset].join('|'));
    if(seen.has(id))continue;
@@ -86,7 +88,7 @@ const GestaoTerritorial = (() => {
   const grouped=new Map(), latestByTeam=new Map(), cut=String(meta.corteOs||meta.hoje||'');
   const currentMonth=Number(cut.slice(5,7)), currentYear=Number(cut.slice(0,4));
   for(const row of teams) {
-   const name=T.norm(row.eq),pool=[T.pole(row.polo),crew(name+' '+(row.tipo||'')+' '+(row.servico||'')+' '+(row.emp||''))].join('|');
+   const name=T.norm(row.eq),pool=[T.pole(row.polo),crew([name,row.tipo,row.tipoEq,row.servico,row.emp].filter(Boolean).join(' '))].join('|');
    if(!name||pool.endsWith('|')||pool.startsWith('|')||/INATIV|DESMOBIL/.test(T.norm(row.status)))continue;
    if(row.ano&&currentYear&&Number(row.ano)!==currentYear)continue;
    if(!row.mes||T.number(row.diasOS)===null||currentMonth&&Number(row.mes)>=currentMonth)continue;
@@ -126,7 +128,7 @@ const GestaoTerritorial = (() => {
     <label>Base complementar de planejamento<input id="terrData" type="file" accept=".json,.gz"></label>
     <label>Cadastro de órgãos e vínculos elétricos<input id="terrOrgFile" type="file" accept=".geojson,.json"></label>
     <label>Dias úteis de operação em 2027<input id="terrDays" type="number" min="1" max="261" value="260"></label>
-   </div><p id="terrImportStatus" class="small" role="status"></p><p class="small">A triagem de apoio em MT compara a distância documentada, a IT informada e a zona controlada da NR-10. A programação exige avaliação da equipe habilitada e do COI. <a href="https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/participacao-social/conselhos-e-orgaos-colegiados/comissao-tripartite-paritaria-permanente/normas-regulamentadora/normas-regulamentadoras-vigentes/norma-regulamentadora-no-10-nr-10" target="_blank" rel="noopener">Consultar a NR-10</a>.</p><p class="small">Use JSON ou JSON.GZ gerado a partir das bases Energisa. Para órgãos, importe GeoJSON de pontos com nome, tipo, município, poste e chave confirmada. A importação vale nesta sessão.</p>
+   </div><p id="terrImportStatus" class="small" role="status"></p><p class="small">A triagem em MT cruza distância da VERA, referência da IT 0265 e MO LV/LM por poste. A equipe habilitada e o COI validam a atividade. A revisão da NR-10 entra em vigor em 1º de junho de 2027. <a href="https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/participacao-social/conselhos-e-orgaos-colegiados/comissao-tripartite-paritaria-permanente/normas-regulamentadora/normas-regulamentadoras-vigentes/norma-regulamentadora-no-10-nr-10" target="_blank" rel="noopener">Consultar a NR-10</a>.</p><p class="small">Use JSON ou JSON.GZ gerado a partir das bases Energisa. Para órgãos, importe GeoJSON de pontos com nome, tipo, município, poste e chave confirmada. A importação vale nesta sessão.</p>
    <div id="terrBudgets" class="terr-controls"></div><div id="terrCapacity"></div><div class="terr-actions"><button id="terrApply" type="button">Aplicar cenário</button><button id="terrReset" type="button">Restaurar premissas da base</button></div>
   </details>
   <div class="terr-controls">
@@ -135,12 +137,14 @@ const GestaoTerritorial = (() => {
    <label>Modalidade de execução<select id="terrMode"></select></label>
    <label>Triagem DEOP<select id="terrDeop"></select></label>
    <label>Decisão da carteira<select id="terrDecision"></select></label>
+   <label>Recurso<select id="terrResource"></select></label>
    <label class="terr-check"><input id="terrOnly" type="checkbox"> Aplicar filtros da carteira aos pontos do mapa</label>
   </div>
   <div class="terr-modes" id="terrModes" aria-label="Atalhos da carteira por modalidade"></div>
+  <div class="terr-actions"><button type="button" data-terr-jump="terrOutagePanel">Radial e manobra por chave</button><button type="button" data-terr-jump="terrDec">DEC por conjunto</button><button type="button" data-terr-jump="terrImpact">Impacto em órgãos</button></div>
   <div id="terrCandidates"></div><div class="cycle-pages"><button id="terrPrev" type="button">Anterior</button><span id="terrPage"></span><button id="terrNext" type="button">Próxima</button></div>
   <div id="terrDetails" aria-live="polite"></div>
-  <details class="terr-settings"><summary>Pacotes de desligamento por chave</summary><div id="terrOutages"></div></details>
+  <details class="terr-settings" id="terrOutagePanel"><summary>Pacotes por chave · radial e com manobra</summary><div id="terrOutages"></div></details>
   <details class="terr-settings"><summary>DEC projetado, metas e causas por conjunto</summary><div id="terrDec"></div></details>
   <details class="terr-settings"><summary>Órgãos essenciais e podas por chave</summary><div id="terrImpact"></div></details>
   <div class="terr-route" id="territorialRoutes"><div class="panel-head"><div><h4>Montar rota</h4><p class="small">O cálculo no mapa usa distância em linha reta. As instruções por vias públicas abrem no Google Maps.</p></div></div>
@@ -149,6 +153,12 @@ const GestaoTerritorial = (() => {
   <div class="terr-actions"><button id="terrSuggest" type="button">Sugerir sequência</button><button id="terrSuggestRoad" type="button">Sugerir por ruas · órgãos públicos</button><button id="terrManual" type="button">Traçar rota no mapa</button><button id="terrClearRoute" type="button">Limpar rota</button><button id="terrKml" type="button" disabled>Exportar KML</button></div>
   <p id="terrRouteStatus" class="small" role="status"></p><ol id="terrStops"></ol><nav id="terrRoad" class="terr-actions" aria-label="Rota por vias"></nav></div>`;
   anchor.after(host);
+  host.addEventListener('click',event=>{
+   const button=event.target.closest('[data-terr-jump]');
+   if(!button)return;
+   const details=$(button.dataset.terrJump)?.closest('details');
+   if(details){details.open=true;details.scrollIntoView({block:'start'});}
+  });
   const mapTools=document.createElement('div');mapTools.className='terr-map-controls';
   mapTools.innerHTML=`<div class="terr-actions"><button id="terrDraw" type="button" aria-pressed="false">Desenhar área livre</button><button id="terrUndo" type="button" hidden>Desfazer vértice</button><button id="terrFinish" type="button" hidden>Concluir área</button><button id="terrClearArea" type="button" disabled>Limpar área</button><button id="terrRouteJump" type="button">Rotas</button></div>
   <div class="terr-controls"><label>Tipos de órgão<select id="terrOrgType"></select></label><label>Municípios dos órgãos<select id="terrOrgTown"></select></label><label>Órgãos no mapa<select id="terrOrgName"></select></label>
@@ -157,13 +167,13 @@ const GestaoTerritorial = (() => {
   <span id="terrAreaStatus" class="small" role="status"></span>`;
   tools.append(mapTools);
   const filters={asset:[$('terrAsset'),'Natureza / ativo'],origin:[$('terrOrigin'),'Origem'],mode:[$('terrMode'),'Modalidade'],
-   deop:[$('terrDeop'),'Apoio DEOP'],decision:[$('terrDecision'),'Decisão'],orgType:[$('terrOrgType'),'Tipo de órgão'],orgTown:[$('terrOrgTown'),'Município'],
+   deop:[$('terrDeop'),'Apoio DEOP'],decision:[$('terrDecision'),'Decisão'],resource:[$('terrResource'),'Recurso'],orgType:[$('terrOrgType'),'Tipo de órgão'],orgTown:[$('terrOrgTown'),'Município'],
    orgName:[$('terrOrgName'),'Órgão'],mapAssets:[$('terrMapAssets'),'Estrutura']};
   const multis=Object.fromEntries(Object.entries(filters).map(([key,[el,label]])=>[key,GestaoMulti.mount(el,label)]));
   const values=key=>GestaoMulti.selected(filters[key][0]);
   const passes=(key,value)=>{const selected=values(key);return !selected.length||selected.includes(value);};
   multis.asset.set(Object.entries(T.types));multis.mode.set(Object.entries(T.modes));
-  multis.origin.set([['vera','Árvore VERA'],['campo','Árvore de campo'],['sgm','Poda ou faixa SGM'],['estrutura','Estrutura SGM']]);
+  multis.origin.set([['vera','Árvore VERA'],['campo','Árvore de campo'],['excel','Referência provisória do Excel'],['sgm','Poda ou faixa SGM'],['estrutura','Estrutura SGM']]);
   multis.decision.set([['selected','Selecionada'],['hold','Reserva'],['review','Revisão']]);
   multis.orgType.set(Object.entries(poTypes));multis.mapAssets.set(Object.entries(T.types).filter(([k])=>!['poda','faixa'].includes(k)));
   let source={}, imported={}, centralSupplement=null, orgInputs=[], orgs=facilityList([]), orgIndex=new Map(), keyIndex=new Map(), progIndex=new Map(), hierIndex=new Map(), treeIndex=new Map(), postIndex=new Map();
@@ -200,8 +210,11 @@ const GestaoTerritorial = (() => {
    orgs=facilityList(orgInputs);
    orgIndex=T.impactIndex(orgs,hierIndex);
    updateOrgOptions();
+   const references=[['chaves',imported.hierarchy?.length],['postes com referência MO',imported.moPost?.length],['árvores com referência VERA',imported.trees?.length]]
+    .filter(([,count])=>count).map(([label,count])=>num(count)+' '+label);
    $('terrDataStatus').textContent=(summary.corteOs?'SGM até '+String(summary.corteOs).slice(0,10):'SGM · data de corte indisponível')+
-    (reliability.corteDec?' · DEC até '+reliability.corteDec:' · DEC sem período de corte')+' · '+num(structureRows.length)+' estruturas'+(imported.hierarchy?.length?' · '+num(imported.hierarchy.length)+' chaves no complemento':'');
+    (reliability.corteDec?' · DEC até '+String(reliability.corteDec).slice(0,10):' · DEC sem período de corte')+
+    ' · '+num(structureRows.length)+' estruturas'+(references.length?' · '+references.join(' · '):' · complemento de hierarquia, MO de poda e VERA não carregado');
    paintOrgs();
   }
   async function load(meta,data){
@@ -257,33 +270,39 @@ const GestaoTerritorial = (() => {
     const minDue=Math.min(...treeRows.map(tree=>tree.due).filter(CP.isNum));
     const due=(Number.isFinite(minDue)?Math.min(minDue,late||pred||Infinity):late||pred)||null;
     if(vegetation&&due&&!isDue(due)&&!row.osOpen)continue;
-    const moData=postIndex.get(post)||{}, enriched={...moData,...order,...row};
+    const reference=postIndex.get(post)||{};
+    const moData=vegetation&&['poda','faixa'].includes(T.family(reference.voltage))?reference:{};
+    const enriched={...moData,...order,...row};
     const quantity=T.positive(order?.qPod||row.arv||row.arvE)||treeRows.length||null;
     const fa=row.kind==='faixa', asset=vegetation?(fa?'faixa':'poda'):row.asset;
     if(vegetation&&post)represented.add(post);
     const risk=treeRows.map(t=>t.classe).find(x=>/CRIT/.test(T.norm(x)))||treeRows.map(t=>t.classe).find(x=>T.norm(x)==='ALTO')||treeRows[0]?.classe;
-    const distances=treeRows.flatMap(t=>[T.positive(t.distMT),T.positive(t.distProjected)]).filter(x=>x!==null);
+    const measured=treeRows.map(t=>T.positive(t.distMeasured??t.distMT)).filter(x=>x!==null);
+    const distances=treeRows.flatMap(t=>[T.positive(t.distMeasured??t.distMT),T.positive(t.distProjected)]).filter(x=>x!==null);
     const distance=distances.length?Math.min(...distances):null;
-    jobs.push({...enriched,id:(vegetation?'p:':'s:')+row.id,asset,due,risk,mtDistance:distance,distIT:row.distIT??treeRows.find(r=>r.distIT!=null)?.distIT,kv:row.kv??treeRows.find(r=>r.kv!=null)?.kv,
-     origin:vegetation?'sgm':'estrutura',origins:new Set([vegetation?'sgm':'estrutura',...treeRows.map(tree=>tree.origin==='campo'?'campo':'vera')]),
+    const itEvidence=treeRows.find(t=>/VIVA|DESLIG/.test(T.norm(t.teamIT)))||treeRows.find(t=>t.teamIT);
+    jobs.push({...enriched,id:(vegetation?'p:':'s:')+row.id,asset,due,risk,mtDistance:distance,mtMeasured:measured.length?Math.min(...measured):null,teamIT:itEvidence?.teamIT,distIT:row.distIT??itEvidence?.distIT,kv:row.kv??itEvidence?.kv,
+     origin:vegetation?'sgm':'estrutura',origins:new Set([vegetation?'sgm':'estrutura',...treeRows.map(tree=>tree.origin||'excel')]),
      moLM:order?.moLM??row.moLM??moData.moLM,moLV:order?.moLV??row.moLV??moData.moLV,voltage:row.tensao||moData.voltage,
      growth:Math.max(0,...treeRows.map(t=>Number(t.growth)||0)),clients:Math.max(-1,...treeRows.map(t=>T.positive(t.clients)??-1)),
      quantity, renderRow:row, related:treeRows.map(t=>t.renderRow), poda:vegetation&&!fa});
    }
    for(const row of all){
     if(row.kind!=='arvore'||represented.has(CP.postId(row.posteGIS))||/^(NAO|N)$/.test(T.norm(row.poda)))continue;
-    const tree=treeIndex.get(T.norm(CP.treeId(row.id)))||{}, post=postIndex.get(CP.postId(row.posteGIS))||{};
+    const tree=treeIndex.get(T.norm(CP.treeId(row.id)))||{}, reference=postIndex.get(CP.postId(row.posteGIS))||{};
+    const post=T.family(reference.voltage)==='poda'?reference:{};
     if(tree.due&&!isDue(tree.due))continue;
-    const origin=row.origin==='campo'?'campo':'vera';
+    const origin=row.origin||'excel';
     jobs.push({...post,...row,...tree,conj:row.conj,conjCode:row.conjCode,conjStatus:row.conjStatus,conjMethod:row.conjMethod,conjSource:row.conjSource,
      conjCandidates:row.conjCandidates,conjOriginal:row.conjOriginal,point:row.point,id:'a:'+row.id,asset:'poda',origin,origins:new Set([origin]),renderRow:row,related:[],poda:true,
-     quantity:1,mtDistance:[tree.distMT,tree.distProjected,row.distMT].filter(v=>T.positive(v)!==null).reduce((p,n)=>Math.min(p,n),Infinity),distIT:tree.distIT??post.distIT,kv:tree.kv??post.kv,voltage:tree.voltage||post.voltage});
+     quantity:1,mtMeasured:T.positive(tree.distMeasured??row.distMT),mtDistance:[tree.distMeasured,tree.distMT,tree.distProjected,row.distMT].filter(v=>T.positive(v)!==null).reduce((p,n)=>Math.min(p,n),Infinity),distIT:tree.distIT??post.distIT,kv:tree.kv??post.kv,voltage:tree.voltage||post.voltage});
    }
    return jobs.map(row=>{
     const key=keyIndex.get(T.norm(row.chave))||{}, hierarchy=hierIndex.get(T.norm(row.chave))||{};
     const program=progIndex.get(T.norm(row.chave))||{}, impacts=orgIndex.get(T.norm(row.chave))||[];
     const situational=row.demand===true||/RECLAMA|OUVIDOR|SOLICIT|DEMANDA (DO|DE) CLIENTE|ORGAO PUBLICO|PROTOCOL/.test(T.norm([row.demand,row.desc,row.origemOS,row.origem,row.defeito].filter(Boolean).join(' ')));
-    const mode=T.classify({...row,situational},{...hierarchy,...key,cli:key.cli??hierarchy.cli},program);
+    const verifiedClients=[T.positive(hierarchy.cli),T.positive(key.cli)].filter(value=>value!==null);
+    const mode=T.classify({...row,situational},{...hierarchy,...key,cli:verifiedClients.length?Math.max(...verifiedClients):null},program);
     const costs=costOf(row,mode);
     const pool=mode.team&&row.polo?T.pole(row.polo)+'|'+mode.team:'';
     const normalized={...row,...mode,...costs,pool,impacts,naCandidates:hierarchy.na||[],key:row.chave,
@@ -293,10 +312,10 @@ const GestaoTerritorial = (() => {
    });
   }
   function costOf(row,mode){
-   const isPoda=row.asset==='poda'||row.asset==='faixa', rural=T.norm(row.perim)==='RURAL';
+   const isPoda=row.asset==='poda'||row.asset==='faixa', rural=T.perimeter(row.perim)==='RURAL';
    const meta=source.mergedSummary||{};
    const registered=Object.keys(meta.recursos2027||{}).map(T.norm);
-   const own=mode.mode==='bt'||isPoda&&!rural&&/URBANO|URBANA/.test(T.norm(row.perim));
+   const own=mode.mode==='bt'||isPoda&&T.norm(row.recurso)==='PODA URBANA (PROPRIA)';
    const resource=own?'PODA URBANA (PRÓPRIA)':isPoda&&rural?'PODA RURAL (TERCEIRA)':
     T.norm(row.recurso)||(row.cpx==='CAPEX'?'CAPEX 31563':row.cpx==='OPEX'?'OPEX MANUT. PROGRAMADA':'');
    const catalogCode=row.asset==='faixa'?'LIMP_FAIXA':mode.mode==='bt'?'PODA_BT':'PODA_MT';
@@ -308,14 +327,13 @@ const GestaoTerritorial = (() => {
    const pruneUnits=units==null?null:Math.max(1,units);
    const hours=duration>0?duration/60:pruneUnits!=null&&ref?.min>0?ref.min*pruneUnits/60:history?.min>0?history.min/60:null;
    const exactMode=(mode.mode==='viva')===Boolean(row.lv);
-   const mat=own||isPoda&&rural?0:exactMode?T.positive(row.mat):null;
+   const mat=exactMode?T.positive(row.mat):null;
    const mo=own?0:exactMode?T.positive(row.mo):null;
-   return {resource:registered.includes(resource)||T.budgetKey(resource)?resource:'',mat,mo:mo??(isPoda&&rural&&pruneUnits&&ref?.mo!=null?ref.mo*pruneUnits:null),
+   const material=mat??(isPoda&&rural&&pruneUnits&&T.positive(ref?.mat)!==null?ref.mat*pruneUnits:null);
+   return {resource:registered.includes(resource)||T.budgetKey(resource)?resource:'',mat:material,mo:mo??(isPoda&&rural&&pruneUnits&&ref?.mo!=null?ref.mo*pruneUnits:null),
     hours,costBasis:own?'Execução própria · horas':mat!=null&&mo!=null?'Consolidado de OS':isPoda&&rural&&ref?'Histórico por ponto de poda':'Pendente'};
   }
-  function budgetLimits(){return T.budgets(source.mergedSummary,{
-   'PODA URBANA (PRÓPRIA)':{mo:0,mat:0},...budgetInput
-  });}
+  function budgetLimits(){return T.budgets(source.mergedSummary,budgetInput);}
   function render(all,today,ring){
    activeArea=ring;rows=makeRows(all,today);
    const budgets=budgetLimits();
@@ -323,10 +341,11 @@ const GestaoTerritorial = (() => {
    result=T.optimize(rows,budgets,Object.fromEntries([...capacity].map(([pool,info])=>[pool,info.hours])));
    const deopOptions=GestaoMulti.pairs(rows.map(row=>row.deop));
    multis.deop.set(deopOptions);
-   const filter=Object.fromEntries(['asset','origin','mode','decision','deop'].map(key=>[key,new Set(values(key))]));
+   multis.resource.set(GestaoMulti.pairs(rows.map(row=>row.resource)));
+   const filter=Object.fromEntries(['asset','origin','mode','decision','deop','resource'].map(key=>[key,new Set(values(key))]));
    const match=(key,value)=>!filter[key].size||filter[key].has(value);
    display=result.rows.filter(row=>(!filter.asset.size||[...(row.assets||[row.asset])].some(x=>filter.asset.has(x)))&&match('mode',row.mode)&&match('deop',row.deop)&&
-    match('decision',row.planned?'selected':row.review?'review':'hold')&&
+    match('decision',row.planned?'selected':row.review?'review':'hold')&&match('resource',row.resource)&&
     (!filter.origin.size||[...row.origins].some(origin=>filter.origin.has(origin))));
    paintSummary(budgets,capacity);
    paintRows();paintOutages();paintDEC();paintImpact();paintBudgetFields(budgets,capacity);paintOrgs();
@@ -338,8 +357,8 @@ const GestaoTerritorial = (() => {
    const reviews=result.rows.filter(row=>!row.planned&&row.review).length;
    const spent=kind=>Object.entries(result.spend).filter(([name])=>T.budgetKey(name)===kind).reduce((s,[,item])=>s+item.mo+item.mat,0);
    const exhausted=[...capacity].filter(([pool,info])=>info.hours!=null&&(result.workload[pool]||0)>info.hours).length;
-   $('terrCards').innerHTML=[['Candidatos',num(c)],['Selecionados em 2027',num(selected)],['CAPEX comprometido',money(spent('CAPEX'))],
-    ['OPEX comprometido',money(spent('OPEX'))],['Grupos com demanda acima da capacidade',num(exhausted)],['Candidatos com dados/validação pendentes',num(reviews)]]
+   $('terrCards').innerHTML=[['Candidatos',num(c)],['Selecionados na simulação 2027',num(selected)],['CAPEX estimado na carteira',money(spent('CAPEX'))],
+    ['OPEX estimado na carteira',money(spent('OPEX'))],['Grupos com demanda acima da capacidade',num(exhausted)],['Candidatos com dados/validação pendentes',num(reviews)]]
     .map(([label,v])=>'<div><span>'+esc(label)+'</span><strong>'+esc(v)+'</strong></div>').join('');
    $('terrModes').innerHTML=Object.entries(T.modes).map(([id,label])=>{
     const matches=result.rows.filter(row=>row.mode===id);
@@ -392,17 +411,21 @@ const GestaoTerritorial = (() => {
     group.assets.add(T.types[row.asset]);
    }
    const all=[...grouped.values()].sort((a,b)=>b.score-a.score);
-   const view=all.slice(0,30);
-   $('terrOutages').innerHTML='<p class="small">'+num(all.length)+' pacotes por chave no recorte · '+num(view.length)+' maiores prioridades. Horas dos serviços selecionados antes de deslocamento e preparação.</p>'+
-    table(['Chave','Conjunto','Alimentador','Modalidade','Clientes no trecho','Residuais com manobra','NA estudada','Tipos','Serviços','Selecionados','Horas selecionadas'],
-     view.map(k=>[k.name,k.conj,k.alim,T.modes[k.mode],num(k.clients),num(k.residual),k.na,[...k.assets].join(', '),num(k.total),num(k.selected),num(k.hours)]));
+   $('terrOutages').innerHTML='<p class="small">Carteira para avaliação do COI. Horas dos serviços selecionados antes de deslocamento e preparação.</p>'+
+    ['radial','manobra'].map(mode=>{
+     const packages=all.filter(k=>k.mode===mode), view=packages.slice(0,30);
+     return '<h4>'+esc(T.modes[mode])+' · '+num(packages.length)+' pacotes</h4>'+
+      (packages.length>30?'<p class="small">Exibindo as 30 maiores prioridades. O CSV da carteira inclui o recorte completo.</p>':'')+
+      table(['Chave','Conjunto','Alimentador','Clientes no trecho','Residuais com manobra','NA conferida','Tipos','Serviços','Selecionados','Horas selecionadas'],
+       view.map(k=>[k.name,k.conj,k.alim,num(k.clients),num(k.residual),k.na,[...k.assets].join(', '),num(k.total),num(k.selected),num(k.hours)]));
+    }).join('');
   }
   function paintDEC(){
    const keys=new Set(rows.map(row=>T.norm(row.conj)).filter(Boolean));
    const view=[...monthly].filter(([key])=>!keys.size||keys.has(key)).map(([,value])=>value).sort((a,b)=>(b.nextGap??-Infinity)-(a.nextGap??-Infinity));
-   $('terrDec').innerHTML='<p class="small">O fechamento soma o apurado e os meses restantes do ano anterior quando completos. O próximo ano usa a projeção central disponível ou um cenário de repetição. O ganho das ações é estimativo. Limites ANEEL conforme <a href="https://www2.aneel.gov.br/cedoc/rea202315015ti.pdf" target="_blank" rel="noopener">Resolução 15.015/2023</a>.</p>'+
-    table(['Conjunto','Ano base','DEC apurado','Restante','Fechamento','Limite atual','Desvio','Projeção seguinte','Limite seguinte','Desvio seguinte','Causas não programadas (h)','Base da projeção'],view.map(item=>[
-     item.name,item.year,num(item.ytd),num(item.remainder),num(item.projected),num(item.currentLimit),num(item.gap),num(item.next),num(item.nextLimit),num(item.nextGap),
+   $('terrDec').innerHTML='<p class="small">O apurado termina no corte abaixo. O restante do ano é estimado pela sazonalidade histórica quando completa. A projeção do próximo ano mostra o método utilizado. As causas são as ocorrências gerenciáveis e não programadas do período apurado. Limites em horas da <a href="https://www2.aneel.gov.br/cedoc/rea202315015ti.pdf" target="_blank" rel="noopener">Resolução ANEEL 15.015/2023</a>.</p>'+
+    table(['Conjunto','Corte do apurado','DEC apurado','Restante estimado','Fechamento','Limite atual','Desvio','Projeção seguinte','Limite seguinte','Desvio seguinte','Causas gerenciáveis (h)','Base da projeção'],view.map(item=>[
+     item.name,item.cutoff,num(item.ytd),num(item.remainder),num(item.projected),num(item.currentLimit),num(item.gap),num(item.next),num(item.nextLimit),num(item.nextGap),
      item.causes.slice(0,4).map(cause=>cause.cause+' '+num(cause.dec)).join(' · '),item.projectionSource+' / '+item.nextSource]));
   }
   function pruneCounts(visibleRows=rows){
@@ -493,7 +516,10 @@ const GestaoTerritorial = (() => {
      const node=document.createElement('div'), count=counts.get(org.id);
      node.innerHTML='<h4>'+esc(org.nome)+'</h4><p>'+esc(poTypes[org.tipo]||org.tipo)+' · '+esc(org.municipio)+'</p><p>'+
       esc(org.chave?'Chave '+org.chave+' · '+num(count?.n||0)+' intervenções de poda no recorte':'Vínculo elétrico pendente')+'</p>'+
-      (org.poste?'<p>Poste '+esc(org.poste)+'</p>':'')+(/^https:\/\//.test(org.source||'')?'<p><a href="'+esc(org.source)+'" target="_blank" rel="noopener">Fonte da localização</a></p>':'');
+      (org.poste?'<p>Poste '+esc(org.poste)+'</p>':'')+
+      (org.address?'<p>'+esc(org.address)+'<br><small>Entrada a confirmar.</small></p>':'')+
+      (/^https:\/\//.test(org.source||'')?'<p><a href="'+esc(org.source)+'" target="_blank" rel="noopener">Fonte da localização</a></p>':'')+
+      (/^https:\/\//.test(org.addressSource||'')?'<p><a href="'+esc(org.addressSource)+'" target="_blank" rel="noopener">Endereço oficial</a></p>':'');
      const button=document.createElement('button');button.type='button';button.textContent='Adicionar parada';button.onclick=()=>appendStop({id:org.id,name:org.nome,point:org.point});node.append(button);
      return node;
     });marker.addTo(mapOrgs);
@@ -641,9 +667,12 @@ const GestaoTerritorial = (() => {
    const limit=Math.max(2,Math.min(20,$('terrRouteLimit').valueAsNumber||20));
    const scoped=orgRows().filter(org=>!activeArea||T.pointIn(org.point,activeArea));
    const publicById=new Map(catalog.filter(org=>org.point).map(org=>[org.id,org]));
-   const candidates=T.route(scoped.map(org=>publicById.get(org.id)).filter(Boolean).map(org=>({...org,name:org.nome})),true).stops.slice(0,limit);
+   const publicStops=scoped.filter(org=>{
+    const published=publicById.get(org.id)?.point;
+    return published&&org.point&&published.every((v,i)=>v===org.point[i]);
+   });
+   const candidates=T.route(publicStops.map(org=>({id:org.id,name:org.nome,point:org.point})),true).stops.slice(0,limit);
    if(candidates.length<2){$('terrRouteStatus').textContent='Selecione pelo menos dois órgãos do catálogo público com coordenadas.';return;}
-   if(new Set(candidates.map(org=>org.municipio)).size!==1){$('terrRouteStatus').textContent='Selecione um município por vez para sugerir rota por ruas.';return;}
    routing?.abort();routing=new AbortController();
    const pending=routing, button=$('terrSuggestRoad');button.disabled=true;
    $('terrRouteStatus').textContent='Calculando pela rede viária…';
