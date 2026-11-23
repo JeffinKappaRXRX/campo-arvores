@@ -245,8 +245,8 @@
    render({enquadra});
   }catch(error){
    if(serial!==requestSerial)return;
-   $('dataStatus').textContent=error.message;
    if(error.status===401)await start();
+   else $('dataStatus').textContent=error.message;
   }finally{if(serial===requestSerial)$('refresh').disabled=false;}
  }
  async function start(){
@@ -256,8 +256,8 @@
     lock();
     $('loginLink').hidden=!session.available;
     const reason=new URL(location.href).searchParams.get('acesso');
-    $('loginStatus').textContent=!session.available||reason==='indisponivel'?'A entrada gerencial está temporariamente indisponível.':
-     reason==='email'?'Use um endereço de um domínio corporativo autorizado.':'';
+    $('loginStatus').textContent=!session.available||reason==='indisponivel'?'Acesso temporariamente indisponível.':
+     reason==='email'?'Acesso não autorizado.':'';
     return;
    }
    $('login').hidden=true;
@@ -265,7 +265,7 @@
    $('logout').hidden=!session.email;
    $('sessionEmail').textContent=session.email||'Administrador';
    await load(true);
-  }catch(error){lock();$('loginStatus').textContent=error.message;}
+  }catch{lock();$('loginLink').hidden=true;$('loginStatus').textContent='Não foi possível verificar o acesso.';}
  }
  let filterTimer;
  const change=()=>{
