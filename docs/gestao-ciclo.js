@@ -74,7 +74,7 @@
  <div id="cycleDetail" aria-live="polite"></div><div id="cycleRows"></div><div class="cycle-pages"><button type="button" id="cyclePrev">Anterior</button><span id="cyclePage"></span><button type="button" id="cycleNext">Próxima</button></div>`;
  summary.after(ledger);
  let structures=new Map(),conjuntos={},structureGeneration='', structureRequest=null;
- let references=null,polygonIndex=null,polygonSource=null,geoRestored=false,geoWorker=null,geoLayers=[],locationRows=[],poleLocations=null;
+ let references=null,polygonIndex=null,polygonSource=null,geoRestored=false,geoWorker=null,geoLayers=[],registry=null;
  let source=null,localSource=false,revision='',params=null,windows=[],now=0,allRows=[],visible=[],treeRows=[],stats=[],page=0,map=null,markers=null,links=null,markerByRow=new Map(),zoomTimer,filterTimer,epoch=0,loading=null,request=null,publishing=false,lastHash=false,needsFit=false;
  const filters=$('cycleFilters'),parameterForm=$('cycleParameters');
  const unknownConj='SEM CONJUNTO IDENTIFICADO';
@@ -121,7 +121,7 @@
  const selected=name=>GestaoMulti.selected(fields[name]);
  let cycleInitialized=false,area=null;
  const territorial=GestaoTerritorial.create({
-  anchor:ledger,tools, getMap:()=>map, fitServices:fit,classify:row=>CycleConjuntos.classifyRow(row,polygonIndex,poleLocations),update:()=>{populate();update(false);},
+  anchor:ledger,tools, getMap:()=>map, fitServices:fit,classify:row=>CycleConjuntos.classifyRow(row,polygonIndex,null,{registry,anchor:true}),update:()=>{populate();update(false);},
   plot:point=>{if(map){$('mapFrame').scrollIntoView({block:'center'});map.setView(point,18);}},
   table:(...args)=>table(...args)
  });
@@ -152,12 +152,12 @@
  }
  function defaults(){return {...source.par,count:4,today:null};}
  function copyOptions(name,values){multi[name].set(GestaoMulti.pairs(values));}
- function resolveArea(territory,point,row={}){
-  return CycleConjuntos.classifyRow({...row,...territory,conjOriginal:row.conjOriginal??row.conj??'',point},polygonIndex,poleLocations);
+ function resolveArea(territory,point,row,poleRecord=false){
+  return CycleConjuntos.classifyRow({...row,...territory,conjOriginal:row.conjOriginal??row.conj??'',point},polygonIndex,null,{registry,anchor:poleRecord,poleRecord});
  }
  function enriched(row){
   const central=structures.get(CP.postId(row.id));
-  const territory=resolveArea(CP.territory(row,conjuntos,central),row.point,row);
+  const territory=resolveArea(CP.territory(row,conjuntos,central),row.point,row,true);
   if(!central)return {...row,...territory};
   const kind=row.kind==='faixa'?'faixa':central.ss?(central.os||/PODA/.test(CP.norm(row.tipo))?'ambos':'ss'):'poste';
   return {...central,...row,...territory,kind,point:territory.point,criacao:row.criacao??central.criacao,
@@ -166,12 +166,11 @@
  }
  function centralOnly(row){
   const kind=row.ss?(row.os?'ambos':'ss'):'poste';
-  return {...row,...resolveArea(CP.territory(row,conjuntos),row.point,row),kind,
+  return {...row,...resolveArea(CP.territory(row,conjuntos),row.point,row,true),kind,
    groupStatus:row.osOpen?'Pendente (OS aberta)':row.ssWithoutOS?'SS aberta sem OS':row.ssOpen?'SS aberta':'Sem ciclo vinculado'};
  }
  let effectivePosts=[];
  function collectPosts(){
-  poleLocations=CycleConjuntos.locationIndex([...locationRows,...(source?.postes||[])]);
   effectivePosts=(source?.postes||[]).map(enriched);
   for(const [id,row] of structures)if(!source?.index.has(id))effectivePosts.push(centralOnly(row));
  }
@@ -457,15 +456,17 @@
     if(token!==epoch||!active())return;
     if(!meta.manifest?.parque_postes){$('cycleSSStatus').textContent='Parque de Poda com vínculos de SS indisponível.';if(!source)$('cycleSource').textContent='Carregue o Excel em Parâmetros e diretórios para ver as previsões.';return;}
     if(structureGeneration&&meta.generation===structureGeneration)return;
-    const [rows,orders,metadata,keys,geography]=await Promise.all([
+    const [rows,orders,metadata,keys,geography,postesGis]=await Promise.all([
      Central.rowsFromGeneration(meta,'parque_postes'),
      meta.manifest.os_abertas?Central.rowsFromGeneration(meta,'os_abertas'):[],
      meta.manifest.resumo?Central.dataFromGeneration(meta,'resumo'):{},
      meta.manifest.chaves?Central.rowsFromGeneration(meta,'chaves').catch(()=>[]):[],
-     meta.manifest.conjuntos_geo?Central.dataFromGeneration(meta,'conjuntos_geo'):null
+     meta.manifest.conjuntos_geo?Central.dataFromGeneration(meta,'conjuntos_geo'):null,
+     meta.manifest.postes_gis?Central.dataFromGeneration(meta,'postes_gis'):null
     ]);
     if(token!==epoch||!active())return;
-    conjuntos=metadata.conjuntos||{};locationRows=rows;
+    conjuntos=metadata.conjuntos||{};
+    registry=Central.configurePoleRegistry(postesGis);
     if(geography){preparePolygons(geography);Central.configureGeography(geography);}else if(polygonSource?.source?.sha256){polygonSource=null;polygonIndex=null;$('cycleGeoStatus').textContent='A geração central atual não contém os polígonos oficiais.';}
     references=CycleConjuntos.indexReferences(keys,conjuntos);
     if(polygonSource&&!geography)try{preparePolygons(polygonSource);}catch(error){$('cycleGeoStatus').textContent=error.message;}
@@ -484,15 +485,22 @@
   })();
   return structureRequest;
  }
- const geoLabels={classificado:'Classificados',fora_cobertura:'Fora dos polígonos',divisa_ambigua:'Divisa ou sobreposição ambígua',sem_coordenada:'Sem coordenada',coordenada_invalida:'Coordenada inválida',poste_ambiguo:'Poste com posições divergentes',poligonos_indisponiveis:'Polígonos indisponíveis'};
+ const geoLabels={classificado:'Classificados',fora_cobertura:'Fora dos conjuntos',divisa_ambigua:'Divisa ou sobreposição ambígua',sem_coordenada:'Sem coordenada',coordenada_invalida:'Coordenada inválida',poste_ambiguo:'Poste com posições divergentes',fora_acre:'Fora do Acre sem poste verificável',poste_fora_acre:'Poste GIS fora do Acre',poligonos_indisponiveis:'Polígonos indisponíveis'};
  function geographyRows(){return [...effectivePosts,...treeRows,...territorial.structures()];}
  function updateCoverage(){
   const rows=geographyRows(),audit=CycleConjuntos.audit(rows);
-  $('cycleGeoCoverage').textContent=nums(audit.classified)+' de '+nums(audit.total)+' registros com conjunto espacial · '+Object.entries(audit.statuses).filter(([status])=>status!=='classificado').map(([status,count])=>nums(count)+' '+(geoLabels[status]||status).toLocaleLowerCase('pt-BR')).join(' · ')+(audit.conflicts?' · '+nums(audit.conflicts)+' divergências do cadastro original':'');
+  const positions=rows.filter(row=>row.locationStatus==='corrigido_gis'||row.locationStatus==='localizado_gis').length;
+  const pending=Object.entries(audit.statuses).filter(([status])=>status!=='classificado').map(([status,count])=>nums(count)+' '+(geoLabels[status]||status).toLocaleLowerCase('pt-BR'));
+  $('cycleGeoCoverage').textContent=[nums(audit.classified)+' de '+nums(audit.total)+' registros com conjunto espacial',
+   registry?nums(positions)+' posições atualizadas pelo ID do poste':'Base GIS de postes indisponível',
+   ...pending,audit.conflicts?nums(audit.conflicts)+' divergências do conjunto original':''].filter(Boolean).join(' · ');
  }
  function exportGeographyAudit(){
-  const head=['Tipo','ID','OS','Poste','Status','Código oficial','Nome oficial','Conjunto original','Divergência','Localização','Latitude','Longitude','Candidatos','SHA256 da fonte'];
-  const lines=geographyRows().map(row=>[row.kind,row.id,row.orderId||row.os,row.posteGIS||row.poste,row.conjStatus,row.conjCode,row.conjName,row.conjOriginal,row.conjConflict?'Sim':'Não',row.locationMethod,row.point?.[0],row.point?.[1],(row.conjCandidates||[]).map(item=>item.code+' '+item.name).join(' | '),row.conjSource?.sha256]);
+  const head=['Tipo','ID','OS','Poste','Status do conjunto','Código oficial','Nome oficial','Conjunto original','Divergência','Status da coordenada','Método','Latitude original','Longitude original','Latitude GIS','Longitude GIS','Latitude no mapa','Longitude no mapa','Diferença até o poste (m)','Camada de postes','Candidatos','SHA256 da fonte'];
+  const lines=geographyRows().map(row=>[row.kind,row.id,row.orderId||row.os,row.posteGIS||row.poste||(row.kind==='arvore'||row.kind==='estrutura'?'':row.id),
+   row.conjStatus,row.conjCode,row.conjName,row.conjOriginal,row.conjConflict?'Sim':'Não',geoLabels[row.locationStatus]||row.locationStatus,row.locationMethod,
+   row.originalPoint?.[0],row.originalPoint?.[1],row.polePoint?.[0],row.polePoint?.[1],row.point?.[0],row.point?.[1],row.poleDistanceM?.toFixed(1),row.locationSource?.layer,
+   (row.conjCandidates||[]).map(item=>item.code+' '+item.name).join(' | '),row.conjSource?.sha256]);
   const csv=[head,...lines].map(row=>row.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(';')).join('\r\n');
   const link=document.createElement('a');link.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));link.download='auditoria-conjuntos.csv';link.click();URL.revokeObjectURL(link.href);
  }
@@ -685,7 +693,7 @@
   if(!on){if($('cycleSettings').open)$('cycleSettings').close();markers?.clearLayers();links?.clearLayers();}else if(!entering){paintMap();}
  }
  window.CampoCycle={attach,active,visibility,audit:()=>CycleConjuntos.audit(geographyRows()),drawing:()=>territorial.drawing(),stop(){
-  territorial.stop();area=null;window.CampoSpatialArea=null;Central.setSpatialArea(null);window.dispatchEvent(new Event('campo-spatial-area'));locationRows=[];poleLocations=null;cycleInitialized=false;
+  territorial.stop();area=null;window.CampoSpatialArea=null;Central.setSpatialArea(null);window.dispatchEvent(new Event('campo-spatial-area'));registry=null;Central.configurePoleRegistry(null);cycleInitialized=false;
   epoch++;geoWorker?.terminate();geoWorker=null;geoRestored=false;geoLayers=[];polygonSource=null;polygonIndex=null;references=null;structures=new Map();conjuntos={};effectivePosts=[];selectedConj.clear();paintConjSummary();structureGeneration='';structureRequest=null;request?.abort();request=null;loading=null;source=null;localSource=false;revision='';params=null;windows=[];allRows=[];ledgerRows=[];visible=[];plannedOnly.disabled=true;fields.cycle.replaceChildren();treeRows=[];stats=[];lastHash=false;
   for(const id of ['cycleSource','cycleRefreshStatus','cycleSSStatus','cycleGeoCoverage','cycleUploadStatus','cycleCheck','cycleGrowth','cycleDetail','cycleRows','cycleMetrics','cycleMonthly','cycleSets','cycleWindows','cycleBreakdown','cycleLedgerCount','cyclePage','cycleFilterCount'])$(id).replaceChildren();
   $('cycleFile').value='';$('cycleGeoFile').value='';$('cycleGeoApply').disabled=true;

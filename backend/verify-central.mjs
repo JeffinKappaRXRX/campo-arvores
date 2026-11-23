@@ -45,11 +45,14 @@ assert.equal((await call('/api/vera/trees',undefined,auth)).status,200);
 // A separately imported geography survives the next operational refresh.
 await sync({action:'part',generation:'cen-20261105',name:'resumo',part:0,data:'EEEE'});
 await sync({action:'part',generation:'cen-20261105',name:'conjuntos_geo',part:0,data:'FFFF'});
-assert.equal((await sync({action:'commit',generation:'cen-20261105',manifest:{resumo:{parts:1,bytes:4},conjuntos_geo:{parts:1,bytes:4,sha256:'verified'}}})).status,200);
+await sync({action:'part',generation:'cen-20261105',name:'postes_gis',part:0,data:'KKKK'});
+assert.equal((await sync({action:'commit',generation:'cen-20261105',manifest:{resumo:{parts:1,bytes:4},conjuntos_geo:{parts:1,bytes:4,sha256:'verified'},postes_gis:{parts:1,bytes:4}}})).status,200);
 await sync({action:'part',generation:'cen-20261106',name:'resumo',part:0,data:'GGGG'});
 assert.equal((await sync({action:'commit',generation:'cen-20261106',manifest:{resumo:{parts:1,bytes:4}}})).status,200);
 assert.equal((await call('/api/central/data?name=conjuntos_geo&part=0&generation=cen-20261106',undefined,auth)).data.body,'FFFF');
 assert.equal((await call('/api/central/meta',undefined,auth)).data.manifest.conjuntos_geo.sha256,'verified');
+assert.equal((await call('/api/central/data?name=postes_gis&part=0&generation=cen-20261106',undefined,auth)).data.body,'KKKK');
+assert.equal((await call('/api/central/data?name=postes_gis&part=0&generation=cen-20261106',undefined,inspector)).status,403);
 assert.equal((await call('/api/central/data?name=conjuntos_geo&part=0&generation=cen-20261106',undefined,inspector)).status,403);
 assert.equal(sql.prepare("SELECT COUNT(*) n FROM central_parts WHERE generation<>'cen-20261106'").get().n,0);
 // Explicit complete replacement wins; an incomplete replacement cannot activate.

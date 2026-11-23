@@ -64,14 +64,15 @@ async function centralSync(request,env){try{
   if(!manifest||typeof manifest!=='object'||!Object.keys(manifest).length||!Object.keys(manifest).every(k=>CENTRAL_NAME.test(k)&&Number.isSafeInteger(manifest[k]?.parts)&&manifest[k].parts>0))return json({error:'Manifesto inválido.'},400);
   const {results}=await db.prepare('SELECT name,COUNT(*) n FROM central_parts WHERE generation=? GROUP BY name').bind(generation).all(),found=Object.fromEntries(results.map(r=>[r.name,r.n]));
   for(const [k,v]of Object.entries(manifest))if(found[k]!==v.parts)return json({error:'Envio incompleto: '+k+'.'},409);
-  // The operational refresh must retain the separately verified territorial layer.
+  // The operational refresh must retain the independently verified territorial references.
   // Copy inside the same transaction as the active generation switch and cleanup.
   const previous=await centralMeta(db),previousManifest=JSON.parse(previous.manifest||'{}'),preserve=[];
-  if(!manifest.conjuntos_geo&&previousManifest.conjuntos_geo){
-   const count=await db.prepare('SELECT COUNT(*) n FROM central_parts WHERE generation=? AND name=?').bind(previous.generation,'conjuntos_geo').first();
-   if(count.n!==previousManifest.conjuntos_geo.parts)return json({error:'Camada de conjuntos incompleta; atualização preservada.'},409);
-   manifest.conjuntos_geo=previousManifest.conjuntos_geo;
-   if(previous.generation!==generation)preserve.push(db.prepare('INSERT OR REPLACE INTO central_parts(generation,name,part,body) SELECT ?,name,part,body FROM central_parts WHERE generation=? AND name=?').bind(generation,previous.generation,'conjuntos_geo'));
+  for(const name of ['conjuntos_geo','postes_gis']){
+   if(manifest[name]||!previousManifest[name])continue;
+   const count=await db.prepare('SELECT COUNT(*) n FROM central_parts WHERE generation=? AND name=?').bind(previous.generation,name).first();
+   if(count.n!==previousManifest[name].parts)return json({error:'Referência territorial incompleta: '+name+'.'},409);
+   manifest[name]=previousManifest[name];
+   if(previous.generation!==generation)preserve.push(db.prepare('INSERT OR REPLACE INTO central_parts(generation,name,part,body) SELECT ?,name,part,body FROM central_parts WHERE generation=? AND name=?').bind(generation,previous.generation,name));
   }
   const now=new Date().toISOString(),set=(k,v)=>db.prepare('INSERT OR REPLACE INTO central_meta(key,value) VALUES(?,?)').bind(k,String(v));
   await db.batch([...preserve,set('generation',generation),set('updatedAt',now),set('manifest',JSON.stringify(manifest)),db.prepare('DELETE FROM central_parts WHERE generation<>?').bind(generation)]);

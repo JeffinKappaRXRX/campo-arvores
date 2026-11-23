@@ -1,8 +1,9 @@
 'use strict';
 // Base das telas de manutenção e orçamento: leitura da API, tabela, gráficos e formatação.
 const Central=(()=>{
- const dados={},objetos={},carregamentos=new Map(),BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);let filtrosGlobais={},dimensoesCache=null,dataGeneration='',geography=null,spatialIndex=null,locations=null;
+ const dados={},objetos={},carregamentos=new Map(),BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);let filtrosGlobais={},dimensoesCache=null,dataGeneration='',geography=null,spatialIndex=null,locations=null,registry=null;
  const spatialTables=new Set(['os_abertas','os_exec','parque_postes','poda_postes','prog','vera_prev','ss','faixa','insp_abertas','carga_trafos']);
+ const anchoredTables=new Set(['parque_postes','poda_postes','os_abertas','prog','faixa']);
  const classified=new Map();let spatialArea=null;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const num=(v,d=0)=>v==null||Number.isNaN(v)?'—':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -29,10 +30,10 @@ const Central=(()=>{
  async function carregar(meta,nomes,aviso){
   if(dataGeneration!==meta.generation){
    dataGeneration=meta.generation;for(const key of Object.keys(dados))delete dados[key];for(const key of Object.keys(objetos))delete objetos[key];
-   dimensoesCache=null;geography=null;spatialIndex=null;locations=null;classified.clear();
+   dimensoesCache=null;geography=null;spatialIndex=null;locations=null;registry=null;classified.clear();
   }
   const token=dataGeneration;
-  if(nomes.some(name=>spatialTables.has(name)))nomes=[...nomes,'conjuntos_geo','parque_postes'];
+  if(nomes.some(name=>spatialTables.has(name)))nomes=[...nomes,'conjuntos_geo','postes_gis','parque_postes'];
   const faltam=[...new Set(nomes)].filter(n=>!dados[n]&&meta.manifest[n]);
   await Promise.all(faltam.map(async nome=>{
    const chave=meta.generation+':'+nome;
@@ -44,6 +45,7 @@ const Central=(()=>{
    }
    const value=await pendente;if(token!==dataGeneration)return;dados[nome]=value;delete objetos[nome];classified.clear();locations=null;
    if(nome==='conjuntos_geo')configureGeography(value);
+   if(nome==='postes_gis')configurePoleRegistry(value);
    if(nome==='chaves')dimensoesCache=null;
   }));
  }
@@ -63,12 +65,17 @@ const Central=(()=>{
   geography=data;spatialIndex=candidate;classified.clear();
   if(dados.resumo)dados.resumo.conjuntos={...dados.resumo.conjuntos,...names};
  }
+ function configurePoleRegistry(data){
+  registry=data&&typeof CycleConjuntos!=='undefined'?CycleConjuntos.poleRegistry(data):null;
+  classified.clear();
+  return registry;
+ }
  function spatialRows(nome){
   const rows=linhasRaw(nome);if(!spatialTables.has(nome)||typeof CycleConjuntos==='undefined')return rows;
   if(classified.has(nome))return classified.get(nome);
   if(!locations)locations=CycleConjuntos.locationIndex(linhasRaw('parque_postes'));
   const result=rows.map(row=>{
-   const enriched=CycleConjuntos.classifyRow(row,spatialIndex,locations);
+   const enriched=CycleConjuntos.classifyRow(row,spatialIndex,locations,{registry,anchor:anchoredTables.has(nome),poleRecord:nome==='parque_postes'});
    return {...enriched,conj:enriched.conjCode||(!spatialIndex?row.conj:'')};
   });
   classified.set(nome,result);return result;
@@ -121,5 +128,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {lista,em,tem,um,bin,keyMatches,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,dataFromGeneration,rowsFromGeneration,setGlobalFilters,setSpatialArea,getSpatialArea,configureGeography,spatialRows,spatialAudit,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {lista,em,tem,um,bin,keyMatches,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,dataFromGeneration,rowsFromGeneration,setGlobalFilters,setSpatialArea,getSpatialArea,configureGeography,configurePoleRegistry,spatialRows,spatialAudit,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();

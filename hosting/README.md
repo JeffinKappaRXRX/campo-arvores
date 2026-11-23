@@ -1,5 +1,11 @@
 # Publicação no endereço oficial
 
+## Conferência de coordenadas pelo cadastro de postes
+
+O mapa do ciclo e as telas espaciais da central verificam o limite oficial do Acre (malha do IBGE 2025) e podem corrigir uma posição pelo ID exato na camada `13_Postes` do GeoPackage operacional. Para registros ancorados no poste, diferenças acima de 15 m usam a geometria GIS quando ela está no Acre. Coordenadas próprias de árvores dentro do Acre são preservadas. Referência ausente, ambígua ou fora do estado fica no CSV de auditoria sem desenhar marcador. O CSV conserva a coordenada de origem, a do poste e a posição usada pelo mapa.
+
+Gere a relação privada com `python tools/build-pole-registry.py REDE.gpkg --ids IDS.json --output POSTES_PRIVADOS.json`. Carregue o gzip no conjunto `postes_gis` da API central autenticada. Atualizações de rotina preservam a referência quando ela não vier no novo envio. Somente a malha pública do IBGE faz parte dos arquivos de hospedagem. A base GIS de postes e os cadastros operacionais continuam protegidos.
+
 ## Carteira territorial 2027
 
 O acesso fica em Manutenção → Carteira territorial 2027. O recorte por chave, conjunto, alimentador, ciclo e área livre é compartilhado com o mapa. A carteira separa estruturas e poda, VERA e campo, modalidade, recurso e triagem DEOP. Os painéis de pacotes distinguem radial e manobra. A classificação radial exige essa indicação no estudo e menos de 400 clientes. A manobra exige NA coincidente com a hierarquia trifásica e estimativa de transferência compatível com o estudo. A equipe responsável e o COI avaliam a execução.

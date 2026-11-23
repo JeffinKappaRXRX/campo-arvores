@@ -114,6 +114,50 @@ const CycleConjuntos=(()=>{
   return null;
  }
  const poleId=value=>normalize(value).replace(/^226-/,'');
+ const acre=typeof CampoAcreLimite==='undefined'?null:stateBoundary(CampoAcreLimite);
+ function stateBoundary(data){
+  const feature=data?.features?.find(f=>f.properties?.id==='12');
+  if(!feature)throw Error('Limite estadual do Acre indisponível.');
+  const index=spatial([feature],'name');
+  return point=>index.classify(point).status==='classificado';
+ }
+ function poleRegistry(data){
+  if(data?.schema!=='sigora-postes-1'||data.crs!=='EPSG:4326'||!Array.isArray(data.rows)||!Array.isArray(data.ambiguous))throw Error('Base de postes sem referência WGS84 válida.');
+  const rows=new Map(), ambiguous=new Set(data.ambiguous.map(poleId));
+  for(const [id,lat,lon] of data.rows){
+   const key=poleId(id), point=[lat,lon];
+   if(!key||rows.has(key)||ambiguous.has(key)||!validPoint(point))throw Error('Base de postes com posições inválidas ou duplicadas.');
+   rows.set(key,point);
+  }
+  return {source:data.source,lookup(id){const key=poleId(id);return {point:rows.get(key)||null,ambiguous:ambiguous.has(key)};}};
+ }
+ function distanceMeters(a,b){
+  const lat=(a[0]+b[0])*Math.PI/360;
+  return 111195*Math.hypot(a[0]-b[0],(a[1]-b[1])*Math.cos(lat));
+ }
+ function reconcile(row,registry,{within=acre,anchor=false,poleRecord=false}={}){
+  const originalPoint=pointOf(row), originalInside=originalPoint&&within(originalPoint);
+  const id=row.posteGIS||row.poste||row.pole||(poleRecord?row.id:'');
+  const reference=id&&registry?registry.lookup(id):null;
+  const polePoint=reference?.point||null;
+  const difference=originalPoint&&polePoint?distanceMeters(originalPoint,polePoint):null;
+  const hasOriginal=originalPoint||row.point!=null||['lat','lon','latitude','longitude','latP','lonP','latA','lonA'].some(k=>row[k]!=null&&String(row[k]).trim()!=='');
+  const poleInside=polePoint&&within(polePoint);
+  let point=null, locationMethod='', locationStatus='';
+  if(poleInside&&(!originalInside||anchor&&difference>15)){
+   point=polePoint;
+   locationMethod='Geometria GIS pelo ID do poste';
+   locationStatus=originalPoint?'corrigido_gis':'localizado_gis';
+  }else if(originalInside&&!(anchor&&polePoint&&!poleInside)){
+   point=originalPoint;
+   locationMethod=poleInside&&difference<=15?'Conferida com poste GIS':'Coordenada do registro';
+   locationStatus=poleInside&&difference<=15?'conferido_gis':'coordenada_original';
+  }else if(reference?.ambiguous)locationStatus='poste_ambiguo';
+  else if(polePoint&&!poleInside)locationStatus='poste_fora_acre';
+  else if(originalPoint)locationStatus='fora_acre';
+  else locationStatus=hasOriginal?'coordenada_invalida':'sem_coordenada';
+  return {point,originalPoint,polePoint,locationMethod,locationStatus,poleDistanceM:difference,locationSource:polePoint?registry.source:null};
+ }
  function locationIndex(rows){
   const poles=new Map();
   for(const row of rows){const id=poleId(row.posteGIS||row.poste||row.pole||row.id),point=pointOf(row);if(!id||!point)continue;
@@ -129,7 +173,14 @@ const CycleConjuntos=(()=>{
    conjCandidates:result.candidates,conjOriginal:original,conjConflict:conflict,conjSource:polygons?.source||null,
    method:result.name?'Polígono do conjunto':'',conjMethod:result.name?'Polígono do conjunto':''};
  }
- function classifyRow(row,polygons,locations){
+ function classifyRow(row,polygons,locations,options={}){
+  const within=options.within??acre;
+  if(within){
+   const spatial=reconcile(row,options.registry,{...options,within});
+   const result=resolve(row.conjOriginal??row.conj,row,spatial.point,polygons);
+   if(!spatial.point)result.conjStatus=spatial.locationStatus;
+   return {...row,...result,...spatial,lat:spatial.point?.[0]??null,lon:spatial.point?.[1]??null};
+  }
   let point=pointOf(row),locationMethod=point?'Coordenada do registro':'';
   const rawCoordinate=['lat','lon','latitude','longitude','latP','lonP','latA','lonA'].some(key=>row[key]!=null&&String(row[key]).trim()!=='')||row.point!=null;
   let ambiguous=false;
@@ -154,6 +205,6 @@ const CycleConjuntos=(()=>{
   for(const row of rows){const status=row.conjStatus||'nao_avaliado';statuses[status]=(statuses[status]||0)+1;if(row.conjCode||row.conjName)classified++;if(row.conjConflict)conflicts++;if(row.locationMethod)methods[row.locationMethod]=(methods[row.locationMethod]||0)+1;}
   return {total:rows.length,classified,unlocated:rows.length-classified,conflicts,statuses,methods};
  }
- return {spatial,indexReferences,resolve,classifyRow,pointOf,validPoint,locationIndex,pointInArea,audit};
+ return {spatial,indexReferences,resolve,classifyRow,pointOf,validPoint,locationIndex,pointInArea,audit,stateBoundary,poleRegistry,reconcile,acre};
 })();
 if(typeof module!=='undefined')module.exports=CycleConjuntos;
