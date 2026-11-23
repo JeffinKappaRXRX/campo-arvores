@@ -4,6 +4,8 @@ const rows={chaves:[{chave:'C1',plano:'PN',polo:'RBR',municipio:'Rio Branco',con
 const Central={views:{},dados:{resumo:{conjuntos:{1:'CONJ 1'}}},$:el,esc:String,num:v=>String(v??'—'),pct:v=>v==null?'—':Math.round(v*100)+'%',isoBR:String,COR:{s1:'#1',s2:'#2',s3:'#3'},linhas:n=>rows[n]||[],unicos:a=>[...new Set(a)].filter(Boolean),add:(a,k,v)=>a[k]=(a[k]||0)+(Number(v)||0),agrupa:(rs,key,sum)=>{const m=new Map();for(const r of rs){const k=key(r),a=m.get(k)||{_k:k,_n:0};a._n++;sum(a,r);m.set(k,a);}return [...m.values()];},sit:String,kpis:()=>'',painel:(t,s,id)=>`<div id="${id}"></div>`,colunas:(e)=>e.innerHTML='grafico',tabela:(e,c,r)=>e.innerHTML='tabela '+r.length};
 const layer={addTo(){return this},addLayer(){},clearLayers(){}},map={setView(){return this},fitBounds(){},invalidateSize(){},remove(){}};
 const window={L:{map:()=>map,tileLayer:()=>layer,layerGroup:()=>layer,circleMarker:()=>({bindPopup(){return this}})}};
+const realFilters=vm.runInNewContext(fs.readFileSync('docs/central-core.js','utf8')+';({em:Central.em,keyMatches:Central.keyMatches})',{document:{getElementById:el}});
+Object.assign(Central,realFilters);
 const context={Central,window,document:{getElementById:el},setTimeout:f=>f(),Event};vm.createContext(context);vm.runInContext(fs.readFileSync('docs/central-bi.js','utf8'),context);
 assert.ok(Central.views.bioperacional,'nova tela do BI registrada');
 for(const filter of ['statusBI','trechoBI','priExecBI','polo','localidadeBI','conj','alim','planoBI','acaoBI','criarOSBI'])assert(Central.views.bioperacional.filtros.includes(filter),'missing BI filter '+filter);
@@ -11,4 +13,5 @@ const root={querySelectorAll:()=>[],set innerHTML(v){this._html=v;for(const m of
 Central.views.bioperacional.render({visaoBI:'geral'},root);
 assert.match(root.innerHTML,/id="mapaBI"/);assert.match(el('tBIResumo').innerHTML,/tabela/);assert.match(el('tBIInsp').innerHTML,/tabela 1/);assert.match(el('tBIPrazo').innerHTML,/tabela 1/);assert.match(el('mapaBILegenda').textContent,/pontos no mapa/);
 Central.views.bioperacional.render({visaoBI:'geral',localidadeBI:'Cruzeiro do Sul'},root);assert.match(el('tBIResumo').innerHTML,/tabela 0/,'locality filter changes every BI output');
+Central.views.bioperacional.render({visaoBI:'geral',localidadeBI:['Cruzeiro do Sul','Rio Branco'],chave:['C1','C2']},root);assert.match(el('tBIInsp').innerHTML,/tabela 1/,'multiple localities and keys retain matching rows');
 console.log('PASS central BI: four views, complete slicers, KPIs, charts, map, inspection, deadline, summary and OS tables honor locality.');
