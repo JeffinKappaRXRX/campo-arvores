@@ -31,16 +31,23 @@
   const rounded=Math.round(seconds);
   return Math.floor(rounded/60)+'min '+String(rounded%60).padStart(2,'0')+'s';
  }
- function productivity(rows,operators){
+ function refreshForecast(){
+  if(!current)return;
+  const {summary,daily,operators,todayInPeriod}=current;
+  CampoForecast.paint({summary,daily});
+  const count=daily.find(row=>row.name===today)?.count||0,goal=100*operators.length,minimum=70*operators.length;
+  $('dailyGoal').textContent=todayInPeriod&&goal?fmt(count)+' hoje · '+pct(count/goal)+' da meta de '+fmt(goal)+' cadastros'+(count<minimum?' · faltam '+fmt(minimum-count)+' para o mínimo':''):'';
+ }
+ function productivity(rows,operators,todayInPeriod){
   const summary=F.summary(rows);
   const daily=F.group(rows,'day').filter(row=>row.name!=='Não informado').sort((a,b)=>F.compare(b.name,a.name)).slice(0,31);
-  current={summary,daily};
+  current={summary,daily,operators,todayInPeriod};
   const max=Math.max(1,...daily.map(row=>row.count));
   $('daily').innerHTML=[...daily].reverse().map(row=>{
    const day=row.name.slice(5).split('-').reverse().join('/');
    return '<div class="daily-bar" title="'+esc(day)+' · '+row.count+' cadastros">'+row.count+'<i style="height:'+Math.max(3,Math.round(100*row.count/max))+'px"></i>'+esc(day)+'</div>';
   }).join('')||'<p>Nenhum cadastro de campo no período.</p>';
-  CampoForecast.paint(current);
+  refreshForecast();
   const metrics=[
    ['Cadastros',fmt(summary.count),fmt(summary.count-summary.grouped)+' individuais · '+fmt(summary.grouped)+' agrupados'],
    ['Tempo médio por cadastro',duration(summary.mean),fmt(summary.measured)+' cadastros com tempo medido'],
@@ -51,9 +58,10 @@
   $('positions').innerHTML=F.group(rows,'position').map(row=>'<div class="position"><span>'+esc(row.name)+'</span><meter max="'+summary.count+'" value="'+row.count+'"></meter><b>'+fmt(row.count)+'</b></div>').join('')||'<p>Nenhum cadastro de campo no período.</p>';
   $('feedersKpi').innerHTML=table(['Alimentador','Cadastros','Poda','Tempo médio'],F.group(rows,'feeder').map(row=>[esc(row.name),fmt(row.count),fmt(row.poda),duration(row.mean)]),'Nenhum alimentador no recorte.');
   const groups=new Map(F.group(rows,'inspector').map(row=>[row.name,row]));
-  $('inspectors').innerHTML=table(['Inspetor','Cadastros','Tempo médio','Mediana','Cadastros / hora ativa','Tempo medido','Poda','Sem identificação','Incompletos'],operators.map(name=>{
+  $('inspectors').innerHTML=table(['Inspetor','Cadastros','Tempo médio','Mediana','Cadastros / hora ativa','Tempo medido','Poda','Sem identificação','Incompletos','Hoje','Meta diária'],operators.map(name=>{
    const row=groups.get(name)||F.summary([]);
-   return [esc(name),fmt(row.count),duration(row.mean),duration(row.median),fmt(row.measured/row.hours),fmt(row.measured)+' / '+fmt(row.count),fmt(row.poda),fmt(row.identification),fmt(row.missing)];
+   const todayCount=rows.filter(record=>record.day===today&&record.inspector===name).length;
+   return [esc(name),fmt(row.count),duration(row.mean),duration(row.median),fmt(row.measured/row.hours),fmt(row.measured)+' / '+fmt(row.count),fmt(row.poda),fmt(row.identification),fmt(row.missing),todayInPeriod?fmt(todayCount):'—',todayInPeriod?pct(todayCount/100):'—'];
   }),'Nenhum inspetor divulgado.');
  }
  function routes(filter,list,operators){
@@ -111,7 +119,7 @@
   $('dataStatus').textContent=invalid?'A data inicial deve ser anterior ou igual à data final.':
    !data.archiveAvailable?'Arquivo do Drive indisponível. Indicadores de cadastro mostram os dados da base central.':'';
   const operators=invalid?[]:data.inspectors.filter(name=>!filter.inspectors.length||filter.inspectors.includes(name));
-  productivity(invalid?[]:F.apply(data.field,filter),operators);
+  productivity(invalid?[]:F.apply(data.field,filter),operators,!invalid&&F.period(today,filter.from,filter.through));
   const active=invalid?[]:data.routes.filter(route=>operators.includes(route.inspector));
   routes(filter,active,operators);
   void showMap(fit);
@@ -174,7 +182,7 @@
    $('loginLink').hidden=false;$('loginStatus').textContent='Sessão encerrada.';
   }catch(error){$('dataStatus').textContent=error.message;}
  };
- for(const id of ['forecastHours','forecastCount','forecastMode'])$(id).addEventListener('input',()=>{if(current)CampoForecast.paint(current);});
+ for(const id of ['forecastHours','forecastCount','forecastMode'])$(id).addEventListener('input',refreshForecast);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('workspace').hidden)void load(false);});
  setInterval(()=>{if(!document.hidden&&!$('workspace').hidden&&navigator.onLine)void load(false);},20000);
  void start();
