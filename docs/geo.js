@@ -83,6 +83,7 @@ $('expandMap').onclick=()=>{setMapFullscreen(true);$('mapWorkspace').requestFull
 let inspectionPinEntries=new Map(),inspectionPinFrame=null,inspectionPinGeneration=0,savedInspectionIcon=null;
 function inspectionPinIcon(r){return r._cluster?L.divIcon({className:'inspection-tree-cluster',html:'<span>'+r._cluster.count+'</span>',iconSize:[38,38],iconAnchor:[19,19]}):r.veraBase&&typeof veraPinIcon==='function'?veraPinIcon(r):savedInspectionIcon;}
 function renderInspectionPins(){
+ window.CampoFieldRouteMap?.refreshTrees?.();
  if(!fieldMap)return;const generation=++inspectionPinGeneration;if(inspectionPinFrame!==null)cancelAnimationFrame(inspectionPinFrame);
  if(!inspectionPins)inspectionPins=L.layerGroup().addTo(fieldMap);
  if(!savedInspectionIcon)savedInspectionIcon=L.divIcon({className:'saved-tree-pin',html:treeIcon.options.html,iconSize:[23,23],iconAnchor:[11,11]});

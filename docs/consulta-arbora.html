@@ -75,7 +75,9 @@
           <button type="button" id="routeViewSelected" disabled>Ver selecionadas</button>
           <button type="button" id="routeViewAll" disabled>Ver todas as rotas</button>
           <button type="button" id="routeClearMap" disabled>Limpar rotas</button>
-          <label class="map-check"><input id="showAllTrees" type="checkbox"> Todas as árvores</label>
+          <label>Fundo do mapa <select id="mapBasemap"><option value="hybrid">Híbrido · satélite e nomes</option><option value="streets">Ruas e logradouros</option><option value="satellite">Satélite Esri</option><option value="bing" disabled>Bing Satélite · requer chave</option></select></label>
+          <label>Árvores do campo <select id="treeScope"><option value="history">Todo o histórico da equipe</option><option value="routes">Somente das rotas exibidas</option><option value="off">Ocultar</option></select></label>
+          <label class="map-check"><input id="showAllTrees" type="checkbox"> Incluir parque VERA</label>
         </div>
         <div id="routeChoices" class="table-wrap"></div>
         <p id="routeMapStatus" role="status"></p>
@@ -83,7 +85,7 @@
         <p id="treeMapStatus" role="status" hidden></p>
         <div id="map" aria-label="Mapa de rotas e árvores" hidden></div>
         <div id="treeLegend" class="legend" hidden><span><i class="tree-vera"></i>Árvores VERA</span><span><i class="tree-field"></i>Árvores do campo</span></div>
-        <div id="qualityLegend" class="legend" hidden><span><i style="background:#ffaf39"></i>Possível erro de localização</span></div>
+        <div id="qualityLegend" class="legend" hidden><span><i style="background:#ffaf39"></i>Árvore e distância até a rede</span><span id="qualityNetworkLegend"><i style="background:#32e6ff"></i>Vão cadastrado</span></div>
         <div id="routeMapLabels" class="legend"></div><div id="legend" class="legend" hidden><span><i style="background:#168756"></i>Vistoriado</span><span><i style="background:#ee344a"></i>Pendente</span><span><i style="background:#255fa5"></i>Saída da subestação</span></div>
       </section>
     </div>

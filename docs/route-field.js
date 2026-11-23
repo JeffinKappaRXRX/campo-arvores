@@ -4,6 +4,7 @@
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
  const panel=$('fieldRoutes'),status=$('fieldRouteStatus');
+ let inspectionTreeLayer=null,inspectionTreeSignature="";
  let owner=null,state=null,selected=null,busy=false,refreshing=false,map=null,layer=null,currentGPS=null,sampleWrite=false,loadEpoch=0,routeGeometry=null,coverageInput={},fieldOverlay=null,googleOverlay=null,roadLeg=0,lastRoadSignature="",scopeTiles=null,mapScope=null;
  const returnButton=document.createElement('button');
  returnButton.type='button';returnButton.id='fieldRouteReturn';returnButton.className='secondary';returnButton.textContent='Devolver rota';
@@ -192,7 +193,7 @@
   const estimate=r?M.metres(r.spans.filter(s=>s.estimated)):0;
   const street=$('fieldRouteStreet'),legend=$('fieldRouteMapLegend');
   if(street)street.hidden=!r;
-  if(legend){legend.hidden=!r;legend.textContent=r?'Minha rota · '+km(total)+' de rede · azul: faixa de '+buffer+' m por lado · verde: confirmado':'';}
+  if(legend){legend.hidden=!r;legend.textContent=r?'Minha rota · '+km(total)+' de rede · azul: faixa de '+buffer+' m por lado · verde: confirmado · turquesa: árvores mapeadas':'';}
   if(r&&street){
    const paths=M.pendingPaths(M.outletOrder(group.flatMap(part=>part.spans),r.outlet).filter(span=>r.spans.some(item=>item.id===span.id)),prior.bySpan,active?.ranges),stops=M.roadStops(paths);
    const signature=r.id+'|'+stops.map(p=>p.join(',')).join('|');
@@ -283,7 +284,25 @@
    googleOverlay={geometry:routeGeometry,layers};
   }
  }
- window.CampoFieldRouteMap={refresh:refreshFieldOverlay};
+ function refreshRouteTrees(){
+  if(!map||typeof records==='undefined')return;
+  const r=route(),spans=new Set(r?groupOf(r).flatMap(part=>part.spans.map(span=>M.key(span.id))):[]);
+  const list=typeof visibleSharedTrees==='function'?visibleSharedTrees():records;
+  const names=M.key(r?.operator),points=list.filter(record=>
+   !record.deletedRemote&&!record.sharedDeleted&&spans.has(M.key(record.span))&&
+   (record.createdByUserId?record.createdByUserId===owner:names&&M.key(record.createdBy||record.inspector)===names)&&
+   [record.lat,record.lon].every(value=>value!=null&&value!==''&&Number.isFinite(Number(value)))&&Math.abs(Number(record.lat))<=90&&Math.abs(Number(record.lon))<=180
+  );
+  const signature=JSON.stringify(points.map(record=>[record.id,record.lat,record.lon,record.species]));
+  if(signature===inspectionTreeSignature)return;
+  inspectionTreeSignature=signature;
+  inspectionTreeLayer??=L.layerGroup().addTo(map);
+  inspectionTreeLayer.clearLayers();
+  for(const record of points)L.circleMarker([Number(record.lat),Number(record.lon)],{
+   pane:'routeTrees',radius:6,color:'#173b30',weight:2,fillColor:'#4de1d2',fillOpacity:1,bubblingMouseEvents:false
+  }).bindTooltip(esc(record.species||'Árvore mapeada')).addTo(inspectionTreeLayer);
+ }
+ window.CampoFieldRouteMap={refresh:refreshFieldOverlay,refreshTrees:refreshRouteTrees};
  $('fieldRouteOpenMap')?.addEventListener('click',()=>{
   if(!route()||typeof view!=='function'||typeof fieldMap==='undefined'||!fieldMap)return;
   view('inspect');
@@ -303,9 +322,10 @@
  function paintMap(r,fit){
   if(typeof L==='undefined')return;
   const target=$('fieldRouteMap');target.hidden=!r;
-  if(!r){layer?.remove();mapScope?.group.remove();mapScope=null;layer=null;return;}
+  if(!r){layer?.remove();mapScope?.group.remove();mapScope=null;layer=null;refreshRouteTrees();return;}
   if(!map){
    map=L.map(target,{preferCanvas:true}).setView([-9.97,-67.81],13);
+   if(map.createPane)map.createPane('routeTrees').style.zIndex='435';
    L.control.scale({imperial:false}).addTo(map);
    map.on('click',event=>{
     if(!areaMode||!session())return;
@@ -322,7 +342,7 @@
     showKeyReview(fieldKeys(current,groupOf(current).flatMap(part=>part.spans)),area);
    });
   }
-  if(navigator.onLine&&!scopeTiles&&typeof L.tileLayer==='function')scopeTiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:21,maxNativeZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  if(navigator.onLine&&!scopeTiles&&typeof L.tileLayer==='function')scopeTiles=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:16,attribution:'© Esri, HERE, Garmin e colaboradores'}).addTo(map);
   else if(!navigator.onLine&&scopeTiles){scopeTiles.remove();scopeTiles=null;}
   map.invalidateSize();
   if(mapScope?.geometry!==routeGeometry){mapScope?.group.remove();mapScope={geometry:routeGeometry,group:drawLeaflet(map,routeGeometry,'overlayPane')};}
@@ -335,6 +355,7 @@
   }
   if(currentGPS)L.circleMarker([currentGPS.lat,currentGPS.lon],{radius:5,color:'#1a5fb4'}).addTo(layer);
   for(const trail of session()?.trails||[])if(trail.length>1)L.polyline(trail,{color:'#265fc2',weight:2,opacity:.7}).addTo(layer);
+  refreshRouteTrees();
   if(fit&&mapScope.group.getBounds().isValid())map.fitBounds(mapScope.group.getBounds(),{padding:[25,25],maxZoom:18});
  }
  async function transact(fn){

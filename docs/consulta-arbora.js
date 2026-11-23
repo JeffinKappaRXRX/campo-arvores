@@ -12,8 +12,9 @@
  const fields=$('filters').elements;
  fields.from.value=today.slice(0,7)+'-01';fields.to.value=today;
  let data,map,routeLayer,treeLayer,qualityLayer,loadSerial=0,loading=false;
- let qualityRows=[],qualityVisible=false;
- let treeController=null,treeSignature='';
+ let qualityRows=[],qualityVisible=false,focusedQuality=null;
+ let treeController=null,treeSignature='',treeHistory=null,veraHistory=null,routeSpans=new Set(),baseLayers=[],bing=null;
+ let authorized=false;
  let availableRoutes=[],selectedRoutes=new Set(),shownRoutes=[],viewMode=null,mapSignature='',mapController=null;
  function filterValues(){
   return {from:fields.from.value,through:fields.to.value,inspectors:fields.inspector.value?[fields.inspector.value]:[]};
@@ -114,33 +115,76 @@
  function hideMap(message=''){
   mapController?.abort();mapSignature='';
   routeLayer?.clearLayers();
+  routeSpans.clear();paintTrees();
   $('legend').hidden=true;
   updateMapVisibility();
   $('routeMapStatus').textContent=message;
   $('routeMapLabels').textContent='';
  }
+ const mapService='https://server.arcgisonline.com/ArcGIS/rest/services/';
+ const imageryAttribution='Imagens © Esri, Maxar, Earthstar Geographics e comunidade GIS';
+ function quadKey({x,y,z}){
+  let key='';
+  for(let level=z;level>0;level--){const bit=2**(level-1);key+=Number((x&bit)>0)+2*Number((y&bit)>0);}
+  return key;
+ }
+ function setBasemap(){
+  if(!map)return;
+  for(const layer of baseLayers)map.removeLayer(layer);
+  baseLayers=[];
+  const choice=$('mapBasemap').value,notice=$('basemapStatus');
+  notice.hidden=true;
+  const add=(layer,primary=true)=>{
+   let errors=0;
+   if(primary){
+    layer.on('tileload',()=>{errors=0;});
+    layer.on('tileerror',()=>{
+     if(!baseLayers.includes(layer)||++errors<3)return;
+     if(choice!=='streets'){$('mapBasemap').value='streets';setBasemap();}
+     else{map.removeLayer(layer);baseLayers=baseLayers.filter(item=>item!==layer);}
+     notice.hidden=false;
+     notice.textContent=choice==='streets'?'Fundo indisponível. Rotas, rede e árvores continuam visíveis.':'Imagem de fundo indisponível. Ruas e logradouros ativados.';
+    });
+   }
+   baseLayers.push(layer);layer.addTo(map);
+  };
+  const tiles=(name,options)=>L.tileLayer(mapService+name+'/MapServer/tile/{z}/{y}/{x}',{maxZoom:22,maxNativeZoom:16,...options});
+  if(choice==='bing'&&bing?.available){
+   const layer=L.tileLayer(bing.source,{maxZoom:22,maxNativeZoom:bing.nativeZoom,subdomains:bing.subdomains,attribution:esc(bing.attribution)});
+   layer.getTileUrl=function(coords){
+    const subdomains=bing.subdomains;
+    return bing.source.replace('{quadkey}',quadKey(coords)).replace('{subdomain}',()=>subdomains[Math.abs(coords.x+coords.y)%subdomains.length]);
+   };
+   add(layer);
+  }else if(choice==='streets')add(tiles('World_Street_Map',{attribution:'© Esri, HERE, Garmin e colaboradores'}));
+  else{
+   add(tiles('World_Imagery',{attribution:imageryAttribution}));
+   if(choice==='hybrid'){
+    add(tiles('Reference/World_Transportation',{attribution:'Ruas e nomes © Esri e colaboradores',zIndex:2}),false);
+    add(tiles('Reference/World_Boundaries_and_Places',{zIndex:3}),false);
+   }
+  }
+ }
+ async function enableBing(){
+  try{
+   bing=await api('bing',{signal:AbortSignal.timeout(8000)});
+   if(!bing.available)return;
+   const option=$('mapBasemap').querySelector('[value=bing]');
+   option.disabled=false;option.textContent='Bing Satélite';
+  }catch{}
+ }
  function ensureMap(){
   if(map)return;
-  map=L.map('map',{preferCanvas:true}).setView([-9.97,-67.81],11);
-  const tiles=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
-   maxZoom:20,maxNativeZoom:19,attribution:'Imagens © Esri, Maxar, Earthstar Geographics e comunidade GIS'
-  });
-  let failed=0;
-  tiles.on('tileerror',()=>{
-   if(++failed<3)return;
-   map.removeLayer(tiles);
-   $('basemapStatus').hidden=false;
-   $('basemapStatus').textContent='Imagem de fundo indisponível. Rotas e pontos continuam visíveis.';
-  });
-  tiles.on('tileload',()=>{failed=0;});
-  tiles.addTo(map);
-  map.createPane('consultationTrees').style.zIndex='390';
+  map=L.map('map',{preferCanvas:true,maxZoom:22}).setView([-9.97,-67.81],11);
+  setBasemap();
+  map.createPane('consultationTrees').style.zIndex='460';
+  map.createPane('consultationAlerts').style.zIndex='490';
   routeLayer=L.featureGroup().addTo(map);
   treeLayer=L.featureGroup().addTo(map);
   qualityLayer=L.featureGroup().addTo(map);
  }
  function updateMapVisibility(){
-  const visible=Boolean(routeLayer?.getLayers().length||treeLayer?.getLayers().length||qualityLayer?.getLayers().length);
+  const visible=Boolean(authorized&&map);
   const wasHidden=$('map').hidden;
   $('map').hidden=!visible;
   if(visible&&wasHidden)map.invalidateSize();
@@ -148,19 +192,27 @@
  function drawQuality(rows,focus=false){
   qualityLayer?.clearLayers();
   $('qualityLegend').hidden=!rows.length;
+  $('qualityNetworkLegend').hidden=!rows.some(row=>row.spanAlert.network?.length);
   if(!rows.length){updateMapVisibility();return;}
   ensureMap();
   for(const row of rows){
-   const {lat,lon,span,metres,nearest}=row.spanAlert;
+   const {lat,lon,span,metres,nearest,network}=row.spanAlert;
    const point=[lat,lon],target=[nearest[1],nearest[0]];
-   L.polyline([point,target],{color:'#ffaf39',weight:2,dashArray:'6 6',interactive:false}).addTo(qualityLayer);
-   L.circleMarker(point,{radius:7,color:'#fff',weight:2,fillColor:'#ffaf39',fillOpacity:1})
-    .bindTooltip('Vão '+esc(span)+' · '+esc(CampoSpanQuality.format(metres))+' m').addTo(qualityLayer);
+   const pane='consultationAlerts',style={pane,interactive:false};
+   if(network?.length){
+    const paths=network.map(line=>line.map(([x,y])=>[y,x]));
+    L.polyline(paths,{...style,color:'#142637',weight:9}).addTo(qualityLayer);
+    L.polyline(paths,{...style,color:'#32e6ff',weight:5}).addTo(qualityLayer);
+   }
+   L.polyline([point,target],{...style,color:'#ffaf39',weight:3,dashArray:'6 6'}).addTo(qualityLayer);
+   L.circleMarker(target,{...style,radius:4,color:'#fff',weight:1,fillColor:'#32e6ff',fillOpacity:1}).addTo(qualityLayer);
+   const pin=L.divIcon({className:'consultation-alert-tree',html:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 5 11h3l-4 6h6v5h4v-5h6l-4-6h3Z" fill="currentColor"/></svg>',iconSize:[32,32],iconAnchor:[16,16]});
+   L.marker(point,{pane,icon:pin}).bindTooltip('Árvore · '+esc(span)+' · '+esc(CampoSpanQuality.format(metres))+' m'+(network?.length?'':' · geometria do vão indisponível')).addTo(qualityLayer);
   }
   qualityLayer.bringToFront();
   updateMapVisibility();
   if(focus){
-   map.fitBounds(qualityLayer.getBounds(),{padding:[26,26],maxZoom:18});
+   map.fitBounds(qualityLayer.getBounds(),{padding:[42,42],maxZoom:19,animate:false});
    $('map').scrollIntoView({block:'center'});
   }
  }
@@ -175,52 +227,67 @@
    esc(labels.get(row.inspector)||'—'),esc(row.feeder||'—'),esc(row.spanAlert.span),CampoSpanQuality.format(row.spanAlert.metres)+' m',
    '<button type="button" data-alert="'+index+'">Localizar</button>'
   ]),'Nenhum alerta no recorte.');
-  drawQuality(qualityVisible?qualityRows:[]);
+  const focused=focusedQuality&&qualityRows.find(row=>qualityKey(row)===focusedQuality);
+  drawQuality(qualityVisible?(focused?[focused]:qualityRows):[]);
  }
+ const qualityKey=row=>[row.spanAlert.span,row.spanAlert.lat,row.spanAlert.lon].join(':');
  function hideTrees(){
-  treeController?.abort();
-  treeController=null;
+  treeController?.abort();treeController=null;
+  treeHistory=veraHistory=null;treeSignature='';
   treeLayer?.clearLayers();
-  treeSignature='';
   $('treeMapStatus').hidden=$('treeLegend').hidden=true;
   $('treeMapStatus').textContent='';
   updateMapVisibility();
  }
- async function showTrees(fit=false){
-  if(!$('showAllTrees').checked||treeController)return;
-  const status=$('treeMapStatus');
-  status.hidden=false;
-  if(!treeSignature)status.textContent='Carregando árvores…';
+ function paintTrees(fit=false){
+  const scope=$('treeScope').value,withVera=$('showAllTrees').checked,group=fields.inspector.value,shown=scope!=='off'||withVera;
+  if(!shown){treeLayer?.clearLayers();treeSignature='';updateMapVisibility();$('treeMapStatus').hidden=$('treeLegend').hidden=true;return;}
+  const field=scope==='off'?[]:(treeHistory?.points||[]).filter(([, ,team,span])=>
+   (!group||group===team)&&(scope!=='routes'||routeSpans.has(span))
+  );
+  const vera=withVera?veraHistory?.vera||[]:[];
+  const signature=JSON.stringify([field,vera]);
+  if(signature!==treeSignature){
+   if(field.length||vera.length)ensureMap();
+   treeLayer?.clearLayers();
+   for(const [points,color,radius] of [[vera,'#b4ea91',3],[field,'#4de1d2',6]]){
+    for(const [lat,lon] of points)L.circleMarker([lat,lon],{
+     pane:'consultationTrees',radius,color:'#163a35',weight:1.5,fillColor:color,fillOpacity:.9,interactive:false
+    }).addTo(treeLayer);
+   }
+   treeSignature=signature;
+  }
+  const bounds=treeLayer?.getBounds();
+  $('treeLegend').hidden=!bounds?.isValid();
+  $('treeMapStatus').hidden=false;
+  updateMapVisibility();
+  if(fit&&!routeLayer?.getLayers().length&&!qualityLayer?.getLayers().length&&bounds?.isValid())map.fitBounds(bounds,{padding:[26,26],maxZoom:17});
+  const info=[];
+  if(scope!=='off')info.push(treeHistory?fmt(field.length)+(scope==='routes'?' nas rotas exibidas':' do campo · histórico completo'):'Carregando árvores do campo…');
+  if(withVera)info.push(veraHistory?fmt(vera.length)+' da VERA':'Carregando parque VERA…');
+  if(treeHistory&&!treeHistory.archiveAvailable)info.push('Arquivo do Drive indisponível');
+  if(scope==='routes'&&!routeSpans.size)info.push('Exiba uma rota para ver suas árvores');
+  $('treeMapStatus').textContent=info.join(' · ');
+ }
+ async function showTrees(fit=false,force=false){
+  const field=$('treeScope').value!=='off',vera=$('showAllTrees').checked;
+  paintTrees(fit);
+  if(!authorized||(!field&&!vera)||treeController)return;
   const controller=new AbortController();
   treeController=controller;
+  const options={signal:AbortSignal.any([controller.signal,AbortSignal.timeout(95000)])};
   try{
-   const result=await api('arvores',{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(95000)])});
-   if(controller.signal.aborted)return;
-   const signature=JSON.stringify([result.vera,result.field]);
-   if(signature!==treeSignature){
-    ensureMap();
-    treeLayer.clearLayers();
-    for(const [points,color] of [[result.vera,'#b4ea91'],[result.field,'#4de1d2']]){
-     for(const point of points)L.circleMarker(point,{
-      pane:'consultationTrees',radius:4,color:'#163a35',weight:1,fillColor:color,fillOpacity:.9,interactive:false
-     }).addTo(treeLayer);
-    }
-    treeSignature=signature;
-   }
-   const bounds=treeLayer.getBounds();
-   $('treeLegend').hidden=!bounds.isValid();
-   updateMapVisibility();
-   if(fit&&!routeLayer.getLayers().length&&bounds.isValid())map.fitBounds(bounds,{padding:[26,26],maxZoom:17});
-   status.textContent=fmt(result.vera.length)+' da VERA · '+fmt(result.field.length)+' do campo, com coordenadas'+
-    (result.veraAvailable?'':' · Base VERA indisponível')+(result.archiveAvailable?'':' · Arquivo do Drive indisponível');
+   await Promise.all([
+    field?api('arvores?camada=campo',options).then(result=>{if(!controller.signal.aborted)treeHistory=result;}):null,
+    vera&&(!veraHistory||force)?api('arvores?camada=vera',options).then(result=>{if(!controller.signal.aborted)veraHistory=result;}):null
+   ]);
+   if(!controller.signal.aborted)paintTrees(fit);
   }catch(error){
    if(!controller.signal.aborted){
     if(error.status===401){await start();return;}
-    status.textContent=error.name==='TimeoutError'?'Tempo de carregamento das árvores excedido.':error.message;
+    $('treeMapStatus').textContent=error.message;
    }
-  }finally{
-   if(treeController===controller)treeController=null;
-  }
+  }finally{if(treeController===controller)treeController=null;}
  }
  async function showMap(fit=true,focus=false){
   const routes=availableRoutes.filter(route=>viewMode==='all'||(viewMode?.team?route.inspector===viewMode.team:shownRoutes.includes(route.id)));
@@ -240,7 +307,9 @@
    }
    if(controller.signal.aborted)return;
    const tally=key=>routes.reduce((sum,route)=>sum+(views.has(route.id)?route[key]||0:0),0);
+   routeSpans=new Set([...views.values()].flatMap(view=>view.spanIds||[]));
    ensureMap();
+   paintTrees();
    $('legend').hidden=false;
    routeLayer.clearLayers();
    const colors=['#78b8ff','#c3a5ff','#ffa361','#f0d65c','#7ee5c0','#ff99b2'];
@@ -277,15 +346,15 @@
    !data.archiveAvailable?'Arquivo do Drive indisponível. Indicadores de cadastro mostram os dados da base central.':'';
   const operators=invalid?[]:data.groups.filter(team=>!filter.inspectors.length||filter.inspectors.includes(team.id));
   const rows=invalid?[]:F.apply(data.field,filter);
-  renderQuality(rows,operators);
+  renderQuality(rows,operators);paintTrees();
   productivity(rows,operators,!invalid&&F.period(today,filter.from,filter.through));
   const active=invalid?[]:data.routes.filter(route=>operators.some(team=>team.id===route.inspector));
   routes(filter,active,operators);
   void showMap(fit);
  }
  function lock(){
-  data=null;loadSerial++;loading=false;
-  qualityVisible=false;renderQuality([],[]);
+  authorized=false;data=null;loadSerial++;loading=false;
+  qualityVisible=false;focusedQuality=null;renderQuality([],[]);
   $('showAllTrees').checked=false;hideTrees();
   clearMap();availableRoutes=[];selectedRoutes.clear();paintRouteButtons();
   for(const id of ['metrics','daily','dailyGoal','forecast','forecastTarget','positions','inspectors','feedersKpi','routes','routeChoices'])$(id).textContent='';
@@ -308,7 +377,7 @@
    if(data.groups.some(team=>team.id===old))select.value=old;
    $('updated').textContent='Atualizado em '+dateTime.format(new Date(data.updatedAt));
    render(fit);
-   void showTrees();
+   void showTrees(fit,true);
   }catch(error){
    if(serial!==loadSerial)return;
    if(error.status===401)await start();
@@ -326,8 +395,11 @@
     $('loginStatus').textContent='Abra o link compartilhado pela administração.';
     return;
    }
+   authorized=true;
    $('login').hidden=true;
+   void enableBing();
    $('workspace').hidden=$('sessionActions').hidden=false;
+   ensureMap();updateMapVisibility();
    await load(true);
   }catch(error){
    lock();
@@ -335,14 +407,14 @@
   }
  }
  $('showQuality').onclick=()=>{
-  qualityVisible=!qualityVisible;
+  qualityVisible=!qualityVisible;focusedQuality=null;
   $('showQuality').textContent=qualityVisible?'Ocultar alertas no mapa':'Ver alertas no mapa';
   drawQuality(qualityVisible?qualityRows:[],qualityVisible);
  };
  $('qualityRows').onclick=event=>{
   const index=event.target.closest('[data-alert]')?.dataset.alert;
   if(index===undefined)return;
-  qualityVisible=true;
+  qualityVisible=true;focusedQuality=qualityKey(qualityRows[Number(index)]);
   $('showQuality').textContent='Ocultar alertas no mapa';
   drawQuality([qualityRows[Number(index)]],true);
  };
@@ -365,7 +437,11 @@
  };
  $('routeViewSelected').onclick=()=>showRoutes(availableRoutes.filter(route=>selectedRoutes.has(route.id)).map(route=>route.id),null);
  $('routeViewAll').onclick=()=>showRoutes(availableRoutes.map(route=>route.id),'all');
- $('showAllTrees').onchange=()=>{$('showAllTrees').checked?void showTrees(true):hideTrees();};
+ $('showAllTrees').onchange=()=>void showTrees(true);
+ $('treeScope').onchange=()=>void showTrees(true);
+ $('mapBasemap').onchange=setBasemap;
+ setInterval(()=>{if(authorized&&!document.hidden&&navigator.onLine)void showTrees();},20000);
+ document.addEventListener('visibilitychange',()=>{if(authorized&&!document.hidden)void showTrees();});
  $('routeClearMap').onclick=()=>{selectedRoutes.clear();clearMap();paintRouteChoices();};
  $('refresh').onclick=()=>void load(false);
  void start();

@@ -10,7 +10,7 @@ const CampoFieldSpanQuality=(()=>{
  function current(record=form()){
   const geometry=matches(selected,record)?selected.geometry:match?.id===Q.key(record.span)&&match.network===network()?Q.select(match.candidates,record.feeder)?.geometry:null;
   const measured=Q.measure(record.lat,record.lon,geometry);
-  if(measured)return Q.reference(record,measured.nearest);
+  if(measured)return Q.reference(record,measured.nearest,measured.metres>Q.threshold?geometry:null);
   // A previous check is valid only for the same point, span and feeder.
   return Q.read({...record,spanReference:stored})?stored:null;
  }

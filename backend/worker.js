@@ -438,16 +438,26 @@ const CampoSpanQuality=(()=>{
   const exact=key(feeder)?matches.filter(match=>key(match.feeder)===key(feeder)):[];
   return exact.length===1?exact[0]:null;
  }
- function reference(record,nearest){
+ function lines(geometry){
+  const list=geometry?.type==='LineString'?[geometry.coordinates]:geometry?.type==='MultiLineString'?geometry.coordinates:null;
+  if(!list?.length||list.length>16)return null;
+  let count=0;
+  for(const line of list){
+   if(!Array.isArray(line)||line.length<2||(count+=line.length)>500||!line.every(point))return null;
+  }
+  return list.map(line=>line.map(pair=>pair.slice(0,2).map(Number)));
+ }
+ function reference(record,nearest,geometry){
   const span=String(record.span??'').trim();
   if(!span||span.length>1000||!coordinate(record.lat,90)||!coordinate(record.lon,180)||!point(nearest))return null;
-  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number)};
+  const network=lines(geometry);
+  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number),...(network?{network}:{})};
  }
  function read(record){
   const stored=record.spanReference;
   if(!stored||key(stored.span)!==key(record.span)||key(stored.feeder)!==key(record.feeder)||
    stored.lat!==Number(record.lat)||stored.lon!==Number(record.lon))return null;
-  const checked=reference(record,stored.nearest);
+  const checked=reference(record,stored.nearest,{type:'MultiLineString',coordinates:stored.network});
   if(!checked)return null;
   return {...checked,metres:metresPerDegree*Math.hypot((checked.nearest[0]-checked.lon)*Math.cos(checked.lat*Math.PI/180),checked.nearest[1]-checked.lat)};
  }
@@ -920,7 +930,7 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
  const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
- if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
+ if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest,{type:'MultiLineString',coordinates:spanCheck.network});
  out.imported=imported||raw.imported===true;out.lastInspector=actor;
  return out;
 }
@@ -1727,21 +1737,35 @@ async function spanCheckRecords(env,records,routes){
  const Q=CampoSpanQuality;
  const eligible=records.filter(record=>Q.key(record.span)&&sharedCoordinate(record.lat,90)&&sharedCoordinate(record.lon,180));
  const wanted=new Set(eligible.map(record=>Q.key(record.span)));
- const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[];
+ const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[],alertsWithoutGeometry=[];
+ const isMT=record=>!(record.bt&&!record.mt||record.at&&!record.mt);
+ function attach(record,check,candidates){
+  const found=Q.select(candidates||[],record.feeder);
+  const measured=Q.measure(check.nearest[1],check.nearest[0],found?.geometry);
+  // Render the registered span only if the recorded nearest point belongs to it.
+  if(!measured||measured.metres>3)return false;
+  const reference=Q.reference(record,check.nearest,found.geometry);
+  if(!reference.network)return false;
+  checked.set(record.id,{...check,network:reference.network});
+  return true;
+ }
  function add(record,candidates){
   const selected=Q.select(candidates||[],record.feeder);
   const found=Q.measure(record.lat,record.lon,selected?.geometry);
   if(!found)return false;
-  checked.set(record.id,{...Q.reference(record,found.nearest),metres:found.metres});
+  checked.set(record.id,{...Q.reference(record,found.nearest,found.metres>Q.threshold?selected.geometry:null),metres:found.metres});
   return true;
  }
  for(const record of eligible){
   const captured=Q.read(record);
-  if(captured)checked.set(record.id,captured);
-  else if(!(record.bt&&!record.mt||record.at&&!record.mt)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
+  if(captured){
+   checked.set(record.id,captured);
+   if(isMT(record)&&captured.metres>Q.threshold&&!captured.network&&!attach(record,captured,byRoute.get(Q.key(record.span))))alertsWithoutGeometry.push(record);
+  }else if(isMT(record)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
  }
- const privateIndex=await spanPrivateIndex(env,new Set(pending.map(record=>Q.key(record.span))));
+ const privateIndex=await spanPrivateIndex(env,new Set([...pending,...alertsWithoutGeometry].map(record=>Q.key(record.span))));
  for(const record of pending)add(record,privateIndex.get(Q.key(record.span)));
+ for(const record of alertsWithoutGeometry)attach(record,checked.get(record.id),privateIndex.get(Q.key(record.span)));
  return checked;
 }
 async function adminSpanChecks(env,db,data,params){
@@ -1933,23 +1957,56 @@ async function gerencialRouteSource(db,enabled){
   throw error;
  }
 }
+function gerencialScopedTrees(records,enabled,accounts){
+ const byId=new Map(enabled.map(account=>[account.id,account])),byName=new Map();
+ for(const account of accounts){
+  const name=gerencialName(account.name);
+  byName.set(name,byName.has(name)?null:byId.get(account.id));
+ }
+ return records.filter(gerencialActiveField).flatMap(r=>{
+  const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(gerencialName(r.collectionInspector||r.inspector));
+  return operator?[{r,operator}]:[];
+ });
+}
+async function gerencialFieldHistory(env){
+ const db=await adminDb(env);
+ const [{enabled,accounts},data,settings,merges]=await Promise.all([
+  gerencialInspectors(db),controlUniverse(env),gerencialTeams(db),db.prepare('SELECT source_id FROM shared_merges').all()
+ ]);
+ const {operators}=gerencialTeamGroups(enabled,settings);
+ const inactive=new Set([...data.deletedIds,...merges.results.map(row=>row.source_id)]);
+ const points=gerencialScopedTrees(data.records,enabled,accounts).filter(({r})=>
+  !inactive.has(r.id)&&sharedCoordinate(r.lat,90)&&sharedCoordinate(r.lon,180)
+ ).map(({r,operator})=>[Number(r.lat),Number(r.lon),operators.get(operator.id).id,CampoSpanQuality.key(r.span)]);
+ return json({points,archiveAvailable:data.archive.available});
+}
+
+let gerencialBingCache;
+async function gerencialBing(env){
+ if(!env.BING_MAPS_KEY)return json({available:false});
+ if(gerencialBingCache?.until>Date.now())return json(gerencialBingCache.data);
+ const endpoint=new URL('https://dev.virtualearth.net/REST/v1/Imagery/Metadata/Aerial');
+ endpoint.searchParams.set('key',env.BING_MAPS_KEY);
+ try{
+  const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000),redirect:'error'});
+  if(!response.ok)return json({available:false});
+  const metadata=await response.json(),resource=metadata.resourceSets?.[0]?.resources?.[0];
+  const source=String(resource?.imageUrl||'').replace(/^http:/,'https:');
+  if(!/^https:\/\/[^/]*\.tiles\.virtualearth\.net\/tiles\/[A-Za-z]\{quadkey\}\.[a-z]+(?:\?[^#]*)?$/i.test(source)||source.includes(env.BING_MAPS_KEY))return json({available:false});
+  const subdomains=(resource.imageUrlSubdomains||[]).filter(value=>/^[a-z0-9-]+$/i.test(value));
+  if(source.includes('{subdomain}')&&!subdomains.length)return json({available:false});
+  const data={available:true,source,subdomains,attribution:String(metadata.copyright||'© Microsoft Bing Maps'),nativeZoom:15};
+  gerencialBingCache={data,until:Date.now()+3600000};
+  return json(data);
+ }catch{return json({available:false});}
+}
 async function gerencialData(env){
  const db=await adminDb(env);
  const [{enabled,accounts},data,settings]=await Promise.all([gerencialInspectors(db),controlUniverse(env),gerencialTeams(db)]);
  const {groups,operators}=gerencialTeamGroups(enabled,settings);
  const source=await gerencialRouteSource(db,enabled);
  const byId=new Map(enabled.map(account=>[account.id,account]));
- const byName=new Map();
- for(const account of accounts){
-  const name=gerencialName(account.name);
-  byName.set(name,byName.has(name)?null:byId.get(account.id));
- }
- const scoped=data.records.filter(gerencialActiveField).flatMap(r=>{
-  const name=gerencialName(r.collectionInspector||r.inspector);
-  const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(name);
-  if(!operator)return [];
-  return [{r,operator}];
- });
+ const scoped=gerencialScopedTrees(data.records,enabled,accounts);
  const checked=await spanCheckRecords(env,scoped.map(row=>row.r),source.routes);
  const field=scoped.map(({r,operator})=>{
   const check=checked.get(r.id);
@@ -1985,7 +2042,7 @@ async function gerencialVeraPositions(db){
   throw error;
  }
 }
-async function gerencialTreePositions(env){
+async function gerencialTreePositions(env,veraOnly=false){
  const db=await adminDb(env);
  const [data,vera,merges]=await Promise.all([
   controlUniverse(env),gerencialVeraPositions(db),db.prepare('SELECT source_id FROM shared_merges').all()
@@ -2002,7 +2059,7 @@ async function gerencialTreePositions(env){
   return point?[point]:[];
  });
  return json({
-  vera:baseline,field:[...field.values()].map(coordinates).filter(Boolean),
+  vera:baseline,...(veraOnly?{}:{field:[...field.values()].map(coordinates).filter(Boolean)}),
   veraAvailable:vera!==null,archiveAvailable:data.archive.available
  });
 }
@@ -2022,7 +2079,7 @@ async function gerencialRouteMap(request,env){
    code:section.code,point:section.segments[0].start,
    pending:CampoRoutes.keyProgress(section,cover.bySpan).filter(segment=>!segment.closed).length
   }));
-  return [{id,lines,keys,outlet:route.outlet}];
+  return [{id,lines,keys,spanIds:spans.map(span=>CampoSpanQuality.key(span.id)),outlet:route.outlet}];
  });
  if(!views.length)throw sharedError('Rotas indisponíveis.',404);
  return json(params.has('batch')||requested.length>1?{routes:views}:views[0]);
@@ -2046,7 +2103,11 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),admin:Boolean(admin),viewer:Boolean(viewer)});
   if(!viewer&&!admin)throw sharedError('Abra o link compartilhado pela administração.',401);
   if(path==='/api/gerencial/dados')return await gerencialData(env);
-  if(path==='/api/gerencial/arvores')return await gerencialTreePositions(env);
+  if(path==='/api/gerencial/arvores'){
+   const layer=new URL(request.url).searchParams.get('camada');
+   return layer==='campo'?await gerencialFieldHistory(env):await gerencialTreePositions(env,layer==='vera');
+  }
+  if(path==='/api/gerencial/bing')return await gerencialBing(env);
   if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
   return json({error:'Consulta não encontrada.'},404);
  }catch(error){

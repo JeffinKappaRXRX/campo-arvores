@@ -123,6 +123,7 @@ env.LOGIN_GUARD.get=async(key,type)=>{
 const data=await getData();
 assert.deepEqual(data.field.filter(row=>row.spanAlert).map(row=>row.spanAlert.span).sort(),['V-101','V-102']);
 assert.equal(data.field.filter(row=>row.spanChecked).length,2);
+assert(data.field.find(row=>row.spanAlert?.span==='V-102').spanAlert.network[0].length>=2);
 assert.equal((await call('/api/control/span-quality',viewer)).status,401);
 const quality=await (await call('/api/control/span-quality',{cookie:admin})).json();
 assert.equal(quality.count,2);
@@ -191,6 +192,12 @@ globalThis.fetch=(url,options)=>{
   deletedIds:['vera-43'],pendingDeletes:[{id:'pending',lat:-9.99,lon:-67.89,updatedAt:createdAt}]
  });
 };
+const history=await (await call(treeMap+'?camada=campo&from=2030-01-01',viewer)).json();
+assert.equal(history.points.length,3);
+assert(history.points.some(point=>point[2]===other.id&&point[3]==='V-101'));
+assert(history.points.every(point=>point.length===4&&point[0]!==-9.98));
+assert.deepEqual(await (await call('/api/gerencial/bing',viewer)).json(),{available:false});
+assert.equal((await call('/api/gerencial/bing')).status,401);
 const coordinates=await call(treeMap+'?from=2030-01-01&inspector=unused',viewer);
 assert.equal(coordinates.status,200);
 assert.equal(coordinates.headers.get('Cache-Control'),'no-store');
@@ -238,6 +245,7 @@ assert.equal(production.closed,0);
 const routeMap='/api/gerencial/rota?id=';
 const map=await (await call(routeMap+'production',viewer)).json();
 assert.equal(map.keys[0].pending,1);
+assert.deepEqual(map.spanIds.sort(),['BRANCH-A','BRANCH-B','TRUNK-A','TRUNK-B']);
 assert.equal(map.lines.pending.length,2);
 assert.deepEqual(map.lines.pending.at(-1).at(-1),branchTip);
 assert.equal((await call(routeMap+'private',viewer)).status,404);

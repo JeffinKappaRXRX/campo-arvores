@@ -56,21 +56,35 @@ async function spanCheckRecords(env,records,routes){
  const Q=CampoSpanQuality;
  const eligible=records.filter(record=>Q.key(record.span)&&sharedCoordinate(record.lat,90)&&sharedCoordinate(record.lon,180));
  const wanted=new Set(eligible.map(record=>Q.key(record.span)));
- const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[];
+ const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[],alertsWithoutGeometry=[];
+ const isMT=record=>!(record.bt&&!record.mt||record.at&&!record.mt);
+ function attach(record,check,candidates){
+  const found=Q.select(candidates||[],record.feeder);
+  const measured=Q.measure(check.nearest[1],check.nearest[0],found?.geometry);
+  // Render the registered span only if the recorded nearest point belongs to it.
+  if(!measured||measured.metres>3)return false;
+  const reference=Q.reference(record,check.nearest,found.geometry);
+  if(!reference.network)return false;
+  checked.set(record.id,{...check,network:reference.network});
+  return true;
+ }
  function add(record,candidates){
   const selected=Q.select(candidates||[],record.feeder);
   const found=Q.measure(record.lat,record.lon,selected?.geometry);
   if(!found)return false;
-  checked.set(record.id,{...Q.reference(record,found.nearest),metres:found.metres});
+  checked.set(record.id,{...Q.reference(record,found.nearest,found.metres>Q.threshold?selected.geometry:null),metres:found.metres});
   return true;
  }
  for(const record of eligible){
   const captured=Q.read(record);
-  if(captured)checked.set(record.id,captured);
-  else if(!(record.bt&&!record.mt||record.at&&!record.mt)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
+  if(captured){
+   checked.set(record.id,captured);
+   if(isMT(record)&&captured.metres>Q.threshold&&!captured.network&&!attach(record,captured,byRoute.get(Q.key(record.span))))alertsWithoutGeometry.push(record);
+  }else if(isMT(record)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
  }
- const privateIndex=await spanPrivateIndex(env,new Set(pending.map(record=>Q.key(record.span))));
+ const privateIndex=await spanPrivateIndex(env,new Set([...pending,...alertsWithoutGeometry].map(record=>Q.key(record.span))));
  for(const record of pending)add(record,privateIndex.get(Q.key(record.span)));
+ for(const record of alertsWithoutGeometry)attach(record,checked.get(record.id),privateIndex.get(Q.key(record.span)));
  return checked;
 }
 async function adminSpanChecks(env,db,data,params){

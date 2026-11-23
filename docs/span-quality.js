@@ -35,16 +35,26 @@ const CampoSpanQuality=(()=>{
   const exact=key(feeder)?matches.filter(match=>key(match.feeder)===key(feeder)):[];
   return exact.length===1?exact[0]:null;
  }
- function reference(record,nearest){
+ function lines(geometry){
+  const list=geometry?.type==='LineString'?[geometry.coordinates]:geometry?.type==='MultiLineString'?geometry.coordinates:null;
+  if(!list?.length||list.length>16)return null;
+  let count=0;
+  for(const line of list){
+   if(!Array.isArray(line)||line.length<2||(count+=line.length)>500||!line.every(point))return null;
+  }
+  return list.map(line=>line.map(pair=>pair.slice(0,2).map(Number)));
+ }
+ function reference(record,nearest,geometry){
   const span=String(record.span??'').trim();
   if(!span||span.length>1000||!coordinate(record.lat,90)||!coordinate(record.lon,180)||!point(nearest))return null;
-  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number)};
+  const network=lines(geometry);
+  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number),...(network?{network}:{})};
  }
  function read(record){
   const stored=record.spanReference;
   if(!stored||key(stored.span)!==key(record.span)||key(stored.feeder)!==key(record.feeder)||
    stored.lat!==Number(record.lat)||stored.lon!==Number(record.lon))return null;
-  const checked=reference(record,stored.nearest);
+  const checked=reference(record,stored.nearest,{type:'MultiLineString',coordinates:stored.network});
   if(!checked)return null;
   return {...checked,metres:metresPerDegree*Math.hypot((checked.nearest[0]-checked.lon)*Math.cos(checked.lat*Math.PI/180),checked.nearest[1]-checked.lat)};
  }
