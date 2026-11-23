@@ -18,6 +18,7 @@ function renderStreets(){
  if(!offlineStreets){$('mapstatus').textContent='Sem ruas salvas. Baixe a área com internet; rede e árvores locais continuam disponíveis.';return;}
  const b=fieldMap.getBounds(),west=b.getWest(),south=b.getSouth(),east=b.getEast(),north=b.getNorth();
  const source=offlineStreets.collection.features,visible=[];
+ const limit=typeof fieldMapLight!=='undefined'&&fieldMapLight?500:1200;
  let shown=0,capped=false;
  for(const feature of source){
   let bounds=streetFeatureBounds.get(feature);
@@ -28,10 +29,10 @@ function renderStreets(){
    bounds=[minX,minY,maxX,maxY];streetFeatureBounds.set(feature,bounds);
   }
   if(bounds[2]<west||bounds[0]>east||bounds[3]<south||bounds[1]>north)continue;
-  if(visible.length===1200){capped=true;break;}
+  if(visible.length===limit){capped=true;break;}
   visible.push(feature);
  }
- streetsLayer=L.geoJSON(visible,{pane:'offlineStreets',interactive:false,style:f=>({color:['motorway','trunk','primary'].includes(f.properties.highway)?'#c68c42':'#8599a3',weight:['footway','path','track'].includes(f.properties.highway)?2:4,opacity:.85}),pointToLayer:(f,p)=>L.circleMarker(p,{pane:'offlineStreets',interactive:false,radius:2,weight:0,fillOpacity:0}),onEachFeature:(f,l)=>{if(f.properties.name){l.bindTooltip(esc(f.properties.name),{permanent:(fieldMap.getZoom()>=15||Boolean(f.properties.place))&&shown++<60,direction:'center',className:'street-label',interactive:false});}}}).addTo(fieldMap);
+ streetsLayer=L.geoJSON(visible,{pane:'offlineStreets',interactive:false,style:f=>({color:['motorway','trunk','primary'].includes(f.properties.highway)?'#c68c42':'#8599a3',weight:['footway','path','track'].includes(f.properties.highway)?2:4,opacity:.85}),pointToLayer:(f,p)=>L.circleMarker(p,{pane:'offlineStreets',interactive:false,radius:2,weight:0,fillOpacity:0}),onEachFeature:(f,l)=>{if(f.properties.name){l.bindTooltip(esc(f.properties.name),{permanent:(fieldMap.getZoom()>=15||Boolean(f.properties.place))&&shown++<(limit===500?28:60),direction:'center',className:'street-label',interactive:false});}}}).addTo(fieldMap);
  const covered=streetCoverage();$('mapstatus').textContent=(covered?(offlineStreets.partial?'Ruas offline · download parcial':'Ruas offline · área salva'):'Fora da área salva · retorne à área ou baixe outra região')+' · © OpenStreetMap contributors'+(capped?' · aproxime para detalhar':'');
 }
 async function initOfflineStreets(){
@@ -43,7 +44,7 @@ async function initOfflineStreets(){
  streetsInitialized=true;if(typeof initStreetAutomation==='function')await initStreetAutomation();
 }
 const existingBasemapChange=$('basemap').onchange;
-$('basemap').onchange=async(options={})=>{if(typeof fieldMapLight!=='undefined'&&fieldMapLight)$('basemap').value='local';if($('basemap').value!=='google'&&!$('googleMap').hidden&&googleMap){const c=googleMap.getCenter();fieldMap.setView([c.lat(),c.lng()],googleMap.getZoom(),{animate:false});}if(db&&streetsInitialized&&!options.automatic)await req('meta','readwrite',s=>s.put($('basemap').value,'preferredBasemap'));if($('basemap').value==='streets'){
+$('basemap').onchange=async(options={})=>{if($('basemap').value!=='google'&&!$('googleMap').hidden&&googleMap){const c=googleMap.getCenter();fieldMap.setView([c.lat(),c.lng()],googleMap.getZoom(),{animate:false});}if(db&&streetsInitialized&&!options.automatic)await req('meta','readwrite',s=>s.put($('basemap').value,'preferredBasemap'));if($('basemap').value==='streets'){
  if(xyzLayer){fieldMap.removeLayer(xyzLayer);xyzLayer=null;}$('map').hidden=false;$('googleMap').hidden=true;fieldMap.invalidateSize();renderStreets();requestNetworkView();
  }else{if(streetsLayer){fieldMap.removeLayer(streetsLayer);streetsLayer=null;}await existingBasemapChange();}syncFullMapTools();if(typeof streetBasemapChanged==='function')streetBasemapChanged(options.automatic===true);};
 $('fitStreets').onclick=()=>{if(!offlineStreets){$('streetStatus').textContent='Baixe uma área primeiro.';return;}const b=offlineStreets.bounds;$('basemap').value='streets';$('basemap').onchange();fieldMap.fitBounds([[b.south,b.west],[b.north,b.east]]);};

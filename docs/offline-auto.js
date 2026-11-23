@@ -20,7 +20,6 @@ function paintStreetPreparation(){
  state.textContent=streetsBusy?'Preparando…':offlineStreets?.partial?'Parcial':offlineStreets?.radius>=30?'30 km salvos':offlineStreets?offlineStreets.radius+' km salvos':'30 km automáticos';
 }
 function queueStreetPreparation(reason='',delay=5000){
- if(typeof fieldMapLight!=='undefined'&&fieldMapLight)return;
  if(!streetAutomationReady||!streetAutoEnabled)return;
  clearTimeout(streetAutoTimer);streetAutoTimer=setTimeout(()=>void prepareAutomaticStreets().catch(error=>{$('streetStatus').textContent='Preparação aguardando nova tentativa: '+error.message;queueStreetPreparation('falha local',60000);}),delay);
 }
@@ -46,7 +45,6 @@ async function prepareAutomaticStreets(){
  }finally{streetAutoRunning=false;paintStreetPreparation();}
 }
 function streetWorkPositionChanged(){
- if(typeof fieldMapLight!=='undefined'&&fieldMapLight)return;
  if(Date.now()-streetLastGpsCheck<60000)return;streetLastGpsCheck=Date.now();
  if(!streetAreaReady(streetWorkCenter()))queueStreetPreparation('região do GPS',10000);
 }
@@ -64,8 +62,8 @@ function applyMapConnectivity(){
  });return streetModeQueue;
 }
 async function setStreetConnection(online){
- const changed=streetConnectionOnline!==online;streetConnectionOnline=online;
- if(changed)streetManualMode=false;
+ const previous=streetConnectionOnline,changed=previous!==online;streetConnectionOnline=online;
+ if(changed&&previous!==null)streetManualMode=false;
  await applyMapConnectivity();
  if(changed&&!online)$('streetStatus').textContent=(offlineStreets?offlineStreets.partial?'Sem internet · usando as partes de ruas já salvas.':'Sem internet · ruas salvas disponíveis no mapa.':'Sem internet · ruas ainda não preparadas; rede e árvores locais permanecem disponíveis.')+' A preparação retoma automaticamente ao conectar.';
  if(online)queueStreetPreparation('conexão disponível');
@@ -100,7 +98,7 @@ async function initStreetAutomation(){
  const control=$('autoStreetPreparation');if(control){control.checked=streetAutoEnabled;control.onchange=async()=>{streetAutoEnabled=control.checked;await req('meta','readwrite',s=>s.put(streetAutoEnabled,'autoStreetPreparation'));if(streetAutoEnabled)queueStreetPreparation('ativado',0);else clearTimeout(streetAutoTimer);};}
  streetAutomationReady=true;paintStreetPreparation();fieldMap.on('moveend',()=>{if(!streetAreaReady(streetWorkCenter()))queueStreetPreparation('região no mapa',8000);});
  // Online always starts with hybrid; offline starts with saved streets, without moving the tree.
- streetManualMode=false;await setStreetConnection(navigator.onLine);void checkStreetConnectivity();queueStreetPreparation('abrir aplicativo',12000);
+ streetManualMode=typeof gpsMapInterrupted!=='undefined'&&gpsMapInterrupted;await setStreetConnection(navigator.onLine);void checkStreetConnectivity();queueStreetPreparation('abrir aplicativo',12000);
  streetConnectionTimer=setInterval(()=>{void checkStreetConnectivity();queueStreetPreparation('verificação',12000);},20000);
 }
 window.addEventListener('offline',()=>{streetHybridFailedAt=0;void setStreetConnection(false);});

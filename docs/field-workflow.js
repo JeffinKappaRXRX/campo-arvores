@@ -9,16 +9,18 @@ function exportRecordsZip(list){
  if(!list.length){$('zipFeedback').textContent='Salve uma inspeção antes de exportar.';return;}
  zipBusy=true;$('exportPhotoZip').disabled=true;$('shareZip').disabled=true;
  $('zipFeedback').textContent='Preparando ZIP com '+list.length+' inspeção(ões), fotos, Excel e KML…';
- const worker=new Worker('photo-export-worker.js');
- const finish=()=>{worker.terminate();zipBusy=false;$('exportPhotoZip').disabled=false;};
+ let worker;
+ try{worker=new Worker('photo-export-worker.js');}
+ catch(error){$('zipFeedback').textContent=error.message;zipBusy=false;$('exportPhotoZip').disabled=false;$('shareZip').disabled=!readyZip;return;}
+ const finish=()=>{worker.terminate();zipBusy=false;$('exportPhotoZip').disabled=false;$('shareZip').disabled=!readyZip;};
  worker.onmessage=e=>{try{if(e.data.error)throw Error(e.data.error);
   const name=list.length===1?'campo-arvore-'+stableId(list[0].id)+'.zip':'campo-todas-inspecoes-'+new Date().toISOString().slice(0,10)+'.zip';
-  readyZip=new File([e.data.bytes],name,{type:'application/zip'});download(e.data.bytes,'application/zip',name);if(typeof noteZipBackup==='function')noteZipBackup(list).catch(()=>{});
+  readyZip=new File([e.data.archive],name,{type:'application/zip'});download(readyZip,'application/zip',name);if(typeof noteZipBackup==='function')noteZipBackup(list).catch(()=>{});
   $('shareZip').disabled=false;
   $('zipFeedback').textContent='ZIP baixado. Procure '+name+' em Downloads ou no destino escolhido. Toque em Compartilhar último ZIP para escolher WhatsApp ou outro app. O envio ao Drive continua independente.';
  }catch(err){$('zipFeedback').textContent='Não foi possível exportar: '+err.message;}finally{finish();}};
  worker.onerror=()=>{$('zipFeedback').textContent='Falha ao preparar ZIP. Os registros continuam salvos; tente exportar uma inspeção por vez.';finish();};
- worker.postMessage({records:structuredClone(list)});
+ worker.postMessage({records:list.map(localRecordSummary)});
 }
 $('exportPhotoZip').onclick=()=>exportRecordsZip(records);
 $('shareZip').onclick=async()=>{if(!readyZip)return;try{
