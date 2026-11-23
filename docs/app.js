@@ -29,7 +29,7 @@ async function req(store,mode,op){
 }
 async function init(){await openFieldDatabase();records=await req('records','readonly',s=>s.getAll());const draft=await req('meta','readonly',s=>s.get('draft'));const context=await req('meta','readonly',s=>s.get('context'));if(draft){restore(draft);tell('Rascunho recuperado neste dispositivo.');}else if(context){$('inspector').value=context.inspector||'';$('feeder').value=context.feeder||'';}const cfg=await req('meta','readonly',s=>s.get('sharepoint'));$('sharepoint').value=cfg||DEFAULT_SHAREPOINT;renderRecords();await storage();await initGeo();if(typeof initSharedTrees==='function')initSharedTrees().catch(e=>sharedStatus(e.message));if(typeof startLiveGPS==='function')startLiveGPS();if(typeof initOfflineStreets==='function')await initOfflineStreets();renderPlantResult();await initSync();await checkPlantServer();if(typeof initFieldReliability==='function')await initFieldReliability(Boolean(draft));if(typeof initCompletion==='function')await initCompletion();if(typeof autoStartInspectionClock==='function')autoStartInspectionClock();}
 function read(){const v={};for(const id of fields)v[id]=$(id).type==='checkbox'?$(id).checked:CampoDistanceUnits.isNetworkField(id)?CampoDistanceUnits.toMetres($(id).value):$(id).value;return {...sharedContext,...v,spanReference:typeof CampoFieldSpanQuality==='undefined'?null:CampoFieldSpanQuality.current(v),photos,origin,editing,heightMeasurement,plantIdentification,inspectionTiming:typeof inspectionTimingSnapshot==='function'?inspectionTimingSnapshot():null,measurements:typeof measurementProvenance==='function'?measurementProvenance({...v,origin,heightMeasurement}):null};}
-function restore(v){$('treeSite').value=v.treeSite||'';sharedContext={};for(const k of ['sharedVersion','externalId','imported','area','access','team','photoReference','address','createdAt'])if(v[k]!==undefined)sharedContext[k]=v[k];if(typeof restoreInspectionClock==='function')restoreInspectionClock(v);for(const id of fields)if(v[id]!==undefined){if($(id).type==='checkbox')$(id).checked=v[id];else $(id).value=CampoDistanceUnits.isNetworkField(id)?CampoDistanceUnits.toCentimetres(v[id]):v[id];}photos=v.photos||[];origin=v.origin||null;editing=v.editing||null;heightMeasurement=v.heightMeasurement||null;plantIdentification=v.plantIdentification||null;$('formtitle').textContent=editing?'Editar registro':'Nova árvore';if($('cancelEdit'))$('cancelEdit').hidden=!editing;refreshNetworks();if(typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.restore(v.spanReference);if(typeof syncMapFeederFilter==='function')syncMapFeederFilter();drawPin();renderPhotos();renderPlantResult();if(typeof setFieldBaseline==='function')setFieldBaseline(v);if(typeof paintInspectionClock==='function')paintInspectionClock();if(typeof renderCompletion==='function')renderCompletion();}
+function restore(v){$('treeSite').value=v.treeSite||'';sharedContext={};for(const k of ['sharedVersion','externalId','imported','area','access','team','photoReference','address','createdAt'])if(v[k]!==undefined)sharedContext[k]=v[k];if(typeof restoreInspectionClock==='function')restoreInspectionClock(v);for(const id of fields){const input=$(id),value=v[id];if(input.type==='checkbox')input.checked=value===true||value==='sim';else input.value=CampoDistanceUnits.isNetworkField(id)?CampoDistanceUnits.toCentimetres(value):value??'';}photos=v.photos||[];origin=v.origin||null;editing=v.editing||null;heightMeasurement=v.heightMeasurement||null;plantIdentification=v.plantIdentification||null;$('formtitle').textContent=editing?'Editar registro':'Nova árvore';if($('cancelEdit'))$('cancelEdit').hidden=!editing;refreshNetworks();if(typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.restore(v.spanReference);if(typeof syncMapFeederFilter==='function')syncMapFeederFilter();drawPin();renderPhotos();renderPlantResult();if(typeof setFieldBaseline==='function')setFieldBaseline(v);if(typeof paintInspectionClock==='function')paintInspectionClock();if(typeof renderCompletion==='function')renderCompletion();}
 function refreshNetworks(){for(const n of ['mt','bt','at'])$(n+'Distance').disabled=!$(n).checked;if(typeof refreshDistanceUnits==='function')refreshDistanceUnits();}
 function scheduleDraft(){if(typeof autoStartInspectionClock==='function')autoStartInspectionClock();clearTimeout(draftTimer);draftTimer=setTimeout(()=>saveDraft().catch(e=>tell('Rascunho não salvo: '+e.message)),400);}
 async function saveDraft(){if(typeof autoStartInspectionClock==='function')autoStartInspectionClock();return fieldDraftStore().save();}
@@ -45,13 +45,51 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>view(b.dataset.
 function drawPin(){updateMapPosition();if(typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.refresh();if(!origin)return;const has=$('lat').value!==''&&$('lon').value!=='';const north=has?(Number($('lat').value)-origin.lat)*111320:0,east=has?(Number($('lon').value)-origin.lon)*111320*Math.cos(origin.lat*Math.PI/180):0;$('gpsinfo').textContent=`Última leitura do aparelho: ${origin.lat.toFixed(6)}, ${origin.lon.toFixed(6)} · ${new Date(origin.timestamp).toLocaleTimeString('pt-BR')} · precisão informada ±${Math.round(origin.accuracy)} m${has?' · árvore deslocada '+Math.hypot(north,east).toFixed(1)+' m (aprox.)':''}`;}
 let gpsBusy=false,gpsGeneration=0;
 function gpsStatus(message){$('gpsStatus').textContent=message;}
-function currentGPS(){return new Promise((resolve,reject)=>{if(!navigator.geolocation){reject(Error('Localização indisponível neste navegador'));return;}navigator.geolocation.getCurrentPosition(p=>{const c=p.coords,age=Date.now()-p.timestamp;if(!Number.isFinite(c.latitude)||!Number.isFinite(c.longitude)||!Number.isFinite(c.accuracy)||!Number.isFinite(age)||age>30000||age < -5000){reject(Error('O aparelho devolveu uma leitura antiga ou inválida. Tente novamente'));return;}resolve({lat:c.latitude,lon:c.longitude,accuracy:c.accuracy,timestamp:new Date(p.timestamp).toISOString()});},e=>reject(Error(e.code===1?'Permissão de localização recusada':e.code===2?'O aparelho não conseguiu determinar a localização':e.code===3?'Tempo limite para obter uma nova localização':e.message)),{enableHighAccuracy:true,timeout:25000,maximumAge:0});});}
+function currentGPS(){
+ return new Promise((resolve,reject)=>{
+  if(!navigator.geolocation){reject(Error('Localização indisponível neste navegador'));return;}
+  navigator.geolocation.getCurrentPosition(p=>{
+   const c=p.coords,age=Date.now()-p.timestamp;
+   if(!Number.isFinite(c.latitude)||Math.abs(c.latitude)>90||!Number.isFinite(c.longitude)||Math.abs(c.longitude)>180||
+    !Number.isFinite(c.accuracy)||c.accuracy<0||!Number.isFinite(age)||age>30000||age< -5000){
+    reject(Error('O aparelho devolveu uma leitura antiga ou inválida. Tente novamente'));return;
+   }
+   resolve({lat:c.latitude,lon:c.longitude,accuracy:c.accuracy,timestamp:new Date(p.timestamp).toISOString()});
+  },e=>reject(Error(e.code===1?'Permissão de localização recusada':e.code===2?'O aparelho não conseguiu determinar a localização':e.code===3?'Tempo limite para obter uma nova localização':e.message)),
+  {enableHighAccuracy:true,timeout:20000,maximumAge:5000});
+ });
+}
 async function refreshGPS(placeTree=false){
- if(gpsBusy)return;gpsBusy=true;const generation=gpsGeneration;
- const buttons=[$('gps'),$('centerGPS')],labels=buttons.map(b=>b.textContent);buttons.forEach(b=>{b.disabled=true;b.textContent='Atualizando GPS…';});gpsStatus('Buscando uma nova leitura de localização…');
- try{const position=await currentGPS();if(generation!==gpsGeneration)return;origin=position;if(typeof acceptLiveGPSPosition==='function')acceptLiveGPSPosition(position,false);if(placeTree){$('lat').value=origin.lat.toFixed(7);$('lon').value=origin.lon.toFixed(7);}drawPin();if(fieldMap)fieldMap.setView([origin.lat,origin.lon],18);if(googleMap){googleMap.setCenter({lat:origin.lat,lng:origin.lon});googleMap.setZoom(18);}const stamp=new Date(origin.timestamp).toLocaleTimeString('pt-BR');gpsStatus('Localização atualizada às '+stamp+' · precisão informada ±'+Math.round(origin.accuracy)+' m'+(origin.accuracy>30?' · precisão baixa; aguarde ao ar livre e tente novamente.':'.')+(placeTree?' Posição aplicada à árvore.':' Alfinete da árvore mantido onde você marcou.'));scheduleDraft();}
- catch(e){if(generation===gpsGeneration)gpsStatus('Não foi possível atualizar: '+e.message+'. '+(origin?'O ponto do aparelho continua sendo a última leitura, de '+new Date(origin.timestamp).toLocaleTimeString('pt-BR')+'.':'Nenhuma localização atual foi obtida.'));}
- finally{gpsBusy=false;buttons.forEach((b,i)=>{b.disabled=false;b.textContent=labels[i];});}
+ if(gpsBusy)return;
+ gpsBusy=true;
+ const generation=gpsGeneration;
+ const buttons=[$('gps'),$('centerGPS')],labels=buttons.map(b=>b.textContent);
+ buttons.forEach(b=>{b.disabled=true;b.textContent='Atualizando GPS…';});
+ gpsStatus('Buscando a posição do aparelho…');
+ try{
+  const cached=typeof freshDeviceGPS==='function'?freshDeviceGPS():null;
+  const position=cached||await currentGPS();
+  if(generation!==gpsGeneration)return;
+  if(placeTree){
+   origin=position;
+   $('lat').value=position.lat.toFixed(7);$('lon').value=position.lon.toFixed(7);
+   mapCentered=true;
+   drawPin();
+   clearTimeout(draftTimer);
+   void saveDraft().catch(error=>tell('Rascunho ainda não confirmado: '+error.message));
+  }
+  if(typeof acceptLiveGPSPosition==='function')acceptLiveGPSPosition(position,false);
+  if(fieldMap&&!$('map').hidden)fieldMap.setView([position.lat,position.lon],Math.max(17,fieldMap.getZoom()),{animate:false});
+  if(googleMap&&!$('googleMap').hidden){
+   const center={lat:position.lat,lng:position.lon},zoom=Math.max(17,googleMap.getZoom()||17);
+   if(googleMap.moveCamera)googleMap.moveCamera({center,zoom});
+   else{googleMap.setCenter(center);googleMap.setZoom(zoom);}
+  }
+  const stamp=new Date(position.timestamp).toLocaleTimeString('pt-BR');
+  gpsStatus('Localização às '+stamp+' · precisão informada ±'+Math.round(position.accuracy)+' m'+(position.accuracy>30?' · precisão baixa; aguarde ao ar livre e tente novamente.':'.')+(placeTree?' Posição aplicada à árvore.':' Alfinete da árvore mantido onde você marcou.'));
+ }catch(e){
+  if(generation===gpsGeneration)gpsStatus('Não foi possível atualizar: '+e.message+'. A localização salva da árvore foi mantida.');
+ }finally{gpsBusy=false;buttons.forEach((b,i)=>{b.disabled=false;b.textContent=labels[i];});}
 }
 $('gps').onclick=()=>refreshGPS(true);
 for(const id of ['lat','lon'])$(id).oninput=drawPin;
