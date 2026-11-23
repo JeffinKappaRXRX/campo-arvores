@@ -26,7 +26,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
- if(path.startsWith('/api/gerencial/')||path==='/api/admin/gerencial/acessos'){
+ if(path.startsWith('/api/gerencial/')||path.startsWith('/api/admin/gerencial/')){
   const admin=bootstrapAdmin||identity?.user.role==='admin';
   const result=await gerencialAPI(request,env,path,admin);
   for(const [key,value] of Object.entries(cors))result.headers.set(key,value);

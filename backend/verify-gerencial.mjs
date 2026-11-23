@@ -94,33 +94,84 @@ for(const [id,species,feeder,key,poda,inspector] of [
 }
 sql.prepare('UPDATE shared_trees SET deleted=1 WHERE id=?').run('tree-deleted');
 sql.prepare("INSERT INTO campo_record_labels(tree_id,classification,revision,updated_at,actor) VALUES(?, 'homologacao', 1, ?, ?)").run('tree-test',createdAt,'Fixture');
-const generation='vera-test';
-for(const [key,value] of Object.entries({generation,referencia:JSON.stringify({clientesMax:300,alimentadores:{'TAQ-01C1':{trecho:'T1',clientes:300},'TAN-01C9':{trecho:'T3',clientes:200}}})})){
- sql.prepare('INSERT INTO vera_meta(key,value) VALUES(?,?)').run(key,value);
+const selection='/api/admin/gerencial/inspetores';
+const accounts={};
+const password='fixture-password-2026';
+for(const name of ['Herlen','Lucivaldo','Outros']){
+ const username=name.toLowerCase();
+ const created=await call('/api/admin/users',{cookie:admin,body:{name,email:username+'@fixture.example',username,password,role:'inspector'}});
+ assert.equal(created.status,200);
+ accounts[name]=(await created.json()).id;
 }
-const veraRows=[
- {id:'41',especies:'Azeitona',lat:-9.96,lon:-67.83,data:'23/11/2026',trecho:'2',alimentador:'TAQ-01C1',chave:'RBR444',classe:'ALTO'},
- {id:'42',especies:'Manga',lat:null,lon:null,data:'22/11/2026',trecho:'T2',alimentador:'TAN-01C9',chave:'RBR444',classe:'ALTO'}
-];
-for(const row of veraRows)sql.prepare('INSERT INTO vera_trees(generation,id,data) VALUES(?,?,?)').run(generation,row.id,JSON.stringify(row));
-const reply=await call(dataPath,viewer),data=await reply.json();
-assert.equal(reply.status,200,JSON.stringify(data));
-assert.equal(reply.headers.get('Cache-Control'),'no-store');
-assert.deepEqual(data.field.map(row=>row.id).sort(),['tree-alpha','tree-beta','vera-41']);
-assert.equal(data.park.length,4,'shared VERA update counts once');
-assert.equal(data.park.find(row=>row.id==='41').campoId,'vera-41');
+assert.equal((await call(selection,viewer)).status,403);
+assert.equal((await call(selection,{...viewer,body:{ids:[accounts.Outros]}})).status,403);
+const defaultScope=await (await call(selection,{cookie:admin})).json();
+assert.deepEqual(defaultScope.enabled.map(row=>row.name).sort(),['Herlen','Lucivaldo']);
+const getData=async()=>{
+ const response=await call(dataPath,viewer),body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));
+ assert.equal(response.headers.get('Cache-Control'),'no-store');
+ return body;
+};
+const data=await getData();
+assert.deepEqual(data.inspectors.sort(),['Herlen','Lucivaldo']);
+assert.equal(data.field.filter(row=>row.inspector==='Herlen').length,2);
+assert.equal(data.field.filter(row=>row.inspector==='Lucivaldo').length,1);
+assert(!JSON.stringify(data).includes('tree-alpha'));
 assert(!JSON.stringify(data).includes('hidden@energisa.com.br'));
-assert(!JSON.stringify(data).includes('internal fixture'));
-assert.equal((await call('/api/gerencial/foto?source=campo&id=tree-test',viewer)).status,404);
+assert(!Object.hasOwn(data,'park'));
+assert.equal((await call('/api/gerencial/foto?source=campo&id=tree-alpha',viewer)).status,404);
+await call(selection,{cookie:admin,body:{ids:[accounts.Lucivaldo]}});
+assert.deepEqual((await getData()).inspectors,['Lucivaldo']);
+await call(selection,{cookie:admin,body:{ids:[accounts.Herlen,accounts.Lucivaldo]}});
+const F=globalThis.CampoConsultaFiltros;
+const filtered=F.apply(data.field,{from:'2026-11-23',through:'2026-11-23',inspectors:['Herlen']});
+assert.equal(filtered.length,2);
+assert.equal(F.summary(filtered).mean,180);
 
-const F=globalThis.CampoConsultaFiltros,prepared=F.prepare(data);
-const defaults={inspectors:[],feeders:[],sections:[],risks:[]};
-const filtered=F.apply(prepared,{...defaults,from:'2026-11-23',through:'2026-11-23',feeders:['taq01c1'],sections:['T1','T2'],inspectors:['herlen'],keys:'RBR554,\nRBR444'});
-assert.deepEqual(filtered.park.map(row=>row.id).sort(),['41','tree-alpha']);
-assert.equal(F.summary(filtered.field).mean,180);
-assert.equal(F.apply(prepared,{...defaults,query:'acai'}).park[0].id,'tree-alpha');
-assert.equal(F.apply(prepared,{...defaults,query:'RBR55 00000'}).park.length,0);
-assert.deepEqual(F.apply(prepared,{...defaults,pruning:'sim',source:'campo'}).park.map(row=>row.id).sort(),['tree-alpha','tree-beta']);
+const root=[-67.81,-9.97],junction=[-67.809,-9.97],tip=[-67.807,-9.97],branch=[-67.809,-9.969],branchTip=[-67.809,-9.968];
+const span=(id,line,metres,section='1')=>({id,line,metres,locality:'RIO BRANCO',feeder:'TAN-01I9',zone:'URBANO',section,block:'RBR554'});
+const spans=[span('trunk-a',[root,junction],100),span('trunk-b',[junction,tip],210,'2'),span('branch-a',[junction,branch],300,'3'),span('branch-b',[branch,branchTip],60,'3')];
+const createRoute=(id,assignee,changes={})=>call('/api/routes',{cookie:admin,body:{id,assignee,name:id,spans,fromNetwork:true,outlet:root,...changes}});
+const herlen=accounts.Herlen;
+assert.equal((await createRoute('production',herlen)).status,201);
+assert.equal((await createRoute('private',accounts.Outros)).status,201);
+assert.equal((await createRoute('test',herlen,{homologation:true})).status,201);
+const legacy=await call('/api/routes',{cookie:admin,body:{id:'legacy',assignee:herlen,name:'legacy',spans,fromNetwork:true,homologation:true}});
+assert.equal(legacy.status,201);
+const outletPath='/api/routes/saida';
+assert.equal((await call(outletPath,{cookie:admin,body:{routeId:'legacy',outlet:[-67,-9]}})).status,400);
+assert.equal((await call(outletPath,{cookie:admin,body:{routeId:'legacy',outlet:root}})).status,200);
+const rangesPath='/api/routes/visit';
+const inspectorCookie=(await call('/api/auth/login',{body:{username:'herlen',password}})).headers.get('Set-Cookie').split(';')[0];
+const startedAt=new Date(Date.now()-60000).toISOString(),endedAt=new Date().toISOString();
+const send=(id,segments,routeId='production')=>call(rangesPath,{cookie:inspectorCookie,body:{id,routeId,startedAt,endedAt,keyCheck:{code:'RBR554',segments}}});
+assert.equal((await send('unknown-segment',['missing'])).status,409);
+assert.equal((await send('other-inspector',['trunk-a'],'private')).status,404);
+assert.equal((await send('principal',['trunk-a'])).status,200);
+assert.equal((await send('principal',['trunk-a'])).status,200);
+const current=await getData();
+assert.deepEqual(current.routes.map(row=>row.id),['production']);
+assert.equal(current.routes[0].confirmed,310);
+assert.equal(current.routes[0].pending,360);
+assert.equal(current.routes[0].closed,0);
+const routeMap='/api/gerencial/rota?id=';
+const map=await (await call(routeMap+'production',viewer)).json();
+assert.equal(map.keys[0].pending,1);
+assert.equal(map.lines.pending.length,2);
+assert.deepEqual(map.lines.pending.at(-1).at(-1),branchTip);
+assert.equal((await call(routeMap+'private',viewer)).status,404);
+assert.equal((await call(routeMap+'test',viewer)).status,404);
+assert.equal((await send('branch',['branch-a'])).status,200);
+assert.equal((await getData()).routes[0].closed,1);
+assert.equal((await getData()).routes[0].confirmed,670);
+assert.equal((await send('branch-repeated',['branch-a'])).status,200);
+assert.equal((await getData()).routes[0].confirmed,670);
+const testPath='/api/routes/homologacao';
+assert.equal((await call(testPath,{cookie:admin,body:{routeId:'production',action:'delete'}})).status,409);
+assert.equal((await call(testPath,{cookie:admin,body:{routeId:'test',action:'delete'}})).status,200);
+assert.equal((await send('deleted',['trunk-a'],'test')).status,410);
+assert.deepEqual((await (await call('/api/routes?mine=1',{cookie:inspectorCookie})).json()).deletedIds,['test']);
 
 assert.equal((await call('/api/gerencial/sair',{...viewer,method:'POST'})).status,200);
 assert.equal((await call(dataPath,viewer)).status,401);
@@ -129,4 +180,4 @@ assert.equal(journal.items.length,2);
 assert(journal.items.find(row=>row.email==='gerente@energisa.com.br').saiu_em);
 assert(journal.items.some(row=>row.email==='gestora@energisaterceiros.example'));
 assert(!Object.hasOwn(journal.items[0],'token_hash'));
-console.log('PASS ARBORA gerencial: JWT assinado, domínio exato, isolamento de escopo, auditoria, registros ativos, VERA vinculado, filtros múltiplos e horário de Rio Branco.');
+console.log('PASS ARBORA gerencial: JWT assinado, domínio exato, isolamento de escopo, auditoria, escopo configurável, KPIs, crédito por chave, derivações e homologação.');

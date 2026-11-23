@@ -2,7 +2,9 @@
 (()=>{
  const M=CampoRoutes,$=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const api=(...args)=>window.CampoControl.api(...args);
+ const isTest=route=>route.homologation||['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode);
  const km=m=>(m/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' km';
+ let outlet=null;
  const panel=document.createElement('article');panel.className='panel route-card';panel.id='routePlanner';
  panel.innerHTML=`<div class="panel-head"><h3>Rotas de vistoria</h3><button type="button" id="routeRefresh">Atualizar</button></div>
  <details id="routePlan"><summary>Planejar e atribuir rota</summary>
@@ -26,6 +28,8 @@
  <ul id="routeCandidates" class="route-list"></ul></div>
  <form id="routePlanForm">
  <div class="route-buttons"><button type="button" id="routePick" aria-pressed="false">Selecionar vãos no mapa</button><label>Importar GeoJSON <input id="routeImport" type="file" accept=".json,.geojson,application/geo+json"></label></div>
+ <div class="route-buttons"><button type="button" id="routeOutlet">Marcar saída da subestação no mapa</button><span id="routeOutletStatus">Saída ainda não vinculada</span></div>
+ <label><span><input type="checkbox" name="homologation"> Rota de homologação</span></label>
  <ol id="routeDraftList" class="route-list"></ol><p id="routePlanned"></p><div id="routeRoad" class="route-buttons" hidden><a id="routeNavigateNext" target="_blank" rel="noopener noreferrer">Google Maps · ir ao primeiro ponto</a><a id="routeRoadTrip" target="_blank" rel="noopener noreferrer">Google Maps · trajeto por ruas</a><small>A rede destacada é o serviço. O Google Maps calcula o deslocamento viário em separado.</small></div>
  <div class="route-grid"><label>Nome da rota<input name="name" maxlength="100" required></label><label>Inspetor<select name="assignee" required></select></label><label>Buffer por lado (m)<input name="buffer" type="number" min="5" max="200" value="30" required></label><label>Início previsto<input type="date" name="planStart"></label><label>Capacidade diária de rede (km)<input type="number" name="planCapacity" min="0.1" max="250" step="0.001"></label></div><p id="routeDeadline" role="status"></p>
  <div id="routeMissingData" class="route-grid" hidden>
@@ -38,8 +42,8 @@
 
  <div class="route-grid"><label>Dia da vistoria<input id="routeDay" type="date"></label><label>Mês da vistoria<input id="routeMonth" type="month"></label>
  <label>Inspetor<select id="routeOperator"><option value="">Todos</option></select></label><label>Recorte<input id="routeFilter" type="search" placeholder="Localidade, alimentador ou rota"></label>
- <label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
- <p id="routeTotals" aria-live="polite"></p><div id="routePublished"></div></details>`;
+ <label><span><input id="routeShowTests" type="checkbox"> Mostrar homologação</span></label><label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
+ <p id="routeTotals" aria-live="polite"></p><p id="routeHistoryStatus" role="status"></p><div id="routePublished"></div></details>`;
  $('mapFrame').before(panel);
  const withdrawDialog=document.createElement('dialog');withdrawDialog.id='routeWithdrawDialog';withdrawDialog.className='route-return-dialog';
  withdrawDialog.innerHTML=`<form id="routeWithdrawForm"><div class="sectionhead"><div><span class="eyebrow">CONTROLE DA GESTÃO</span><h2>Retirar rota do inspetor</h2></div><button type="button" id="routeWithdrawClose" class="secondary">Fechar</button></div><p id="routeWithdrawSummary"></p><p><strong>Atenção:</strong> a rota sairá da carteira do inspetor na próxima sincronização. O histórico já recebido será preservado, mas uma saída ainda não sincronizada no aparelho poderá não ser aceita.</p><label>Motivo<select id="routeWithdrawReason" required><option value="">Selecione</option><option value="gestao_reatribuicao">Reatribuição ou ajuste da equipe</option><option value="gestao_correcao">Correção da rota</option><option value="gestao_homologacao">Homologação ou teste</option><option value="gestao_solicitacao">Solicitação do inspetor</option><option value="gestao_outro">Outro</option></select></label><label>Observação<textarea id="routeWithdrawNote" maxlength="480" rows="3" placeholder="Detalhe quando necessário"></textarea></label><p id="routeWithdrawFeedback" role="status"></p><button type="submit" class="primary" id="routeWithdrawConfirm">Retirar rota do inspetor</button></form>`;
@@ -223,16 +227,34 @@
   draftId=null;filteredDraft=false;paintDraft();
  };
  panel.addEventListener('input',e=>{if(e.target.form===form&&e.target.name)draftId=null;if(e.target===form.elements.buffer)paintDraft();});
+ $('routeOutlet').onclick=()=>{
+  if(!draft.length){status.textContent='Inclua no plano o alimentador desde a saída da subestação até as pontas.';return;}
+  status.textContent='Clique no ponto de saída da subestação no mapa.';
+  window.CampoControlMap?.pickOutlet?.(point=>{
+   const keys=M.keySections(draft,point);
+   if(!keys.length){status.textContent='Saída sem conexão inequívoca a uma ponta T1 do recorte. Confira a saída e a continuidade da rede.';return;}
+   outlet=point;draftId=null;draft=M.outletOrder(draft,outlet);paintDraft();
+   $('routeOutletStatus').textContent='Saída vinculada · '+keys.length+' chave(s)';
+   status.textContent='Saída vinculada à primeira ponta T1.';
+  });
+ };
  form.onsubmit=async e=>{
   e.preventDefault();
   if(publishing)return;
   if(!draft.length&&!job){status.textContent='Selecione pelo menos um vão.';return;}
   if(!job){
+   const keyGroups=M.keySections(draft,outlet);
+   if(draft.some(span=>span.block)&&!keyGroups.length){
+    status.textContent='Marque a saída da subestação com a rede T1 conectada para habilitar a vistoria por chave.';return;
+   }
+   const known=new Set(keyGroups.flatMap(key=>key.segments.flatMap(segment=>segment.ids)));
    const plan=selectedPlan();
    if(!plan){status.textContent='Informe a data inicial e a capacidade diária em km para atribuir a rota.';return;}
-   const gaps=draft.slice(1).filter((s,i)=>M.distance(M.last(draft[i]),M.first(s))>25);
-   const parts=M.routeParts(draft);
+   const ordered=M.outletOrder(draft,outlet);
+   const gaps=ordered.slice(1).filter((s,i)=>M.distance(M.last(ordered[i]),M.first(s))>25);
+   const parts=M.routeParts(ordered);
    const notices=[];
+   if(keyGroups.length&&draft.some(span=>span.block&&!known.has(span.id)))notices.push('Parte da rede não tem continuidade comprovada com a saída escolhida e ficará disponível para GPS/vão.');
    if(parts.length>160){status.textContent='O recorte excedeu o tamanho de uma rota. Refine os filtros e tente novamente.';return;}
    if(parts.length>1)notices.push('O inspetor verá a rota inteira no mapa e poderá seguir '+parts.length+' partes numeradas.');
    if(gaps.length)notices.push('Há '+gaps.length+' intervalo(s) sem continuidade entre vãos. Use as ruas para se deslocar entre eles.');
@@ -241,7 +263,7 @@
    const fields=Object.fromEntries(new FormData(form));delete fields.planStart;delete fields.planCapacity;
    job={index:0,parts:parts.map((spans,i)=>{
     const suffix=' ('+(i+1)+'/'+parts.length+')';
-    return {...fields,plan,name:parts.length===1?fields.name:fields.name.slice(0,100-suffix.length)+suffix,
+    return {...fields,homologation:fields.homologation==='on',...(outlet?{outlet}:{}),plan,name:parts.length===1?fields.name:fields.name.slice(0,100-suffix.length)+suffix,
      id:parts.length===1?draftId:draftId+'-'+(i+1),fromNetwork:true,spans,...(parts.length>1?{campaign:{id:draftId,index:i+1,total:parts.length,name:fields.name}}:{})};
    })};
    checkpoint();
@@ -257,7 +279,7 @@
     if(job!==batch)return;
     batch.index++;checkpoint();
    }
-   draft=[];job=null;checkpoint();draftId=null;filteredDraft=false;form.reset();form.elements.planStart.value=today();historyCapacity=false;paintDraft();
+   draft=[];outlet=null;$('routeOutletStatus').textContent='Saída ainda não vinculada';job=null;checkpoint();draftId=null;filteredDraft=false;form.reset();form.elements.planStart.value=today();historyCapacity=false;paintDraft();
    status.textContent='Rota disponível para o inspetor em Minhas rotas.';
    try{await refresh();}catch{status.textContent+=' Use Atualizar para recarregar a lista de rotas.';}
   }catch(error){
@@ -308,7 +330,7 @@
  function paint(){
   const day=$('routeDay').value,month=$('routeMonth').value,operator=$('routeOperator').value,q=M.key($('routeFilter').value);
   const inPeriod=value=>day?value===day:month?value.startsWith(month):true;
-  const routes=snapshot.routes.filter(r=>(!operator||r.assignee===operator)&&(!q||M.key([r.name,r.feeder,r.locality].join(' ')).includes(q))).sort((a,b)=>a.phase-b.phase),activeRoutes=routes.filter(r=>!r.returned);
+  const routes=snapshot.routes.filter(r=>($('routeShowTests').checked||!isTest(r))&&(!operator||r.assignee===operator)&&(!q||M.key([r.name,r.feeder,r.locality].join(' ')).includes(q))).sort((a,b)=>a.phase-b.phase),activeRoutes=routes.filter(r=>!r.returned&&!isTest(r));
   const ids=new Set(activeRoutes.map(r=>r.id)),visits=snapshot.visits.filter(v=>ids.has(v.routeId)),spans=planned(activeRoutes);
   const track=visits.filter(v=>inPeriod(v.day)).reduce((n,v)=>n+(v.trackMetres||0),0);
   const total=spans.reduce((n,s)=>n+s.metres,0),allCoverage=M.coverage(spans,visits),periodCoverage=M.coverage(spans,visits,v=>inPeriod(v.day)),all=allCoverage.metres,period=periodCoverage.metres;
@@ -333,11 +355,33 @@
    const shared=done.sharedMetres?' · '+km(done.sharedMetres)+' de outros alimentadores · '+extras.length+' vãos concluídos'+(codes.length?' ('+codes.join(', ')+')':''):'';
    const inFilter=M.coverage(routeSpans,related,v=>inPeriod(v.day)).metres;
    const returnedText=returned?`<p><strong>DEVOLVIDA · ${esc(returned.reason)}</strong> · por ${esc(returned.actorName)} em ${esc(new Date(returned.createdAt).toLocaleString('pt-BR'))}${returned.note?' · '+esc(returned.note):''}${returned.authorizedBy?' · autorizada por '+esc(returned.authorizedBy.name):''}</p>`:'';
-   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><div class="route-buttons"><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button>${returned?'':`<button type="button" class="secondary" data-route-withdraw="${esc(r.id)}">Retirar do inspetor</button>`}</div></div>`;
+   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}${isTest(r)?' · Homologação':''}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><div class="route-buttons"><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button>${returned?'':`<button type="button" class="secondary" data-route-withdraw="${esc(r.id)}">Retirar do inspetor</button>`}${!r.outlet&&!returned?`<button type="button" class="secondary" data-route-outlet="${esc(r.id)}">Vincular saída da subestação</button>`:''}${isTest(r)?`<button type="button" class="secondary" data-route-test-delete="${esc(r.id)}">Excluir homologação</button>`:`<button type="button" class="secondary" data-route-test-mark="${esc(r.id)}">Marcar como homologação</button>`}</div></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
   paintKpis();
  }
- $('routePublished').onclick=e=>{
+ $('routePublished').onclick=async e=>{
+   const {routeOutlet:legacyOutlet,routeTestDelete:remove,routeTestMark:mark}=e.target.dataset;
+   const historyStatus=$('routeHistoryStatus');
+   if(legacyOutlet){
+    const group=M.campaignParts(snapshot.routes).find(parts=>parts[0].id===legacyOutlet);
+    if(group)window.CampoControlMap?.routeOverlay?.(group.flatMap(part=>part.spans),new Map(),true,M.bufferMetres(group[0].buffer));
+    historyStatus.textContent='Clique na saída da subestação no mapa.';
+    window.CampoControlMap?.pickOutlet?.(async point=>{
+     try{
+      await api('/api/routes/saida',{routeId:legacyOutlet,outlet:point});
+      historyStatus.textContent='Saída vinculada. As chaves estarão disponíveis ao sincronizar a rota.';
+      await refresh();
+     }catch(error){historyStatus.textContent=error.message;}
+    });
+    return;
+   }
+   if(remove||mark){
+    if(!confirm(remove?'Excluir esta rota de homologação das telas de campo e gestão?':'Classificar esta rota como homologação e retirar dos indicadores?'))return;
+    e.target.disabled=true;
+    try{await api('/api/routes/homologacao',{routeId:remove||mark,action:remove?'delete':'classify'});await refresh();}
+    catch(error){historyStatus.textContent=error.message;e.target.disabled=false;}
+    return;
+   }
    if(e.target.dataset.routeWithdraw){
     const parts=M.campaignParts(snapshot.routes).find(group=>group[0].id===e.target.dataset.routeWithdraw);if(!parts||parts[0].returned||withdrawing)return;
     withdrawRoute=parts[0];$('routeWithdrawForm').reset();$('routeWithdrawFeedback').textContent='';$('routeWithdrawSummary').textContent=(withdrawRoute.campaign?.name||withdrawRoute.name)+' · '+withdrawRoute.operator+' · '+withdrawRoute.feeder;
@@ -368,7 +412,7 @@
   if(from&&through&&from>through){table.textContent='Confira o intervalo de datas.';return;}
   const inPeriod=day=>(!from||day>=from)&&(!through||day<=through),asOf=through&&through<today()?through:today();
   const rows=new Map();
-  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!route.returned&&(!assignee||route.assignee===assignee)))){
+  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!route.returned&&!isTest(route)&&(!assignee||route.assignee===assignee)))){
    const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
    const daily=M.dailyCoverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId))),targets=M.schedule(route.plan,M.metres(spans));
    const work=daily.filter(entry=>inPeriod(entry.day)),due=targets.filter(entry=>inPeriod(entry.day)).reduce((sum,entry)=>sum+entry.metres,0);
@@ -400,13 +444,14 @@
  }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
  $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();});
- for(const id of ['routeDay','routeMonth','routeOperator','routeFilter'])$(id).addEventListener('input',()=>{
+ for(const id of ['routeDay','routeMonth','routeOperator','routeFilter','routeShowTests'])$(id).addEventListener('input',()=>{
   if(id==='routeDay'&&$(id).value)$('routeMonth').value='';
   if(id==='routeMonth'&&$(id).value)$('routeDay').value='';
   paint();
  });
  paintDraft();
  window.CampoRoutePlanner={
+  refresh:load,
   picking:()=>selecting&&!job,
   select(f){
    if(!$('routePlan').open||!selecting||job)return false;

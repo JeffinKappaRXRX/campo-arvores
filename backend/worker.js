@@ -212,6 +212,85 @@ const CampoRoutes=(()=>{
   }
   return result;
  }
+ // Direct the selected network from the confirmed substation outlet. Unrooted, cyclic
+ // or disconnected sections remain available for manual/GPS inspection.
+ function directedRoute(spans,outlet){
+  if(!Array.isArray(outlet)||outlet.length!==2||!outlet.every(Number.isFinite))return null;
+  const nodes=new Map(),pointKey=p=>p.map(n=>n.toFixed(5)).join(',');
+  const node=p=>{
+   const id=pointKey(p);
+   if(!nodes.has(id))nodes.set(id,{id,point:p,edges:[],depth:0,children:[]});
+   return nodes.get(id);
+  };
+  for(const span of spans){
+   const a=node(span.line[0]),b=node(span.line.at(-1)),edge={span,a,b};
+   a.edges.push(edge);b.edges.push(edge);
+  }
+  const roots=[...nodes.values()].filter(n=>n.edges.length===1&&n.edges[0].span.section==='1')
+   .map(n=>({n,d:distance(n.point,outlet)})).filter(x=>x.d<=35).sort((a,b)=>a.d-b.d);
+  if(!roots.length||roots.length>1&&roots[1].d-roots[0].d<3)return null;
+  const root=roots[0].n,feeder=root.edges[0].span.feeder,walk=[root],seen=new Set([root]);
+  for(let at=0;at<walk.length;at++){
+   const n=walk[at];
+   for(const edge of n.edges){
+    if(edge===n.parent||edge.span.feeder!==feeder)continue;
+    const next=edge.a===n?edge.b:edge.a;
+    if(seen.has(next))return null;
+    seen.add(next);walk.push(next);next.parent=edge;
+    const directed={edge,from:n,to:next};
+    n.children.push(directed);
+   }
+  }
+  const orderOf=link=>Number(link.edge.span.section)||4;
+  for(const n of [...walk].reverse()){
+   n.children.sort((a,b)=>orderOf(a)-orderOf(b)||(b.edge.span.metres+b.to.depth)-(a.edge.span.metres+a.to.depth)||a.edge.span.id.localeCompare(b.edge.span.id));
+   if(n.children.length)n.depth=n.children[0].edge.span.metres+n.children[0].to.depth;
+  }
+  return {root,feeder};
+ }
+ function outletOrder(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return spans;
+  const pending=[...network.root.children].reverse(),oriented=[],seen=new Set();
+  while(pending.length){
+   const {edge,from,to}=pending.pop();
+   oriented.push({...edge.span,reverse:edge.b===from});
+   seen.add(edge.span.id);
+   for(let i=to.children.length-1;i>=0;i--)pending.push(to.children[i]);
+  }
+  return [...oriented,...spans.filter(span=>!seen.has(span.id))];
+ }
+ function keySections(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return [];
+  const {root,feeder}=network;
+  const byKey=new Map(),pending=root.children.map(child=>({child,segment:null,branch:false}));
+  for(let index=0;index<pending.length;index++){
+   const {child,segment,branch}=pending[index],{edge,from,to}=child,code=edge.span.block;
+   let part=segment;
+   if(code&&(!part||part.code!==code||branch)){
+    part={id:edge.span.id,code,branch,start:from.point,end:to.point,ids:[],metres:0};
+    if(!byKey.has(code))byKey.set(code,[]);
+    byKey.get(code).push(part);
+   }
+   if(part&&code){
+    part.ids.push(edge.span.id);part.end=to.point;part.metres+=edge.span.metres;
+   }
+   for(const [i,next] of to.children.entries()){
+    const diverges=i>0;
+    pending.push({child:next,segment:code?part:null,branch:diverges});
+   }
+  }
+  const counts=new Map();
+  for(const span of spans)if(span.feeder===feeder&&span.block)counts.set(span.block,(counts.get(span.block)||0)+1);
+  return [...byKey].flatMap(([code,segments])=>segments.reduce((n,part)=>n+part.ids.length,0)===counts.get(code)?[{code,segments}]:[]);
+ }
+ function keyProgress(section,cover){
+  return section.segments.map(segment=>{
+   const ranges=segment.ids.flatMap(spanId=>remaining(cover?.get(spanId)).map(([start,end])=>({spanId,start,end})));
+   return {...segment,closed:!ranges.length,ranges};
+  });
+ }
  function bounds(intervals){
   return intervals.map(([start,end])=>{
    if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>FULL||start>=end)throw Error('Faixa de cobertura inválida.');
@@ -318,7 +397,7 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
@@ -407,6 +486,53 @@ async function authorizeRouteHomologation(request,env,db,input){
  if(!await checkCampoPassword(password,administrator,env))throw sharedError('Administrador ou senha incorretos.',401);
  return {id:administrator.id,name:administrator.name};
 }
+function routeIsTest(route){
+ return route.homologation===true||['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode);
+}
+const validRouteOutlet=point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite)&&Math.abs(point[0])<=180&&Math.abs(point[1])<=90;
+async function routeUpdateOutlet(db,input){
+ const {routeId,outlet}=input;
+ if(!CampoRoutes.identifier(routeId)||!validRouteOutlet(outlet))throw sharedError('Selecione a saída da subestação no mapa.');
+ const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first();
+ if(!entry)throw sharedError('Rota não encontrada.',404);
+ const route=JSON.parse(entry.data);
+ if(route.deletedAt)throw sharedError('Rota indisponível.',404);
+ if(route.outlet&&JSON.stringify(route.outlet)!==JSON.stringify(outlet))throw sharedError('A saída já foi vinculada a esta rota. Preserve a referência das chaves já confirmadas.',409);
+ const args=route.campaign?[route.assignee,route.campaign.id]:[route.id];
+ const where=route.campaign?"assignee=? AND json_extract(data,'$.campaign.id')=?":"id=?";
+ const {results}=await db.prepare('SELECT data FROM campo_routes WHERE '+where).bind(...args).all();
+ if(!CampoRoutes.keySections(visibleRoutes(results.map(row=>JSON.parse(row.data))).flatMap(part=>part.spans),outlet).length)throw sharedError('A saída não tem conexão inequívoca com uma ponta T1 da rota.');
+ const edited=await db.prepare("UPDATE campo_routes SET data=json_set(data,'$.outlet',json(?)) WHERE "+where+" AND json_extract(data,'$.outlet') IS NULL AND json_extract(data,'$.deletedAt') IS NULL").bind(JSON.stringify(outlet),...args).run();
+ if(!edited.meta?.changes&&!route.outlet)throw sharedError('A rota mudou durante o vínculo. Atualize a tela.',409);
+ return json({ok:true});
+}
+async function routeUpdateTest(db,input){
+ const {routeId,action}=input;
+ if(!CampoRoutes.identifier(routeId)||!['classify','delete'].includes(action))throw sharedError('Informe uma rota válida.');
+ const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first();
+ if(!entry)throw sharedError('Rota não encontrada.',404);
+ const route=JSON.parse(entry.data),scope=route.campaign?.id||route.id;
+ const returned=await db.prepare('SELECT data FROM campo_route_returns WHERE scope_id=?').bind(scope).first();
+ if(action==='delete'&&!routeIsTest({...route,returned:returned?JSON.parse(returned.data):null}))throw sharedError('Classifique a rota como homologação antes de excluir.',409);
+ const rows=route.campaign?await db.prepare("SELECT data FROM campo_routes WHERE assignee=? AND json_extract(data,'$.campaign.id')=?").bind(route.assignee,scope).all():{results:[entry]};
+ const stamp=new Date().toISOString(),parts=rows.results.map(row=>JSON.parse(row.data));
+ if(parts.some(part=>part.deletedAt))return json({ok:true});
+ const where=route.campaign?"assignee=? AND json_extract(data,'$.campaign.id')=?":"id=?";
+ const args=route.campaign?[route.assignee,scope]:[route.id];
+ const assign=action==='delete'?"json_set(data,'$.homologation',json('true'),'$.deletedAt',?)":"json_set(data,'$.homologation',json('true'))";
+ await db.prepare("UPDATE campo_routes SET data="+assign+" WHERE "+where+" AND json_extract(data,'$.deletedAt') IS NULL").bind(...(action==='delete'?[stamp,...args]:args)).run();
+ return json({ok:true});
+}
+async function routeKeyRanges(db,route,check){
+ if(!check||typeof check.code!=='string'||!Array.isArray(check.segments)||!check.segments.length||check.segments.length>250||new Set(check.segments).size!==check.segments.length)throw sharedError('Selecione a chave e os trechos vistoriados.');
+ const rows=route.campaign?await db.prepare("SELECT data FROM campo_routes WHERE assignee=? AND json_extract(data,'$.campaign.id')=?").bind(route.assignee,route.campaign.id).all():{results:[{data:JSON.stringify(route)}]};
+ const parts=visibleRoutes(rows.results.map(row=>JSON.parse(row.data)).filter(part=>!part.deletedAt));
+ if(!parts.length)throw sharedError('Rota ainda indisponível.',409);
+ const section=CampoRoutes.keySections(parts.flatMap(part=>part.spans),route.outlet).find(part=>part.code===check.code);
+ const byId=new Map((section?.segments||[]).map(segment=>[segment.id,segment]));
+ if(check.segments.some(id=>!byId.has(id)))throw sharedError('A chave ou derivação não pertence a esta rota.',409);
+ return check.segments.flatMap(id=>byId.get(id).ids.map(spanId=>({spanId,start:0,end:CampoRoutes.FULL})));
+}
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
@@ -424,15 +550,26 @@ async function routeAPI(request,env){
      const returnQuery=all?db.prepare('SELECT data FROM campo_route_returns ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_route_returns WHERE assignee=? ORDER BY created_at DESC').bind(actor);
      const [a,b,c]=await Promise.all([routeQuery.all(),visitQuery.all(),returnQuery.all()]);
      const returns=c.results.map(row=>JSON.parse(row.data)),byScope=new Map(returns.map(item=>[item.scopeId,item]));
-     let routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data))).map(route=>{const returned=byScope.get(route.campaign?.id||route.id);return returned?{...route,returned}:route;});
+     let routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data)).filter(route=>!route.deletedAt)).map(route=>{const returned=byScope.get(route.campaign?.id||route.id);return returned?{...route,returned}:route;});
      if(!all)routes=routes.filter(route=>!route.returned);
      const ids=new Set(routes.map(route=>route.id));
     const visits=b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at})).filter(visit=>ids.has(visit.routeId));
-     return json({routes,visits,returns});
+     const deletedIds=all?[]:a.results.map(row=>JSON.parse(row.data)).filter(route=>route.deletedAt).map(route=>route.id);
+    return json({routes,visits,returns,...(deletedIds.length?{deletedIds}:{})});
     }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[],returns:[]});throw error;}
   }
   if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
   const input=await sharedBody(request,500000),now=new Date().toISOString();
+  if(path==='/api/routes/saida'&&admin){
+   const result=await routeUpdateOutlet(db,input);
+   await realtimePublish(env,'route-assigned');
+   return result;
+  }
+  if(path==='/api/routes/homologacao'&&admin){
+   const result=await routeUpdateTest(db,input);
+   await realtimePublish(env,'route-return');
+   return result;
+  }
   if(path==='/api/routes'&&admin){
    const {id,assignee}=input||{};
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(assignee)||!Array.isArray(input.spans)||!input.spans.length||input.spans.length>250)throw sharedError('Informe o inspetor e até 250 vãos.');
@@ -454,16 +591,19 @@ async function routeAPI(request,env){
    const buffer=CampoRoutes.bufferMetres(input.buffer),plan=CampoRoutes.routePlan(input.plan);
    if(input.plan!=null&&!plan)throw sharedError('Informe a data inicial e uma capacidade diária válida.');
    const campaign=input.campaign;
+   const outlet=input.outlet;
+   if(outlet!==undefined&&!validRouteOutlet(outlet))throw sharedError('Selecione a saída da subestação no mapa.');
    if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(input.homologation===true?{homologation:true}:{}),...(outlet?{outlet}:{}),...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
    if(campaign){
     const peer=await db.prepare('SELECT assignee,data FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
-    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
+    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)||JSON.stringify(JSON.parse(peer.data).outlet||null)!==JSON.stringify(outlet||null)||Boolean(JSON.parse(peer.data).homologation)!==Boolean(route.homologation)||JSON.parse(peer.data).deletedAt))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
    }
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
+   await realtimePublish(env,'route-assigned');
    return json({route},201);
   }
    if(path==='/api/routes/return'&&(actor||admin)){
@@ -473,7 +613,7 @@ async function routeAPI(request,env){
     if(management&&!admin)throw sharedError('Somente a gestão pode retirar uma rota do inspetor.',403);
     const entry=management?await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first():await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
     if(!entry)throw sharedError(management?'Rota não encontrada.':'Rota não atribuída à sua conta.',404);
-    const route=JSON.parse(entry.data),scopeId=route.campaign?.id||route.id;
+    const route=JSON.parse(entry.data);if(route.deletedAt)throw sharedError('Rota de homologação excluída.',410);const scopeId=route.campaign?.id||route.id;
     const authorizedBy=reasonCode==='homologacao'?await authorizeRouteHomologation(request,env,db,input):null;
     const returnActor=actor||'administrator',returned={id,scopeId,routeId,assignee:route.assignee,actor:returnActor,actorName:env.CAMPO_USER?.name||(management?'Administrador':route.operator||'Inspetor'),source:management?'management':'field',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
     const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,route.assignee,returnActor,JSON.stringify(returned),now).run();
@@ -488,20 +628,28 @@ async function routeAPI(request,env){
   if(path==='/api/routes/visit'&&actor){
    const {id,routeId,startedAt,endedAt}=input||{},start=Date.parse(startedAt),end=Date.parse(endedAt);
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end>Date.now()+600000||end-start>7*86400000||
-     !Array.isArray(input.ranges)||input.ranges.length>750)throw sharedError('Dados da vistoria inválidos.');
+     (!input.keyCheck&&(!Array.isArray(input.ranges)||input.ranges.length>750)))throw sharedError('Dados da vistoria inválidos.');
    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
    const route=JSON.parse(entry.data),ids=new Set(route.spans.map(s=>s.id));
+   if(route.deletedAt)throw sharedError('Rota de homologação excluída.',410);
+   const old=await db.prepare('SELECT data,received_at FROM campo_route_visits WHERE id=? AND actor=?').bind(id,actor).first();
+   if(old&&input.keyCheck){
+    const saved=JSON.parse(old.data);
+    if(saved.routeId===routeId&&JSON.stringify(saved.keyCheck)===JSON.stringify(input.keyCheck))return json({visit:{...saved,receivedAt:old.received_at}});
+    throw sharedError('O identificador já pertence a outra vistoria.',409);
+   }
     if(await db.prepare('SELECT id FROM campo_route_returns WHERE scope_id=?').bind(route.campaign?.id||route.id).first())throw sharedError('A rota já foi devolvida e não aceita novas conclusões.',409);
-   const ranges=input.ranges.map(x=>{
+   const ranges=input.keyCheck?await routeKeyRanges(db,route,input.keyCheck):input.ranges.map(x=>{
     if(!x||!ids.has(x.spanId)||!Number.isInteger(x.start)||!Number.isInteger(x.end)||x.start<0||x.end>CampoRoutes.FULL||x.start>=x.end)throw sharedError('Vão ou faixa de vistoria inválida.');
     return {spanId:x.spanId,start:x.start,end:x.end};
    });
-   const visit={id,routeId,actor,startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),day:CampoRoutes.day(end),trackMetres:Math.round(Math.max(0,Math.min(1000000,Number(input.trackMetres)||0))),ranges,reason:CampoRoutes.text(input.reason,480)};
+   const visit={id,routeId,actor,startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),day:CampoRoutes.day(end),trackMetres:Math.round(Math.max(0,Math.min(1000000,Number(input.trackMetres)||0))),ranges,reason:CampoRoutes.text(input.reason,480),...(input.keyCheck?{keyCheck:input.keyCheck}:{})};
    if(!ranges.length&&!visit.reason)throw sharedError('Informe por que a rota foi encerrada sem cobertura.');
-   await db.prepare('INSERT OR IGNORE INTO campo_route_visits(id,route_id,actor,data,received_at) VALUES(?,?,?,?,?)').bind(id,routeId,actor,JSON.stringify(visit),now).run();
+   const result=await db.prepare("INSERT OR IGNORE INTO campo_route_visits(id,route_id,actor,data,received_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_routes WHERE id=? AND json_extract(data,'$.deletedAt') IS NULL) AND NOT EXISTS(SELECT 1 FROM campo_route_returns WHERE scope_id=?)").bind(id,routeId,actor,JSON.stringify(visit),now,routeId,route.campaign?.id||route.id).run();
    const row=await db.prepare('SELECT data,received_at FROM campo_route_visits WHERE id=? AND actor=?').bind(id,actor).first();
-   if(row?.data!==JSON.stringify(visit))throw sharedError('O identificador já pertence a outra vistoria.',409);
+   if(row?.data!==JSON.stringify(visit))throw sharedError('A rota mudou antes de confirmar a vistoria ou o identificador já foi usado.',409);
+   if(result.meta?.changes)await realtimePublish(env,'route-visit');
    return json({visit:{...visit,receivedAt:row.received_at}});
   }
   throw sharedError('Operação não permitida.',403);
@@ -635,7 +783,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
- if(['/api/routes','/api/routes/visit','/api/routes/return','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
+ if(['/api/routes','/api/routes/visit','/api/routes/return','/api/routes/homologacao','/api/routes/saida','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname==='/api/ciclo-poda')return cicloPodaAPI(request,env);
@@ -1548,50 +1696,44 @@ async function gerencialAudit(request,env,admin){
 function gerencialActiveField(record){
  return !record.archiveCleanupPending&&record.adminClassification!=='homologacao';
 }
-function gerencialFieldRow(r){
- return {
-  id:r.id, species:r.species||'', feeder:r.feeder||'', inspector:r.collectionInspector||r.inspector||'',
-  pole:r.pole||'', span:r.span||'', key:r.key||r.chave||'', position:r.position||'', os:r.os||'',
-  lat:r.lat, lon:r.lon, height:r.height, dap:r.dap, circ:r.circ, poda:r.poda||'', grouped:r.grouped||'',
-  identification:CampoInspectionRules.identificationPending(r), photos:(r.photos||[]).filter(p=>p.assetId).length,
-  day:controlDay(r.createdAt), seconds:r.inspectionTiming?.collectionSeconds, mtDistance:r.mtDistance, btDistance:r.btDistance
- };
+function gerencialName(value){
+ return String(value||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').trim().toLowerCase();
 }
-function gerencialRiskRow(tree){
- const keys=['id','campoId','origem','especies','alimentador','chave','trecho','lat','lon','altura','dap','distRede','poste','vao','classe','prioridade','clientes','verificacao','acao','ano','poda'];
- const row=Object.fromEntries(keys.map(key=>[key,tree[key]]));
- return {...row,day:gerencialVeraDay(tree.data),photo:tree.origem==='Campo (prévia)'?Boolean(tree.photoAsset):true};
+async function gerencialInspectors(db){
+ const [setting,users]=await Promise.all([
+  db.prepare('SELECT inspector_ids FROM campo_gerencial_vitrine WHERE id=1').first(),
+  db.prepare("SELECT id,name FROM campo_users u WHERE role='inspector' AND blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle l WHERE l.user_id=u.id)").all()
+ ]);
+ const accounts=users.results;
+ const defaults=['herlen','lucivaldo'].flatMap(name=>{
+  const matches=accounts.filter(account=>gerencialName(account.name).split(/\s+/)[0]===name);
+  return matches.length===1?[matches[0].id]:[];
+ });
+ const ids=new Set(setting?JSON.parse(setting.inspector_ids):defaults);
+ return {accounts,enabled:accounts.filter(account=>ids.has(account.id))};
 }
-function gerencialVeraDay(value){
- const text=String(value||'').trim();
- const br=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
- if(br)return br[3]+'-'+br[2].padStart(2,'0')+'-'+br[1].padStart(2,'0');
- return /^\d{4}-\d{2}-\d{2}/.test(text)?text.slice(0,10):'';
+async function gerencialSelection(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=await adminDb(env),scope=await gerencialInspectors(db);
+ if(request.method==='GET')return json(scope);
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const {ids}=await sharedBody(request,12000);
+ if(!Array.isArray(ids)||ids.length>100||new Set(ids).size!==ids.length||ids.some(id=>!scope.accounts.some(account=>account.id===id)))throw sharedError('Selecione contas ativas de inspetores.');
+ await db.prepare('INSERT INTO campo_gerencial_vitrine(id,inspector_ids) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET inspector_ids=excluded.inspector_ids').bind(JSON.stringify(ids)).run();
+ return json({enabled:scope.accounts.filter(account=>ids.includes(account.id))});
 }
-async function gerencialVera(db){
- try{
-  const meta=await veraMeta(db);
-  const generation=meta.generation||null;
-  const [{results},reviews]=await Promise.all([
-   generation?db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]},
-   veraReviews(db)
-  ]);
-  return {available:Boolean(generation),trees:results.map(row=>JSON.parse(row.data)),reference:meta.referencia?JSON.parse(meta.referencia):null,reviews:new Map(reviews.map(review=>[review.tree_id,review]))};
- }catch(error){
-  if(veraMissingTable(error))return {available:false,trees:[],reference:null,reviews:new Map()};
-  throw error;
- }
-}
-async function gerencialRouteSource(db){
+async function gerencialRouteSource(db,enabled){
+ if(!enabled.length)return {routes:[],visits:[]};
+ const scope=JSON.stringify(enabled.map(account=>account.id));
  try{
   const [plans,visits,returns]=await Promise.all([
-   db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC').all(),
-   db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at').all(),
-   db.prepare('SELECT scope_id FROM campo_route_returns').all()
+   db.prepare('SELECT data FROM campo_routes WHERE assignee IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC').bind(scope).all(),
+   db.prepare('SELECT v.data,v.received_at FROM campo_routes r JOIN campo_route_visits v ON v.route_id=r.id WHERE r.assignee IN (SELECT value FROM json_each(?)) ORDER BY v.received_at').bind(scope).all(),
+   db.prepare('SELECT scope_id,data FROM campo_route_returns WHERE assignee IN (SELECT value FROM json_each(?))').bind(scope).all()
   ]);
-  const returned=new Set(returns.results.map(row=>row.scope_id));
+  const returned=new Map(returns.results.map(row=>[row.scope_id,JSON.parse(row.data)]));
   return {
-   routes:visibleRoutes(plans.results.map(row=>JSON.parse(row.data))).filter(route=>!returned.has(route.campaign?.id||route.id)),
+   routes:visibleRoutes(plans.results.map(row=>JSON.parse(row.data)).filter(route=>!route.deletedAt)).filter(route=>!routeIsTest({...route,returned:returned.get(route.campaign?.id||route.id)})),
    visits:visits.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at}))
   };
  }catch(error){
@@ -1601,52 +1743,56 @@ async function gerencialRouteSource(db){
 }
 async function gerencialData(env){
  const db=await adminDb(env);
- const [data,vera,links,routeSource]=await Promise.all([
-  controlUniverse(env),gerencialVera(db),
-  db.prepare('SELECT source_id FROM shared_merges').all(),
-  gerencialRouteSource(db)
- ]);
- const field=data.records.filter(gerencialActiveField);
- const live=field.map(row=>CampoParqueRegistros.liveTree(veraLiveRecord(row,vera.reviews.get(row.id)),vera.reference));
- const base=vera.trees.map(tree=>({...tree,origem:tree.fonte||'Base VERA'}));
- const park=CampoParqueRegistros.merge(base,live,new Set(links.results.map(row=>row.source_id)),vera.reference);
- const routes=CampoRoutes.campaignParts(routeSource.routes).map(parts=>{
-  const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+ const [{enabled},data]=await Promise.all([gerencialInspectors(db),controlUniverse(env)]);
+ const source=await gerencialRouteSource(db,enabled);
+ const byId=new Map(enabled.map(account=>[account.id,account]));
+ const byName=new Map(enabled.map(account=>[gerencialName(account.name),account]));
+ const field=data.records.filter(gerencialActiveField).flatMap(r=>{
+  const name=gerencialName(r.collectionInspector||r.inspector);
+  const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(name);
+  if(!operator)return [];
+  return [{
+   inspector:operator.name,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
+   poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
+   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0
+  }];
+ });
+ const routes=gerencialCampaigns(source,byId).map(parts=>{
+  const route=parts[0],id=route.campaign?.id||route.id,spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+  const visits=source.visits.filter(visit=>ids.has(visit.routeId)),planned=CampoRoutes.metres(spans),cover=CampoRoutes.coverage(spans,visits);
+  const keys=CampoRoutes.keySections(spans,route.outlet),closed=keys.filter(section=>CampoRoutes.keyProgress(section,cover.bySpan).every(segment=>segment.closed));
   return {
-   inspector:route.operator,
-   daily:CampoRoutes.dailyCoverage(spans,routeSource.visits.filter(visit=>ids.has(visit.routeId))),
-   targets:CampoRoutes.schedule(route.plan,CampoRoutes.metres(spans))
+   id,name:route.campaign?.name||route.name,inspector:byId.get(route.assignee).name,feeder:route.feeder,
+   planned,confirmed:cover.metres,pending:Math.max(0,planned-cover.metres),keys:keys.length,closed:closed.length,
+   daily:CampoRoutes.dailyCoverage(spans,visits),targets:CampoRoutes.schedule(route.plan,planned)
   };
  });
- return json({
-  field:field.map(gerencialFieldRow),park:park.map(gerencialRiskRow),routes,
-  veraAvailable:vera.available,archiveAvailable:data.archive.available,updatedAt:data.generatedAt
- });
+ return json({field,routes,inspectors:enabled.map(account=>account.name),archiveAvailable:data.archive.available,updatedAt:data.generatedAt});
 }
-async function gerencialPhoto(request,env){
- const params=new URL(request.url).searchParams,id=params.get('id'),source=params.get('source'),db=await adminDb(env);
- if(!sharedId(id))throw sharedError('Foto inválida.');
- if(source==='vera'){
-  const meta=await veraMeta(db);
-  const current=await db.prepare('SELECT id FROM vera_trees WHERE generation=? AND id=?').bind(meta.generation||'',id).first();
-  const merged=await db.prepare('SELECT source_id FROM shared_merges WHERE source_id=?').bind('vera-'+id).first();
-  if(!current||merged)throw sharedError('Foto indisponível.',404);
-  return veraField(new URL('/api/vera/field-photo?id='+encodeURIComponent(id),'https://campo-internal'),db);
- }
- const index=Number(params.get('index')||0);
- if(source!=='campo'||!Number.isSafeInteger(index)||index<0)throw sharedError('Foto inválida.');
- const row=await sharedRead(db,id);
- const label=await db.prepare('SELECT classification FROM campo_record_labels WHERE tree_id=?').bind(id).first();
- if(!row||row.deleted||label?.classification==='homologacao')throw sharedError('Foto indisponível.',404);
- const photo=(JSON.parse(row.data).photos||[]).filter(item=>item.assetId)[index];
- if(!photo)throw sharedError('Foto indisponível.',404);
- const link=await db.prepare('SELECT image FROM shared_photos WHERE tree_id=? AND asset_id=?').bind(id,photo.assetId).first();
- if(!link)throw sharedError('Foto indisponível.',404);
- return json({image:link.image});
+function gerencialCampaigns(source,byId){
+ return CampoRoutes.campaignParts(source.routes.filter(route=>byId.has(route.assignee)));
+}
+async function gerencialRouteMap(request,env){
+ const id=new URL(request.url).searchParams.get('id');
+ if(!CampoRoutes.identifier(id))throw sharedError('Rota inválida.');
+ const db=await adminDb(env),{enabled}=await gerencialInspectors(db);
+ const source=await gerencialRouteSource(db,enabled);
+ const byId=new Map(enabled.map(account=>[account.id,account]));
+ const parts=gerencialCampaigns(source,byId).find(group=>(group[0].campaign?.id||group[0].id)===id);
+ if(!parts)throw sharedError('Rota indisponível.',404);
+ const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+ const cover=CampoRoutes.coverage(spans,source.visits.filter(visit=>ids.has(visit.routeId)));
+ const lines=CampoRoutes.mapLines(spans,cover.bySpan);
+ const keys=CampoRoutes.keySections(spans,route.outlet).map(section=>({
+  code:section.code,point:section.segments[0].start,
+  pending:CampoRoutes.keyProgress(section,cover.bySpan).filter(segment=>!segment.closed).length
+ }));
+ return json({lines,keys,outlet:route.outlet});
 }
 async function gerencialAPI(request,env,path,admin){
  try{
   if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
+  if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
   const settings=gerencialSettings(env);
   if(path==='/api/gerencial/entrar'&&request.method==='GET')return await gerencialLogin(request,env,settings);
   const viewer=await gerencialSession(request,env,settings);
@@ -1660,7 +1806,7 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),email:viewer?.email||null,available:Boolean(settings)});
   if(!viewer&&!admin)throw sharedError('Entre com seu e-mail corporativo.',401);
   if(path==='/api/gerencial/dados')return await gerencialData(env);
-  if(path==='/api/gerencial/foto')return await gerencialPhoto(request,env);
+  if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
   return json({error:'Consulta não encontrada.'},404);
  }catch(error){
   if(path==='/api/gerencial/entrar')return gerencialRedirect('indisponivel');
@@ -1696,7 +1842,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
- if(path.startsWith('/api/gerencial/')||path==='/api/admin/gerencial/acessos'){
+ if(path.startsWith('/api/gerencial/')||path.startsWith('/api/admin/gerencial/')){
   const admin=bootstrapAdmin||identity?.user.role==='admin';
   const result=await gerencialAPI(request,env,path,admin);
   for(const [key,value] of Object.entries(cors))result.headers.set(key,value);

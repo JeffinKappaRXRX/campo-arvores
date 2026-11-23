@@ -6,3 +6,8 @@ CREATE TABLE IF NOT EXISTS campo_gerencial_acessos (
   token_hash TEXT UNIQUE,
   saiu_em TEXT
 );
+
+CREATE TABLE IF NOT EXISTS campo_gerencial_vitrine (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  inspector_ids TEXT NOT NULL
+);

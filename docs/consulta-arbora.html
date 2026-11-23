@@ -26,7 +26,7 @@
   </header>
   <main class="shell">
     <section class="intro">
-      <div><h1>Inspeções e cadastros</h1><p>Consulta gerencial da vegetação na rede de distribuição.</p></div>
+      <div><h1>Inspeções e cadastros</h1><p>Produtividade dos inspetores e cobertura das rotas de vegetação.</p></div>
       <span id="updated"></span>
     </section>
     <section class="panel login" id="login">
@@ -36,44 +36,18 @@
     </section>
     <div id="workspace" hidden>
       <nav class="section-nav" aria-label="Seções da consulta">
-        <a href="#mapPanel">Mapa</a><a href="#listPanel">Árvores e cadastros</a><a href="#productivity">Produtividade</a><a href="#routesPanel">Rotas</a>
+        <a href="#productivity">Produtividade</a><a href="#routesPanel">Rotas e cobertura</a>
       </nav>
       <form class="panel" id="filters">
         <div class="panel-head"><h2>Filtros</h2><button type="reset">Limpar filtros</button></div>
         <div class="filter-grid">
           <label>De<input type="date" name="from"></label>
           <label>Até<input type="date" name="to"></label>
-          <label>Origem<select name="source"><option value="">Todas</option><option value="campo">Novos cadastros de campo</option><option value="vera">Levantamento VERA</option></select></label>
-          <div id="filterInspector"></div>
-          <div id="filterFeeder"></div>
-          <div id="filterSection"></div>
-          <div id="filterRisk"></div>
-          <label>Necessidade de poda<select name="pruning"><option value="">Todas</option><option value="sim">Sim</option><option value="nao">Não</option></select></label>
-          <label class="wide">Chaves<input name="keys" type="search" placeholder="RBR554, RBR444" maxlength="3000"></label>
-          <label class="wide">Buscar<input name="query" type="search" placeholder="Espécie, poste, vão, alimentador, ID ou OS"></label>
+          <label>Inspetor<select name="inspector"><option value="">Todos</option></select></label>
         </div>
         <p id="dataStatus" role="status"></p>
       </form>
       <div id="metrics" class="metrics"></div>
-      <section class="panel map-panel" id="mapPanel">
-        <div class="panel-head stack-small">
-          <div><h2>Mapa de vegetação</h2><p id="mapCount" aria-live="polite"></p></div>
-          <div class="actions">
-            <label class="inline">Fundo<select id="basemap"><option value="street">Ruas</option><option value="satellite">Satélite</option></select></label>
-            <button type="button" id="fit">Enquadrar filtro</button>
-          </div>
-        </div>
-        <div id="map" aria-label="Mapa de árvores e inspeções"></div>
-        <div id="legend" class="legend"></div>
-      </section>
-      <section class="panel" id="listPanel">
-        <div class="panel-head stack-small">
-          <div><h2>Árvores e cadastros</h2><p id="listCount"></p></div>
-          <label class="inline">Ordenar por<select id="sort"><option value="risk">Maior prioridade</option><option value="date">Mais recentes</option><option value="species">Espécie</option></select></label>
-        </div>
-        <div id="records" class="table-wrap"></div>
-        <div class="pagination"><button id="previous" type="button">Anterior</button><span id="pageStatus" role="status"></span><button id="next" type="button">Próxima</button></div>
-      </section>
       <section id="productivity" class="analysis-grid">
         <article class="panel">
           <div class="panel-head"><h2>Cadastros por dia</h2><span>Até 31 dias com registro</span></div>
@@ -92,19 +66,20 @@
         <article class="panel full">
           <h2>Produtividade por inspetor</h2>
           <div id="inspectors" class="table-wrap"></div>
+          <h3>Cadastros por alimentador</h3><div id="feedersKpi" class="table-wrap"></div>
         </article>
       </section>
       <section class="panel" id="routesPanel">
         <h2>KPI de rotas por inspetor</h2>
-        <p>Indicadores de rotas usam os filtros de período e inspetor.</p>
+        <p>O cumprimento compara a rede vistoriada com a meta do período selecionado.</p>
         <div id="routes" class="table-wrap"></div>
+        <h3>Mapa por rota</h3>
+        <label>Selecione uma rota<select id="routeSelect"><option value="">Selecione</option></select></label>
+        <p id="routeMapStatus" role="status"></p>
+        <div id="map" aria-label="Mapa de cobertura da rota" hidden></div>
+        <div id="legend" class="legend" hidden><span><i style="background:#168756"></i>Vistoriado</span><span><i style="background:#ee344a"></i>Pendente</span><span><i style="background:#255fa5"></i>Saída da subestação</span></div>
       </section>
     </div>
   </main>
-  <dialog id="details">
-    <div class="panel-head"><h2 id="detailsTitle"></h2><form method="dialog"><button>Fechar</button></form></div>
-    <div id="detailsBody"></div>
-    <div id="photo"></div>
-  </dialog>
 </body>
 </html>
