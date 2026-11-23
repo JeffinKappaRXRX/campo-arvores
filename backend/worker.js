@@ -322,6 +322,46 @@ const CampoRoutes=(()=>{
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
+'use strict';
+// Mesma fórmula de risco da análise VERA (analise_vera.py), para as inspeções novas do campo.
+// tests/gestao-risco.cjs compara o resultado com o Python; qualquer mudança aqui precisa ser igual lá.
+(()=>{
+ const H_MT=9,H_BT=7,ESBELTEZ=80,FRAGEIS=['EUCALIPTO','EMBAÚBA','EMBAUBA','LEUCENA','BAMBU','BAMBÚ','PINHEIRO','PINUS','ACÁCIA','FLAMBOYANT','PAU-DE-BALSA','PAU DE BALSA','GUAPURUVU'],ALERTA=/crítico|inclinad|mort|decepad/i,PESO={T1:1,T2:.8},SOBE={'MÉDIO':'ALTO','BAIXO':'MÉDIO','SEM RISCO':'MÉDIO'};
+ const rede=v=>{const n=num(v);return n<0?NaN:n;},num=v=>{if(v===null||v===undefined||v==='')return NaN;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:NaN;};
+ const round=(v,d)=>{const f=10**d;return Math.round(v*f)/f;};
+ // Entrada: altura, distâncias (m), DAP (cm), espécie, alerta, projeção, clientes, trecho, vendaval, clientesMax.
+ function calcular(a){let h=num(a.altura);if(h<=0)h=NaN;if(h>40)h=round(h/10,1);const dmt=rede(a.distMT),dbt=rede(a.distBT),raio=Number.isFinite(h)?Math.min(6,Math.max(1.5,.25*h)):NaN;let d=num(a.distRede);if(!Number.isFinite(d)){const base=Number.isFinite(dmt)?dmt:Number.isFinite(dbt)?dbt:1;d=base+raio;}
+  const alcanca=(alt)=>Number.isFinite(h)&&Number.isFinite(d)&&h*h>=d*d+alt*alt,alcancaMT=alcanca(H_MT),alcancaBT=alcanca(H_BT),copa=dmt<=.5||dbt<=.3;
+  const dap=num(a.dap),altaFina=Boolean(a.dapMedido)&&dap>0&&Number.isFinite(h)&&h/(dap/100)>=ESBELTEZ,especie=String(a.especie||'').toUpperCase(),fragil=FRAGEIS.some(e=>especie.includes(e)),alerta=ALERTA.test(String(a.alerta||''));
+  const prob=Math.max(0,Math.min(100,(alcancaMT?40:0)+(!alcancaMT&&alcancaBT?25:0)+(copa?20:0)+(dmt>.5&&dmt<=1.5?10:0)+(altaFina?15:0)+(fragil?10:0)+(h>=15?10:0)+(alerta?15:0)+(a.projecao==='SIM'?10:0)));
+  const clientes=num(a.clientes)||0,maximo=Math.max(num(a.clientesMax)||0,1);let impacto=Math.sqrt(clientes/maximo)*(PESO[a.trecho]??.6)*(a.vendaval==='Sim'?1.15:1);impacto=round(Math.max(0,Math.min(1,impacto)),3);
+  const prioridade=round(prob*(.4+.6*impacto),1),real=alcancaMT||alcancaBT||copa,calculada=!real?'SEM RISCO':prioridade>=60?'CRÍTICO':prioridade>=40?'ALTO':prioridade>=25?'MÉDIO':'BAIXO',forte=calculada==='CRÍTICO'||calculada==='ALTO';
+  // Foto que não sustenta manda revisar em campo; foto que confirma sobe um nível.
+  let classe=calculada;if(a.verificacao==='NÃO CONFIRMADA'&&forte)classe='REVISAR EM CAMPO';else if(a.verificacao==='CONFIRMADA'&&a.elevar!==false)classe=SOBE[calculada]||calculada;
+  let acao=real?'Monitorar no ciclo':'Sem ação';if(classe==='CRÍTICO'||classe==='ALTO'){if(forte&&alcancaMT&&(altaFina||fragil||ALERTA.test(String(a.obsAcao??a.alerta??''))||h>=15))acao='Supressão (com compensação SEMEIA)';else acao=copa||alcancaMT?'Poda de redução/afastamento':'Poda de limpeza';}
+  const motivo=[];if(alcancaMT)motivo.push('alcança a MT se cair ('+h+' m a '+round(d,1)+' m da rede)');else if(alcancaBT)motivo.push('alcança a BT se cair ('+h+' m)');if(copa)motivo.push('copa encostada na rede');if(altaFina)motivo.push('alta e fina');if(fragil)motivo.push('espécie de queda/quebra frequente');if(alerta)motivo.push('alerta na observação do campo');
+  return {classeCalculada:calculada,altura:Number.isFinite(h)?h:null,distRede:Number.isFinite(d)?round(d,1):null,prob,impacto,prioridade,classe,acao,alcancaMT:alcancaMT?'SIM':'NÃO',motivo:motivo.join('; ')};}
+ const plain=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
+ const nomes=s=>plain(s).split(/[,;/]/).map(x=>x.trim()).filter(Boolean);
+ const metros=(a,b)=>{const y=(a.lat-b.lat)*111320,x=(a.lon-b.lon)*111320*Math.cos(a.lat*Math.PI/180);return Math.hypot(x,y);};
+ // Possível duplicata: mesma espécie a poucos metros. Árvores diferentes lado a lado não são marcadas.
+ function duplicatas(novas,base,limite=15){const cell=.0005,grid=new Map(),key=(la,lo)=>Math.floor(la/cell)+':'+Math.floor(lo/cell);for(const b of base)for(const p of b.pontos){const k=key(p.lat,p.lon);if(!grid.has(k))grid.set(k,[]);grid.get(k).push({...p,id:b.id,especies:nomes(b.especies)});}
+  const out=new Map();for(const n of novas){if(!Number.isFinite(n.lat)||!Number.isFinite(n.lon))continue;const esp=nomes(n.especies),ci=Math.floor(n.lat/cell),cj=Math.floor(n.lon/cell);let melhor=null;for(let i=ci-1;i<=ci+1;i++)for(let j=cj-1;j<=cj+1;j++)for(const c of grid.get(i+':'+j)||[]){if(c.id===n.id||!c.especies.some(e=>esp.includes(e)))continue;const m=metros(n,c);if(m<=limite&&(!melhor||m<melhor.m))melhor={id:c.id,m:Math.round(m)};}if(melhor)out.set(n.id,melhor);}return out;}
+ const api={calcular,duplicatas};if(typeof module!=='undefined')module.exports=api;globalThis.CampoRisco=api;if(typeof window!=='undefined')window.CampoRisco=api;
+})();
+
+/* Regras compartilhadas pelo parque administrativo e pela consulta gerencial. */
+globalThis.CampoParqueRegistros=(()=>{
+ const CAMPO='Campo (prévia)',riscoCore=globalThis.CampoRisco;
+ const position=t=>Number.isFinite(Number(t.lat))&&Number.isFinite(Number(t.lon))&&t.lat!==null&&t.lat!=='';
+ function liveTree(r,referencia){const year=Date.parse(r.createdAt),info=referencia?.alimentadores?.[r.feeder]||{},lat=Number(r.lat),lon=Number(r.lon),dap=Number(r.dap)>0?Number(r.dap):Number(r.circ)>0?Number(r.circ)/Math.PI:null,risco=riscoCore.calcular({altura:r.height,distMT:r.mtDistance,distBT:r.btDistance,dap,dapMedido:dap!==null,especie:r.species,alerta:r.note,verificacao:r.review?.verificacao,projecao:/proje|abaixo/i.test(r.position)?'SIM':'',clientes:info.clientes||0,trecho:info.trecho,vendaval:info.vendaval,clientesMax:referencia?.clientesMax});return {...risco,raw:r,qtd:r.count,photoAsset:r.photoAsset,conferencia:r.review,id:r.id,origem:CAMPO,ano:Number.isFinite(year)?new Date(year).getFullYear():'',especies:r.species,poste:r.pole,vao:r.span,alimentador:r.feeder,trecho:info.trecho||'',clientes:info.clientes||0,clientesEstimado:true,semReferencia:!referencia?.alimentadores?.[r.feeder],verificacao:r.review?.verificacao||'NÃO CONFERIDA',dap,origemDap:dap===null?'Sem medição':'Medido em campo',lat:Number.isFinite(lat)&&r.lat!==null&&r.lat!==''?lat:null,lon:Number.isFinite(lon)&&r.lon!==null&&r.lon!==''?lon:null,data:Number.isFinite(year)?new Date(year).toLocaleDateString('pt-BR',{timeZone:'America/Rio_Branco'}):'',obsFoto:r.review?.obs||r.note};}
+ const originalPoint=t=>{const m=/(-?\d+[.,]\d+)\s*;\s*(-?\d+[.,]\d+)/.exec(String(t.coordOriginal||''));return m?{lat:Number(m[1].replace(',','.')),lon:Number(m[2].replace(',','.'))}:null;};
+ const baseId=id=>id.startsWith('vera-')?id.slice(5):'';
+ function comCampo(b,t,referencia){const r=t.raw,valor=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v)),distMT=r.mt&&valor(r.mtDistance)?r.mtDistance:null,distBT=r.bt&&valor(r.btDistance)?r.btDistance:null,medida=distMT!==null||distBT!==null,verificacao=r.review?.verificacao||(['NÃO CONFIRMADA','SEM PROJEÇÃO NA FOTO'].includes(b.verificacao)?'NÃO CONFERIDA':b.verificacao),original=String(b.observacao||''),texto=String(r.note||''),nota=original&&texto.startsWith(original)?texto.slice(original.length).replace(/^[\s;,.-]+/,''):texto,ano=Number(b.ano),dapNovo=t.dap!==null&&!(Number(b.dap)>0&&Math.abs(t.dap-Number(b.dap))<.06),dap=dapNovo?t.dap:b.dap,dapMedido=dapNovo||!/^(Média|Sem)/.test(b.origemDap||''),especie=r.species||(b.especieConf?'':b.especies),projecao=r.projection==='sim'?'SIM':r.projection==='nao'?'':b.projecao==='SIM'?'SIM':'',risco=riscoCore.calcular({altura:valor(r.height)?r.height:b.altura,distMT,distBT,distRede:medida?null:b.distRede,dap,dapMedido,especie,alerta:ano===2026?[b.obsFoto,nota].filter(Boolean).join('; '):nota,obsAcao:[b.obsFoto,nota,r.review?.obs].filter(Boolean).join('; '),verificacao,elevar:ano===2025,projecao,clientes:b.clientes,trecho:b.trecho,vendaval:b.vendaval,clientesMax:referencia?.clientesMax});return {...b,...risco,campoId:t.id,raw:r,conferencia:r.review,photoAsset:r.photoAsset,especies:r.species||b.especies,especieConf:r.species?'':b.especieConf,dap,origemDap:dapNovo?'Medido em campo (app)':b.origemDap,lat:t.lat??b.lat,lon:t.lon??b.lon,poste:r.pole||b.poste,vao:r.span||b.vao,alimentador:r.feeder||b.alimentador,verificacao,obsFoto:r.review?.obs||nota||b.obsFoto,atualizadoEm:r.updatedAt,atualizadoPor:r.actor};}
+ function merge(base,live,mergedIds,referencia){const activeBase=base.filter(t=>!mergedIds.has('vera-'+t.id)),ids=new Set(activeBase.map(t=>t.id)),campo=new Map(live.filter(t=>ids.has(baseId(t.id))).map(t=>[baseId(t.id),t])),novas=live.filter(t=>!ids.has(baseId(t.id))),atual=activeBase.map(b=>campo.has(b.id)?comCampo(b,campo.get(b.id),referencia):b),pool=[...atual.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:Number(t.lat),lon:Number(t.lon)},originalPoint(t)].filter(Boolean)})),...novas.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:t.lat,lon:t.lon}]}))],found=riscoCore.duplicatas(novas,pool);for(const t of novas){const d=found.get(t.id);t.duplicataDe=d?.id;t.duplicataM=d?.m;t.duplicata=d?'Sim':'';}return [...atual,...novas];}
+ return {liveTree,merge};
+})();
+
 const ROUTE_REFERENCE_KEY='arbora:mt-reference:2026-08-03';
 async function routeReference(request,env,admin){
  if(!admin)throw sharedError('Complemento de rede restrito à gestão.',403);
@@ -973,7 +1013,7 @@ async function controlInventory(env,force=false){
  if(!force&&state.expires>now)return state;
  state.promise=(async()=>{try{state.inventory=await adminArchiveInventory(env);state.at=Date.now();state.error='';state.expires=state.at+60000;}catch(e){state.error=e.message;state.expires=Date.now()+30000;}finally{state.promise=null;}return state;})();return state.promise;
 }
-function controlDay(v){const date=Date.parse(v);return Number.isFinite(date)?new Date(date-5*3600000).toISOString().slice(0,10):'';}
+function controlDay(v){if(/^\d{4}-\d{2}-\d{2}$/.test(v))return v;const date=Date.parse(v);return Number.isFinite(date)?new Date(date-5*3600000).toISOString().slice(0,10):'';}
 function controlFilters(params){
  const f=Object.fromEntries(['month','day','q'].map(k=>[k,(params.get(k)||'').trim()]));for(const k of ['inspector','feeder','classification','state'])f[k]=[...new Set(params.getAll(k).map(v=>v.trim()).filter(Boolean))];
  if(f.month&&!/^\d{4}-\d{2}$/.test(f.month)||f.day&&!/^\d{4}-\d{2}-\d{2}$/.test(f.day)||Object.values(f).flat().some(v=>v.length>200)||[f.inspector,f.feeder].some(l=>l.length>200)||f.classification.some(v=>!['producao','homologacao','unknown'].includes(v))||f.state.some(v=>!['missing','identification','poda','request'].includes(v)))throw sharedError('Filtro inválido.');return f;
@@ -1009,7 +1049,7 @@ async function controlAPI(request,env){try{
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
  if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
  if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
- if(p==='/api/control/map'){const data=await controlLiveUniverse(env),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
+ if(p==='/api/control/map'){const data=await (u.searchParams.get('archive')==='1'?controlUniverse(env):controlLiveUniverse(env)),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
  let data=p==='/api/control/tree'?await controlLiveUniverse(env):await controlUniverse(env,u.searchParams.get('refresh')==='1');
  if(p==='/api/control/tree'&&!data.records.some(r=>r.id===u.searchParams.get('id')))data=await controlUniverse(env);
@@ -1421,6 +1461,213 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  return json({ok:true,status:decision});
 }
 
+// The viewer session is independent of the inspector and administrator sessions.
+const GERENCIAL_COOKIE='__Host-arbora-gerencial';
+const GERENCIAL_PAGE='/consulta-arbora.html';
+const GERENCIAL_TTL=8*3600;
+let gerencialKeys;
+
+function gerencialSettings(env){
+ const issuer=String(env.GERENCIAL_ACCESS_ISSUER||'');
+ const audience=String(env.GERENCIAL_ACCESS_AUD||'');
+ const domains=new Set(String(env.GERENCIAL_EMAIL_DOMAINS||'energisa.com.br').toLowerCase().split(',').map(domain=>domain.trim()).filter(Boolean));
+ if(!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(issuer)||!audience)return null;
+ return {issuer,audience,domains};
+}
+function gerencialEmail(value,settings){
+ const email=String(value||'').trim().toLowerCase();
+ const parts=/^[^\s@]+@([a-z0-9.-]+)$/.exec(email);
+ return email.length<=254&&parts&&email.includes('energisa')&&settings?.domains.has(parts[1])?email:null;
+}
+async function gerencialAccessIdentity(assertion,settings){
+ if(!assertion||assertion.length>8192)return null;
+ let header,payload,signature,signed;
+ try{
+  const parts=assertion.split('.');
+  if(parts.length!==3||parts.some(part=>!(/^[A-Za-z0-9_-]+$/).test(part)))return null;
+  const decoder=new TextDecoder();
+  header=JSON.parse(decoder.decode(unb64(parts[0])));
+  payload=JSON.parse(decoder.decode(unb64(parts[1])));
+  signature=unb64(parts[2]);
+  signed=encoder.encode(parts[0]+'.'+parts[1]);
+ }catch{return null;}
+ const now=Date.now()/1000;
+ if(header?.alg!=='RS256'||typeof header.kid!=='string'||payload?.iss!==settings.issuer||payload.type!=='app'
+  ||!Array.isArray(payload.aud)||!payload.aud.includes(settings.audience)||!Number.isFinite(payload.exp)||payload.exp<=now
+  ||(payload.nbf!==undefined&&(!Number.isFinite(payload.nbf)||payload.nbf>now)))return null;
+ const email=gerencialEmail(payload.email,settings);
+ if(!email)return null;
+ const cache=gerencialKeys;
+ if(cache?.issuer!==settings.issuer||cache.until<=Date.now()||(!cache.keys.has(header.kid)&&cache.fetchedAt+30000<=Date.now())){
+  const response=await fetch(settings.issuer+'/cdn-cgi/access/certs',{redirect:'error',signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw sharedError('A verificação de e-mail está temporariamente indisponível.',503);
+  const {keys}=await response.json();
+  gerencialKeys={issuer:settings.issuer,fetchedAt:Date.now(),until:Date.now()+300000,keys:new Map(keys.map(key=>[key.kid,key]))};
+ }
+ const jwk=gerencialKeys.keys.get(header.kid);
+ if(!jwk)return null;
+ const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
+ if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,signature,signed))return null;
+ return {email,expiresAt:payload.exp*1000};
+}
+async function gerencialSession(request,env,settings){
+ const token=authCookie(request,GERENCIAL_COOKIE);
+ if(!settings||!(/^[A-Za-z0-9_-]{43}$/).test(token))return null;
+ const hash=await authHash(token);
+ const row=await authDB(env).prepare('SELECT email,expira_em FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
+ return gerencialEmail(row?.email,settings)?{email:row.email,hash}:null;
+}
+function gerencialRedirect(error,token,seconds){
+ const headers=new Headers({Location:GERENCIAL_PAGE+(error?'?acesso='+error:''),'Cache-Control':'no-store'});
+ if(token)headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,seconds));
+ return new Response(null,{status:303,headers});
+}
+async function gerencialLogin(request,env,settings){
+ if(!settings)return gerencialRedirect('indisponivel');
+ const verified=await gerencialAccessIdentity(request.headers.get('Cf-Access-Jwt-Assertion'),settings);
+ if(!verified)return gerencialRedirect('email');
+ const current=await gerencialSession(request,env,settings);
+ if(current?.email===verified.email)return gerencialRedirect();
+ const now=Date.now(),seconds=Math.min(GERENCIAL_TTL,Math.floor((verified.expiresAt-now)/1000));
+ if(seconds<1)return gerencialRedirect('email');
+ const db=authDB(env),token=authRandom(),hash=await authHash(token),stamp=new Date(now).toISOString();
+ const queries=[db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) VALUES(?,?,?,?)').bind(verified.email,stamp,now+seconds*1000,hash)];
+ if(current)queries.push(db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(stamp,current.hash));
+ await db.batch(queries);
+ return gerencialRedirect(null,token,seconds);
+}
+async function gerencialAudit(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const raw=new URL(request.url).searchParams.get('before');
+ const before=raw===null?Number.MAX_SAFE_INTEGER:Number(raw);
+ if(!Number.isSafeInteger(before)||before<=0)throw sharedError('Página inválida.');
+ const {results}=await authDB(env).prepare('SELECT id,email,entrou_em,saiu_em FROM campo_gerencial_acessos WHERE id<? ORDER BY id DESC LIMIT 51').bind(before).all();
+ const items=results.slice(0,50);
+ return json({items,next:results.length>50?items.at(-1).id:null});
+}
+function gerencialActiveField(record){
+ return !record.archiveCleanupPending&&record.adminClassification!=='homologacao';
+}
+function gerencialFieldRow(r){
+ return {
+  id:r.id, species:r.species||'', feeder:r.feeder||'', inspector:r.collectionInspector||r.inspector||'',
+  pole:r.pole||'', span:r.span||'', key:r.key||r.chave||'', position:r.position||'', os:r.os||'',
+  lat:r.lat, lon:r.lon, height:r.height, dap:r.dap, circ:r.circ, poda:r.poda||'', grouped:r.grouped||'',
+  identification:CampoInspectionRules.identificationPending(r), photos:(r.photos||[]).filter(p=>p.assetId).length,
+  day:controlDay(r.createdAt), seconds:r.inspectionTiming?.collectionSeconds, mtDistance:r.mtDistance, btDistance:r.btDistance
+ };
+}
+function gerencialRiskRow(tree){
+ const keys=['id','campoId','origem','especies','alimentador','chave','trecho','lat','lon','altura','dap','distRede','poste','vao','classe','prioridade','clientes','verificacao','acao','ano','poda'];
+ const row=Object.fromEntries(keys.map(key=>[key,tree[key]]));
+ return {...row,day:gerencialVeraDay(tree.data),photo:tree.origem==='Campo (prévia)'?Boolean(tree.photoAsset):true};
+}
+function gerencialVeraDay(value){
+ const text=String(value||'').trim();
+ const br=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+ if(br)return br[3]+'-'+br[2].padStart(2,'0')+'-'+br[1].padStart(2,'0');
+ return /^\d{4}-\d{2}-\d{2}/.test(text)?text.slice(0,10):'';
+}
+async function gerencialVera(db){
+ try{
+  const meta=await veraMeta(db);
+  const generation=meta.generation||null;
+  const [{results},reviews]=await Promise.all([
+   generation?db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]},
+   veraReviews(db)
+  ]);
+  return {available:Boolean(generation),trees:results.map(row=>JSON.parse(row.data)),reference:meta.referencia?JSON.parse(meta.referencia):null,reviews:new Map(reviews.map(review=>[review.tree_id,review]))};
+ }catch(error){
+  if(veraMissingTable(error))return {available:false,trees:[],reference:null,reviews:new Map()};
+  throw error;
+ }
+}
+async function gerencialRouteSource(db){
+ try{
+  const [plans,visits,returns]=await Promise.all([
+   db.prepare('SELECT data FROM campo_routes ORDER BY created_at DESC').all(),
+   db.prepare('SELECT data,received_at FROM campo_route_visits ORDER BY received_at').all(),
+   db.prepare('SELECT scope_id FROM campo_route_returns').all()
+  ]);
+  const returned=new Set(returns.results.map(row=>row.scope_id));
+  return {
+   routes:visibleRoutes(plans.results.map(row=>JSON.parse(row.data))).filter(route=>!returned.has(route.campaign?.id||route.id)),
+   visits:visits.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at}))
+  };
+ }catch(error){
+  if(centralMissingTable(error))return {routes:[],visits:[]};
+  throw error;
+ }
+}
+async function gerencialData(env){
+ const db=await adminDb(env);
+ const [data,vera,links,routeSource]=await Promise.all([
+  controlUniverse(env),gerencialVera(db),
+  db.prepare('SELECT source_id FROM shared_merges').all(),
+  gerencialRouteSource(db)
+ ]);
+ const field=data.records.filter(gerencialActiveField);
+ const live=field.map(row=>CampoParqueRegistros.liveTree(veraLiveRecord(row,vera.reviews.get(row.id)),vera.reference));
+ const base=vera.trees.map(tree=>({...tree,origem:tree.fonte||'Base VERA'}));
+ const park=CampoParqueRegistros.merge(base,live,new Set(links.results.map(row=>row.source_id)),vera.reference);
+ const routes=CampoRoutes.campaignParts(routeSource.routes).map(parts=>{
+  const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+  return {
+   inspector:route.operator,
+   daily:CampoRoutes.dailyCoverage(spans,routeSource.visits.filter(visit=>ids.has(visit.routeId))),
+   targets:CampoRoutes.schedule(route.plan,CampoRoutes.metres(spans))
+  };
+ });
+ return json({
+  field:field.map(gerencialFieldRow),park:park.map(gerencialRiskRow),routes,
+  veraAvailable:vera.available,archiveAvailable:data.archive.available,updatedAt:data.generatedAt
+ });
+}
+async function gerencialPhoto(request,env){
+ const params=new URL(request.url).searchParams,id=params.get('id'),source=params.get('source'),db=await adminDb(env);
+ if(!sharedId(id))throw sharedError('Foto inválida.');
+ if(source==='vera'){
+  const meta=await veraMeta(db);
+  const current=await db.prepare('SELECT id FROM vera_trees WHERE generation=? AND id=?').bind(meta.generation||'',id).first();
+  const merged=await db.prepare('SELECT source_id FROM shared_merges WHERE source_id=?').bind('vera-'+id).first();
+  if(!current||merged)throw sharedError('Foto indisponível.',404);
+  return veraField(new URL('/api/vera/field-photo?id='+encodeURIComponent(id),'https://campo-internal'),db);
+ }
+ const index=Number(params.get('index')||0);
+ if(source!=='campo'||!Number.isSafeInteger(index)||index<0)throw sharedError('Foto inválida.');
+ const row=await sharedRead(db,id);
+ const label=await db.prepare('SELECT classification FROM campo_record_labels WHERE tree_id=?').bind(id).first();
+ if(!row||row.deleted||label?.classification==='homologacao')throw sharedError('Foto indisponível.',404);
+ const photo=(JSON.parse(row.data).photos||[]).filter(item=>item.assetId)[index];
+ if(!photo)throw sharedError('Foto indisponível.',404);
+ const link=await db.prepare('SELECT image FROM shared_photos WHERE tree_id=? AND asset_id=?').bind(id,photo.assetId).first();
+ if(!link)throw sharedError('Foto indisponível.',404);
+ return json({image:link.image});
+}
+async function gerencialAPI(request,env,path,admin){
+ try{
+  if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
+  const settings=gerencialSettings(env);
+  if(path==='/api/gerencial/entrar'&&request.method==='GET')return await gerencialLogin(request,env,settings);
+  const viewer=await gerencialSession(request,env,settings);
+  if(path==='/api/gerencial/sair'&&request.method==='POST'){
+   if(viewer)await authDB(env).prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
+   const response=json({ok:true});
+   response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,'',0));
+   return response;
+  }
+  if(request.method!=='GET')return json({error:'Método não permitido.'},405);
+  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),email:viewer?.email||null,available:Boolean(settings)});
+  if(!viewer&&!admin)throw sharedError('Entre com seu e-mail corporativo.',401);
+  if(path==='/api/gerencial/dados')return await gerencialData(env);
+  if(path==='/api/gerencial/foto')return await gerencialPhoto(request,env);
+  return json({error:'Consulta não encontrada.'},404);
+ }catch(error){
+  if(path==='/api/gerencial/entrar')return gerencialRedirect('indisponivel');
+  return json({error:error.status?error.message:'Consulta gerencial temporariamente indisponível.'},error.status||503);
+ }
+}
+
 const encoder=new TextEncoder();
 const b64=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 const unb64=s=>Uint8Array.from(atob(s.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
@@ -1449,6 +1696,12 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
+ if(path.startsWith('/api/gerencial/')||path==='/api/admin/gerencial/acessos'){
+  const admin=bootstrapAdmin||identity?.user.role==='admin';
+  const result=await gerencialAPI(request,env,path,admin);
+  for(const [key,value] of Object.entries(cors))result.headers.set(key,value);
+  return result;
+ }
  try{if(path==='/api/auth/start')authResult=new Response(null,{status:303,headers:{Location:CAMPO_AUTH_APP_ORIGIN+'/?login=senha','Cache-Control':'no-store'}});
  else if(path==='/api/auth/login'){authResult=await campoPasswordLogin(request,env);if(authResult.ok)authResult.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery','',0));}
  else if(path==='/api/auth/password')authResult=await campoChangePassword(request,env,identity);

@@ -23,5 +23,5 @@
  // Possível duplicata: mesma espécie a poucos metros. Árvores diferentes lado a lado não são marcadas.
  function duplicatas(novas,base,limite=15){const cell=.0005,grid=new Map(),key=(la,lo)=>Math.floor(la/cell)+':'+Math.floor(lo/cell);for(const b of base)for(const p of b.pontos){const k=key(p.lat,p.lon);if(!grid.has(k))grid.set(k,[]);grid.get(k).push({...p,id:b.id,especies:nomes(b.especies)});}
   const out=new Map();for(const n of novas){if(!Number.isFinite(n.lat)||!Number.isFinite(n.lon))continue;const esp=nomes(n.especies),ci=Math.floor(n.lat/cell),cj=Math.floor(n.lon/cell);let melhor=null;for(let i=ci-1;i<=ci+1;i++)for(let j=cj-1;j<=cj+1;j++)for(const c of grid.get(i+':'+j)||[]){if(c.id===n.id||!c.especies.some(e=>esp.includes(e)))continue;const m=metros(n,c);if(m<=limite&&(!melhor||m<melhor.m))melhor={id:c.id,m:Math.round(m)};}if(melhor)out.set(n.id,melhor);}return out;}
- const api={calcular,duplicatas};if(typeof module!=='undefined')module.exports=api;if(typeof window!=='undefined')window.CampoRisco=api;
+ const api={calcular,duplicatas};if(typeof module!=='undefined')module.exports=api;globalThis.CampoRisco=api;if(typeof window!=='undefined')window.CampoRisco=api;
 })();

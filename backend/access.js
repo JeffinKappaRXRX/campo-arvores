@@ -26,6 +26,12 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
+ if(path.startsWith('/api/gerencial/')||path==='/api/admin/gerencial/acessos'){
+  const admin=bootstrapAdmin||identity?.user.role==='admin';
+  const result=await gerencialAPI(request,env,path,admin);
+  for(const [key,value] of Object.entries(cors))result.headers.set(key,value);
+  return result;
+ }
  try{if(path==='/api/auth/start')authResult=new Response(null,{status:303,headers:{Location:CAMPO_AUTH_APP_ORIGIN+'/?login=senha','Cache-Control':'no-store'}});
  else if(path==='/api/auth/login'){authResult=await campoPasswordLogin(request,env);if(authResult.ok)authResult.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery','',0));}
  else if(path==='/api/auth/password')authResult=await campoChangePassword(request,env,identity);
