@@ -1,7 +1,9 @@
 'use strict';
 // Base das telas de manutenção e orçamento: leitura da API, tabela, gráficos e formatação.
 const Central=(()=>{
- const dados={},objetos={},carregamentos=new Map(),BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);let filtrosGlobais={},dimensoesCache=null;
+ const dados={},objetos={},carregamentos=new Map(),BASE=Date.UTC(2020,0,1),DIA=864e5,$=id=>document.getElementById(id);let filtrosGlobais={},dimensoesCache=null,dataGeneration='',geography=null,spatialIndex=null,locations=null;
+ const spatialTables=new Set(['os_abertas','os_exec','parque_postes','poda_postes','prog','vera_prev','ss','faixa','insp_abertas','carga_trafos']);
+ const classified=new Map();let spatialArea=null;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const num=(v,d=0)=>v==null||Number.isNaN(v)?'—':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
  const brl=v=>v==null||Number.isNaN(v)?'—':'R$ '+num(v);
@@ -25,6 +27,12 @@ const Central=(()=>{
  function deBase64(s){const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
  async function baixar(nome,geracao,partes){const k=geracao+':'+nome;let bytes=await cacheLe(k);if(!bytes){const pedacos=[];for(let i=0;i<partes;i++)pedacos.push(deBase64((await api(`/api/central/data?name=${nome}&part=${i}&generation=${geracao}`)).body));bytes=await new Blob(pedacos).arrayBuffer();void cacheGrava(k,bytes);}const texto=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();return JSON.parse(texto);}
  async function carregar(meta,nomes,aviso){
+  if(dataGeneration!==meta.generation){
+   dataGeneration=meta.generation;for(const key of Object.keys(dados))delete dados[key];for(const key of Object.keys(objetos))delete objetos[key];
+   dimensoesCache=null;geography=null;spatialIndex=null;locations=null;classified.clear();
+  }
+  const token=dataGeneration;
+  if(nomes.some(name=>spatialTables.has(name)))nomes=[...nomes,'conjuntos_geo','parque_postes'];
   const faltam=[...new Set(nomes)].filter(n=>!dados[n]&&meta.manifest[n]);
   await Promise.all(faltam.map(async nome=>{
    const chave=meta.generation+':'+nome;
@@ -34,21 +42,58 @@ const Central=(()=>{
     pendente=baixar(nome,meta.generation,meta.manifest[nome].parts).finally(()=>carregamentos.delete(chave));
     carregamentos.set(chave,pendente);
    }
-   dados[nome]=await pendente;
+   const value=await pendente;if(token!==dataGeneration)return;dados[nome]=value;delete objetos[nome];classified.clear();locations=null;
+   if(nome==='conjuntos_geo')configureGeography(value);
    if(nome==='chaves')dimensoesCache=null;
   }));
  }
- function linhasRaw(nome){if(objetos[nome])return objetos[nome];const t=dados[nome];if(!t)return [];const ch=Object.keys(t.c),cols=ch.map(c=>{const v=t.c[c];return Array.isArray(v)?v:v.i.map(i=>v.k[i]);}),o=new Array(t.n);for(let i=0;i<t.n;i++){const r={};for(let j=0;j<ch.length;j++)r[ch[j]]=cols[j][i];o[i]=r;}objetos[nome]=o;return o;}
+ function decodificaLinhas(t){if(!t)return [];const ch=Object.keys(t.c),cols=ch.map(c=>{const v=t.c[c];return Array.isArray(v)?v:v.i.map(i=>v.k[i]);}),o=new Array(t.n);for(let i=0;i<t.n;i++){const r={};for(let j=0;j<ch.length;j++)r[ch[j]]=cols[j][i];o[i]=r;}return o;}
+ function linhasRaw(nome){return objetos[nome]||(dados[nome]?(objetos[nome]=decodificaLinhas(dados[nome])):[]);}
+ async function dataFromGeneration(meta,name){return baixar(name,meta.generation,meta.manifest[name].parts);}
+ async function rowsFromGeneration(meta,name){return decodificaLinhas(await dataFromGeneration(meta,name));}
  const norm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
  const primeiro=(r,ks)=>{for(const k of ks)if(r?.[k]!=null&&String(r[k]).trim()!=='')return r[k];return '';};
  function indiceDimensoes(){if(dimensoesCache)return dimensoesCache;const porChave=new Map(),porAlim=new Map();for(const k of linhasRaw('chaves')){const chave=norm(primeiro(k,['chave','name','chaveOriginal','chave_original'])),alim=norm(primeiro(k,['alim','alimentador','alimentador_'])),d={plano:primeiro(k,['plano','planoConsolidado','plano_consolidado']),polo:primeiro(k,['polo','POLO']),localidade:primeiro(k,['localidade','municipio','município','mun'])};if(chave)porChave.set(chave,d);if(alim){let a=porAlim.get(alim);if(!a)porAlim.set(alim,a={plano:new Set(),polo:new Set(),localidade:new Set()});for(const x of ['plano','polo','localidade'])if(d[x])a[x].add(norm(d[x]));}}return dimensoesCache={porChave,porAlim};}
  function valoresDimensao(r,dim,idx){const aliases={plano:['plano','planoConsolidado','plano_consolidado'],polo:['polo','POLO'],localidade:['localidade','municipio','município','mun']}[dim],direto=primeiro(r,aliases);if(direto)return new Set([norm(direto)]);const chave=norm(primeiro(r,['chave','name','chaveOriginal','chave_original'])),porChave=idx.porChave.get(chave);if(porChave?.[dim])return new Set([norm(porChave[dim])]);const alim=norm(primeiro(r,['alim','alimentador','alimentador_','ALIMENTADOR_']));return idx.porAlim.get(alim)?.[dim]||new Set();}
- function linhas(nome){const rows=linhasRaw(nome),ativos=Object.entries(filtrosGlobais).filter(([,v])=>v);if(!ativos.length||nome==='chaves'&&!rows.length)return rows;const idx=indiceDimensoes();return rows.filter(r=>ativos.every(([dim,v])=>valoresDimensao(r,dim,idx).has(norm(v))));}
- function setGlobalFilters(f={}){filtrosGlobais={plano:String(f.plano||''),polo:String(f.polo||''),localidade:String(f.localidade||'')};}
+ function configureGeography(data){
+  if(typeof CycleConjuntos==='undefined')return;
+  if(data?.targetCRS!=='EPSG:4326'||!Array.isArray(data.features))throw Error('Polígonos centrais sem referência WGS84 válida.');
+  const names=Object.fromEntries(data.features.map(f=>[String(f.properties.codigo),f.properties.nome]));
+  const candidate=CycleConjuntos.spatial(data.features,'codigo',names,data.source||{});
+  geography=data;spatialIndex=candidate;classified.clear();
+  if(dados.resumo)dados.resumo.conjuntos={...dados.resumo.conjuntos,...names};
+ }
+ function spatialRows(nome){
+  const rows=linhasRaw(nome);if(!spatialTables.has(nome)||typeof CycleConjuntos==='undefined')return rows;
+  if(classified.has(nome))return classified.get(nome);
+  if(!locations)locations=CycleConjuntos.locationIndex(linhasRaw('parque_postes'));
+  const result=rows.map(row=>{
+   const enriched=CycleConjuntos.classifyRow(row,spatialIndex,locations);
+   return {...enriched,conj:enriched.conjCode||(!spatialIndex?row.conj:'')};
+  });
+  classified.set(nome,result);return result;
+ }
+ function setSpatialArea(area){
+  spatialArea=Array.isArray(area)&&area.length>=3&&typeof CycleConjuntos!=='undefined'&&area.every(CycleConjuntos.validPoint)?area.map(point=>point.slice()):null;
+ }
+ function getSpatialArea(){return spatialArea?.map(point=>point.slice())||null;}
+ function rowsInArea(nome){
+  const rows=spatialRows(nome);if(!spatialArea||typeof CycleConjuntos==='undefined')return rows;
+  if(spatialTables.has(nome))return rows.filter(row=>CycleConjuntos.pointInArea(row.point,spatialArea));
+  if(['chaves','cart_prog','avanco'].includes(nome)){
+   const keys=new Set([...spatialRows('os_abertas'),...spatialRows('parque_postes')].filter(row=>CycleConjuntos.pointInArea(row.point,spatialArea)).map(row=>norm(row.chave)).filter(Boolean));
+   return rows.filter(row=>keys.has(norm(row.chave))||CycleConjuntos.pointInArea(CycleConjuntos.pointOf(row),spatialArea));
+  }
+  return rows;
+ }
+ function spatialAudit(nome){return typeof CycleConjuntos==='undefined'?null:CycleConjuntos.audit(spatialRows(nome));}
+ function linhas(nome){const rows=rowsInArea(nome),ativos=Object.entries(filtrosGlobais).filter(([,v])=>v.length);if(!ativos.length||nome==='chaves'&&!rows.length)return rows;const idx=indiceDimensoes();return rows.filter(r=>ativos.every(([dim,v])=>v.some(value=>valoresDimensao(r,dim,idx).has(value))));}
+ function setGlobalFilters(f={}){filtrosGlobais=Object.fromEntries(['plano','polo','localidade'].map(key=>[key,lista(f[key]).map(norm)]));}
  function agrupa(rows,chave,soma){const m=new Map();for(const r of rows){const k=chave(r);let a=m.get(k);if(!a){a={_k:k,_n:0};m.set(k,a);}a._n++;soma?.(a,r);}return [...m.values()];}
  const add=(a,k,v)=>{a[k]=(a[k]||0)+(+v||0);};
  // Filtro de várias opções: vazio é tudo; a linha passa se estiver em qualquer opção marcada. Chave de manobra vale para os dois alimentadores (A, B).
  const lista=f=>f==null||f===''?[]:(Array.isArray(f)?f:[f]).map(String),em=(f,v)=>{const l=lista(f),s=String(v??'');return !l.length||l.includes(s)||(s.includes(', ')&&s.split(', ').some(p=>l.includes(p)));},tem=(f,v)=>lista(f).includes(String(v)),um=f=>{const l=lista(f);return l.length===1?l[0]:'';},bin=(f,cond,sim='1',nao='0')=>{const l=lista(f);return !l.length||(cond?l.includes(sim):l.includes(nao));};
+ const keyMatches=(filter,key)=>Array.isArray(filter)?(!filter.length||filter.includes(String(key??''))):!filter||norm(key).includes(norm(filter));
  const unicos=rows=>[...new Set(rows)].filter(Boolean).sort((x,y)=>String(x).localeCompare(String(y),'pt-BR',{numeric:true}));
  // Tabela com ordenação, página e CSV.
  function tabela(el,cols,rows,op={}){const est={k:op.ord??null,d:op.dir??-1,p:0},tam=op.pagina||50;const val=(c,r)=>typeof c.k==='function'?c.k(r):r[c.k];
@@ -76,5 +121,5 @@ const Central=(()=>{
  const kpis=l=>`<div class="kpis">${l.map(k=>`<div class="kpi"><span>${esc(k[0])}</span><strong>${esc(k[1])}</strong>${k[2]?`<small>${esc(k[2])}</small>`:''}</div>`).join('')}</div>`;
  const painel=(t,sub,id,extra='')=>`<article class="panel"><div class="panel-head"><div>${sub?`<span class="eyebrow">${esc(sub)}</span>`:''}<h3>${esc(t)}</h3></div>${extra}</div><div id="${id}"></div></article>`;
  function abre(eyebrow,titulo,html){$('detEyebrow').textContent=eyebrow;$('detTitulo').textContent=titulo;$('detCorpo').innerHTML=html;$('detalhe').showModal();}
- return {lista,em,tem,um,bin,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,setGlobalFilters,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
+ return {lista,em,tem,um,bin,keyMatches,$,esc,num,brl,mi,pct,dBR,iso,isoBR,uteisDesde,rotina,diaDe,dataDe,api,apiPost,carregar,linhas,linhasRaw,dataFromGeneration,rowsFromGeneration,setGlobalFilters,setSpatialArea,getSpatialArea,configureGeography,spatialRows,spatialAudit,dados,agrupa,add,unicos,tabela,colunas,linhasG,COR,sit,kpis,painel,abre,cacheLimpa};
 })();

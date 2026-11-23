@@ -15,7 +15,7 @@
   filtros:['polo','conj','alim','trP','sigoraInspection','mes','chave'],
   render(F,el){
    const R=C.dados.resumo||{},same=(row,dim)=>em(F[dim],row[dim]);
-   const keys=L('chaves').filter(row=>['polo','conj','alim'].every(key=>same(row,key))&&(!F.chave||M.norm(row.chave).includes(M.norm(F.chave))));
+   const keys=L('chaves').filter(row=>['polo','conj','alim'].every(key=>same(row,key))&&C.keyMatches(F.chave,row.chave));
    const inspections=M.inspections({
     keys,history:raw('avanco'),pending:raw('os_abertas'),executed:raw('os_exec'),complete:Boolean(C.dados.os_abertas&&C.dados.os_exec),toDay,now:CampoManejo.day(CampoManejo.today()),
     cutoff:key=>toDay(C.prem('marco.'+key.frente)||C.prem('marcoInsp'))??Infinity

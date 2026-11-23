@@ -59,6 +59,23 @@ async function centralSync(request,env){try{
  const db=await adminDb(env),{action,generation}=body||{};
  if(!CENTRAL_GENERATION.test(generation||''))return json({error:'Geração inválida.'},400);
  if(action==='part'){const {name,part,data}=body;if(!CENTRAL_NAME.test(name||'')||!Number.isSafeInteger(part)||part<0||part>999||typeof data!=='string'||!data.length||data.length>1500000||!CENTRAL_BODY.test(data))return json({error:'Parte inválida.'},400);await db.prepare('INSERT OR REPLACE INTO central_parts(generation,name,part,body) VALUES(?,?,?,?)').bind(generation,name,part,data).run();return json({saved:true});}
- if(action==='commit'){const manifest=body.manifest;if(!manifest||typeof manifest!=='object'||!Object.keys(manifest).length||!Object.keys(manifest).every(k=>CENTRAL_NAME.test(k)&&Number.isSafeInteger(manifest[k]?.parts)&&manifest[k].parts>0))return json({error:'Manifesto inválido.'},400);const {results}=await db.prepare('SELECT name,COUNT(*) n FROM central_parts WHERE generation=? GROUP BY name').bind(generation).all(),found=Object.fromEntries(results.map(r=>[r.name,r.n]));for(const [k,v]of Object.entries(manifest))if(found[k]!==v.parts)return json({error:'Envio incompleto: '+k+'.'},409);const now=new Date().toISOString(),set=(k,v)=>db.prepare('INSERT OR REPLACE INTO central_meta(key,value) VALUES(?,?)').bind(k,String(v));await db.batch([set('generation',generation),set('updatedAt',now),set('manifest',JSON.stringify(manifest)),db.prepare('DELETE FROM central_parts WHERE generation<>?').bind(generation)]);return json({generation,updatedAt:now});}
+ if(action==='commit'){
+  const manifest=body.manifest;
+  if(!manifest||typeof manifest!=='object'||!Object.keys(manifest).length||!Object.keys(manifest).every(k=>CENTRAL_NAME.test(k)&&Number.isSafeInteger(manifest[k]?.parts)&&manifest[k].parts>0))return json({error:'Manifesto inválido.'},400);
+  const {results}=await db.prepare('SELECT name,COUNT(*) n FROM central_parts WHERE generation=? GROUP BY name').bind(generation).all(),found=Object.fromEntries(results.map(r=>[r.name,r.n]));
+  for(const [k,v]of Object.entries(manifest))if(found[k]!==v.parts)return json({error:'Envio incompleto: '+k+'.'},409);
+  // The operational refresh must retain the separately verified territorial layer.
+  // Copy inside the same transaction as the active generation switch and cleanup.
+  const previous=await centralMeta(db),previousManifest=JSON.parse(previous.manifest||'{}'),preserve=[];
+  if(!manifest.conjuntos_geo&&previousManifest.conjuntos_geo){
+   const count=await db.prepare('SELECT COUNT(*) n FROM central_parts WHERE generation=? AND name=?').bind(previous.generation,'conjuntos_geo').first();
+   if(count.n!==previousManifest.conjuntos_geo.parts)return json({error:'Camada de conjuntos incompleta; atualização preservada.'},409);
+   manifest.conjuntos_geo=previousManifest.conjuntos_geo;
+   if(previous.generation!==generation)preserve.push(db.prepare('INSERT OR REPLACE INTO central_parts(generation,name,part,body) SELECT ?,name,part,body FROM central_parts WHERE generation=? AND name=?').bind(generation,previous.generation,'conjuntos_geo'));
+  }
+  const now=new Date().toISOString(),set=(k,v)=>db.prepare('INSERT OR REPLACE INTO central_meta(key,value) VALUES(?,?)').bind(k,String(v));
+  await db.batch([...preserve,set('generation',generation),set('updatedAt',now),set('manifest',JSON.stringify(manifest)),db.prepare('DELETE FROM central_parts WHERE generation<>?').bind(generation)]);
+  return json({generation,updatedAt:now});
+ }
  return json({error:'Ação desconhecida.'},400);
 }catch(e){if(centralMissingTable(e))return json({error:'Aplique backend/central-schema.sql no D1 antes do primeiro envio.'},503);return json({error:e.status?e.message:'Envio temporariamente indisponível.'},e.status||503);}}

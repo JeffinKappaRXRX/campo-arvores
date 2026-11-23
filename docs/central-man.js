@@ -4,7 +4,7 @@
  // A OS pode chegar atrasada em relação ao DEC: aderência só conta até o último dia com execução na base.
  const R=()=>C.dados.resumo,hoje=()=>diaDe(R().hoje),diaOS=()=>diaDe(R().corteOs.slice(0,10))-1,nomeConj=c=>R().conjuntos[c]||c||'—';
  // Os filtros comuns: vale para qualquer linha com polo, conj, alim, frente, classe, tipo, eq.
- const passa=(r,F)=>(!F.polo||C.em(F.polo,r.polo))&&(!F.conj||C.em(F.conj,r.conj))&&(!F.alim||C.em(F.alim,r.alim))&&(!F.frente||C.em(F.frente,r.frente))&&(!F.classe||C.em(F.classe,r.classe))&&(!F.tipo||C.em(F.tipo,r.tipo))&&(!F.eq||C.em(F.eq,r.eq)||C.em(F.eq,r.eqProg))&&(!F.chave||String(r.chave||'').toUpperCase().includes(F.chave.toUpperCase()));
+ const passa=(r,F)=>(!F.polo||C.em(F.polo,r.polo))&&(!F.conj||C.em(F.conj,r.conj))&&(!F.alim||C.em(F.alim,r.alim))&&(!F.frente||C.em(F.frente,r.frente))&&(!F.classe||C.em(F.classe,r.classe))&&(!F.tipo||C.em(F.tipo,r.tipo))&&(!F.eq||C.em(F.eq,r.eq)||C.em(F.eq,r.eqProg))&&C.keyMatches(F.chave,r.chave);
  const periodo=(F,dia)=>(!F.de||dia>=diaDe(F.de))&&(!F.ate||dia<=diaDe(F.ate));
  const critica=c=>({Crítico:'crit',Alto:'seri',Médio:'aten',Baixo:'neut'}[c]||'neut');
  const efetiva=e=>({'Risco retirado':'bom','Em observação':'neut','Voltou por causa não gerenciável':'aten','Voltou pela mesma causa':'crit','Serviço não atacou a causa':'seri','Sem ação executada':'seri'}[e]||'neut');

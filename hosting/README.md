@@ -1,5 +1,13 @@
 # Publicação no endereço oficial
 
+## Conjuntos elétricos e recorte territorial
+
+O painel de gestão carrega `conjuntos_geo` da mesma geração autenticada do D1. O GeoPackage original permanece privado. Execute `python tools/import-conjuntos.py ARQUIVO.gpkg --output SAIDA.geojson` com as dependências de `tools/requirements-conjuntos.txt` e uma saída fora do repositório. O importador valida a camada `22_conjunto_eletrico` e reprojeta EPSG:31979 para EPSG:4326, em longitude e latitude, sem simplificar a geometria.
+
+Carregue o GeoJSON como JSON compactado em gzip no conjunto `conjuntos_geo` do canal central. O manifesto deve incluir o número de partes. A atualização operacional que omitir essa camada mantém a versão anterior na mesma transação. Uma atualização que a incluir precisa enviar todas as partes. O painel compara a coordenada da origem ou a posição de um poste com vínculo exato. Pontos fora da cobertura, divisas ambíguas e registros sem posição suficiente ficam na auditoria. O ID e o valor original ficam disponíveis para conferência.
+
+Em Controle de poda e estruturas, a área livre recorta o mapa, os indicadores territoriais e a carteira SIGORA. Ao trocar para a carteira central, o recorte permanece até limpar a área ou encerrar a sessão. A seleção de órgãos enquadra os pontos cadastrados e informa quais órgãos não têm posição. A auditoria completa de uma exportação privada pode ser gerada com `node tools/audit-conjuntos.cjs --input DIRETORIO_PRIVADO --output AUDITORIA_PRIVADA`.
+
 ## Rede central para planejamento, meta e local da árvore
 
 O planejador carrega uma base MT privada para manter a pesquisa e o enquadramento disponíveis enquanto o GPKG local é aberto. A versão `campo-20260803-v2` é gerada diretamente do `EAC_03_08_26.gpkg`: usa `Id`, `Alimentador`, `TIPO_TRECHO`, `Name_Bloco`, `Comprimento Atual` em metros e `Id_Poste`, com a geometria como fallback quando a extensão cadastrada está vazia. O pacote é gerado por `hosting/build-route-network.py` e o manifesto e suas partes ficam nas chaves `arbora:route-geometry:campo-20260803-v2` da API privada. Os dados de rede permanecem fora do repositório público.

@@ -42,4 +42,20 @@ let pm=(await call('/api/central/premissas',undefined,auth)).data.premissas;asse
 await call('/api/central/premissas',{premissas:{marcoInsp:null}},auth);pm=(await call('/api/central/premissas',undefined,auth)).data.premissas;assert.equal(pm.marcoInsp,undefined);assert.equal(pm.mesesNaoVera,6);
 // O VERA não é tocado por este envio.
 assert.equal((await call('/api/vera/trees',undefined,auth)).status,200);
-console.log('central ok');
+// A separately imported geography survives the next operational refresh.
+await sync({action:'part',generation:'cen-20261105',name:'resumo',part:0,data:'EEEE'});
+await sync({action:'part',generation:'cen-20261105',name:'conjuntos_geo',part:0,data:'FFFF'});
+assert.equal((await sync({action:'commit',generation:'cen-20261105',manifest:{resumo:{parts:1,bytes:4},conjuntos_geo:{parts:1,bytes:4,sha256:'verified'}}})).status,200);
+await sync({action:'part',generation:'cen-20261106',name:'resumo',part:0,data:'GGGG'});
+assert.equal((await sync({action:'commit',generation:'cen-20261106',manifest:{resumo:{parts:1,bytes:4}}})).status,200);
+assert.equal((await call('/api/central/data?name=conjuntos_geo&part=0&generation=cen-20261106',undefined,auth)).data.body,'FFFF');
+assert.equal((await call('/api/central/meta',undefined,auth)).data.manifest.conjuntos_geo.sha256,'verified');
+assert.equal((await call('/api/central/data?name=conjuntos_geo&part=0&generation=cen-20261106',undefined,inspector)).status,403);
+assert.equal(sql.prepare("SELECT COUNT(*) n FROM central_parts WHERE generation<>'cen-20261106'").get().n,0);
+// Explicit complete replacement wins; an incomplete replacement cannot activate.
+await sync({action:'part',generation:'cen-20261107',name:'resumo',part:0,data:'HHHH'});
+assert.equal((await sync({action:'commit',generation:'cen-20261107',manifest:{resumo:{parts:1,bytes:4},conjuntos_geo:{parts:1,bytes:4}}})).status,409);
+await sync({action:'part',generation:'cen-20261107',name:'conjuntos_geo',part:0,data:'IIII'});
+assert.equal((await sync({action:'commit',generation:'cen-20261107',manifest:{resumo:{parts:1,bytes:4},conjuntos_geo:{parts:1,bytes:4}}})).status,200);
+assert.equal((await call('/api/central/data?name=conjuntos_geo&part=0&generation=cen-20261107',undefined,auth)).data.body,'IIII');
+console.log('central ok: authentication, atomic generations, geographic preservation and replacement');

@@ -1,0 +1,120 @@
+#cycleManagement[hidden],#cycleLedger[hidden],#cycleMapTools[hidden]{display:none}
+.cycle-on #workspace>:not(#cycleManagement):not(.cycle-map-row):not(#cycleLedger),
+.cycle-on .cycle-map-row>:not(#mapa),.cycle-on #parqueToggle,.cycle-on #parqueMenu,
+.cycle-on #mapa .panel-head .eyebrow,.cycle-on #mapa #networkFeeder,.cycle-on #mapa [data-filter=networkFeeder]{display:none}
+.cycle-on .cycle-map-row{grid-template-columns:minmax(0,1fr)}
+.cycle-on #mapFrame{height:clamp(360px,65vh,790px)}
+.cycle-on #mapa.map-expanded #mapFrame{height:100%}
+#cycleManagement .panel-head h2{margin:0}
+#cycleManagement .panel-head p{margin:6px 0 0}
+#cycleManagement details{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px}
+#cycleManagement summary{cursor:pointer;font-weight:650}
+#cycleSettings form,.cycle-filters{display:grid;align-items:end;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+#cycleFilters label,#cycleSettings label{font-size:12px;font-weight:600}
+#cycleFilters select,#cycleFilters input:not([type=checkbox]),#cycleSettings input{display:block;width:100%;margin-top:5px}
+#cycleUpload button{justify-self:start}
+.cycle-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px}
+.cycle-metrics div{display:grid;min-height:74px;gap:6px;padding:11px;background:var(--soft);border:1px solid var(--line);border-radius:8px}
+.cycle-metrics span{font-size:12px}
+.cycle-metrics strong{font-size:23px}
+#cycleMapTools{display:flex;align-items:center;gap:8px 16px;margin:0 0 10px;flex-wrap:wrap}
+.cycle-map-legend{display:flex;flex-wrap:wrap;gap:6px 12px}
+.cycle-map-legend label{display:inline-flex;align-items:center;gap:4px;font-size:12px}
+.cycle-map-legend svg{width:23px;height:23px}
+.cycle-marker{background:none;border:0}
+.cycle-cluster span{position:absolute;top:-6px;left:24px;display:block;padding:1px 5px;background:#203b31;color:#fff;border:1px solid #fff;border-radius:10px;font-size:10px;font-weight:700}
+.cycle-table{overflow:auto;max-width:100%;margin:8px 0}
+.cycle-table td{white-space:nowrap}
+.cycle-pages{display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px}
+.cycle-popup{padding:5px 0}
+.cycle-popup dl{display:grid;grid-template-columns:minmax(84px,max-content) 1fr;gap:4px 8px;line-height:1.35}
+.cycle-popup dt{font-weight:650}
+.cycle-popup dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:690px){.cycle-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.cycle-on #workspace>#cycleSummary{display:block}
+.cycle-on #routePlanner,.cycle-on #routeKpis{display:none}
+#cycleSummary[hidden]{display:none}
+#cycleSummary,#cycleLedger,#cycleMetrics,#cycleMapTools{scroll-margin-top:16px}
+#cycleLedger h3,#cycleSummary h3{margin-top:0}
+#cycleLedgerCount{margin:4px 0 0}
+.cycle-actions,.cycle-jumps{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cycle-jumps{margin-top:12px}
+.cycle-jumps button{min-height:34px;padding:6px 12px}
+#cycleSettings{max-width:min(940px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:20px}
+#cycleSettings::backdrop{background:#171723af}
+#cycleDirectories{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+#cycleFilters input[type=checkbox],#cycleMapTools input[type=checkbox]{appearance:auto;width:16px;height:16px;margin:0 4px 0 0;vertical-align:middle;accent-color:var(--green)}
+#cycleFilters label:last-child{padding:8px 0}
+#cycleMapTools{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center}
+#cycleMapStatus{grid-column:1/-1}
+.cycle-map-legend label{white-space:nowrap}
+.cycle-color-legend{grid-column:1/-1}
+.cycle-color-legend div{display:flex;gap:6px 14px;flex-wrap:wrap;padding-top:8px}
+.cycle-color-legend span{display:flex;align-items:center;gap:5px;font-size:12px}
+.cycle-color-legend i{width:12px;height:12px;border:2px solid var(--ring);border-radius:50%}
+.cycle-overview-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+.cycle-overview-grid h4,#cycleSets h4{margin:16px 0 6px}
+.cycle-month-chart{display:flex;gap:8px;overflow:auto;padding:0 3px 6px;border-bottom:1px solid var(--line)}
+.cycle-month{flex:1 0 40px;min-width:0;text-align:center}
+.cycle-month>div{height:112px;display:flex;align-items:end;justify-content:center;gap:4px;border-bottom:1px solid var(--line)}
+.cycle-month span{width:min(18px,40%);border-radius:3px 3px 0 0;background:#25845f}
+.cycle-month span+span{background:#548dd3}
+.cycle-month small{display:block;font-size:10px;margin-top:3px}
+.cycle-balance{display:grid;grid-template-columns:minmax(112px,1fr) minmax(36px,1.25fr) max-content;align-items:center;gap:8px;font-size:12px;margin:8px 0}
+.cycle-balance i{width:var(--length);height:8px;background:var(--bar);border-radius:6px}
+#cycleRows .cycle-table{max-height:590px;overflow:auto}
+#cycleRows thead th{position:sticky;top:0;background:var(--soft);z-index:1}
+#cycleRows th button,#cycleRows td button{min-height:26px;padding:3px 6px;font-size:inherit}
+#cycleRows td:first-child a{margin-inline-start:6px}
+@media(max-width:900px){.cycle-overview-grid,#cycleMapTools{grid-template-columns:minmax(0,1fr)}}
+
+.cycle-multi-field{position:relative;min-width:0;padding-bottom:0}
+.cycle-multi-field>span{display:block;font-size:12px;font-weight:600}
+.cycle-multi{margin-top:5px}
+.cycle-multi>summary{min-height:38px;padding:9px 24px 9px 11px}
+.cycle-multi .msel-pop{width:min(330px,80vw);z-index:850}
+.cycle-multi .msel-lista{max-height:245px;overflow:auto}
+#cycleFilters .cycle-multi .msel-lista label{display:flex;align-items:center;gap:4px;padding:6px 4px}
+#cycleFilters .cycle-multi .msel-lista label[hidden]{display:none}
+#cycleFilters .cycle-multi input[type=checkbox]{flex:0 0 16px}
+
+#cycleFilters .gestao-multi,.territorial .gestao-multi,.terr-map-controls .gestao-multi {
+ margin:6px 0 0;padding:0;border:0;min-width:0;
+}
+#cycleFilters .gestao-multi[hidden],.gestao-multi [hidden],select[multiple][hidden] {display:none!important}
+#cycleFilters .gestao-multi summary,.gestao-multi summary {
+ min-height:38px;padding:9px 26px 8px 10px;border:1px solid var(--line);border-radius:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.gestao-multi .msel-pop {z-index:900;width:min(325px,86vw);text-align:left}
+.gestao-multi .msel-pop.align-end {right:0;left:auto}
+.gestao-multi .msel-lista {max-height:260px;overflow:auto}
+#cycleFilters .gestao-multi .msel-lista label,.gestao-multi .msel-lista label {display:flex;align-items:center;gap:7px;padding:7px 5px}
+.gestao-multi .msel-lista input,.terr-check input {width:auto;margin:0}
+.cycle-on #workspace>#territorialPlan {display:block}
+#territorialPlan[hidden] {display:none}
+.territorial,.terr-map-controls,.terr-route {scroll-margin-top:16px}
+.terr-map-controls {grid-column:1/-1;padding-top:10px;border-top:1px solid var(--line);min-width:0}
+.terr-controls {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,166px),1fr));align-items:end;gap:9px 12px;margin:10px 0}
+.terr-controls label {display:block;font-size:12px;font-weight:600;min-width:0}
+.terr-controls input:not([type=checkbox]),.terr-controls select:not([hidden]) {box-sizing:border-box;width:100%;min-height:38px;margin-top:5px}
+.terr-controls .terr-check {display:flex;gap:6px;align-items:center;min-height:38px}
+.terr-actions,.terr-modes {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.terr-actions button,.terr-modes button {min-height:34px;padding:6px 10px}
+.terr-modes {margin:10px 0}
+.terr-modes b {margin-right:4px}
+.terr-modes [aria-pressed=true],.terr-actions [aria-pressed=true] {outline:2px solid #8665d5}
+.terr-settings {margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:9px}
+.terr-settings>summary {font-weight:650;cursor:pointer}
+.terr-settings h5 {margin:12px 0 4px}
+.terr-route {border-top:1px solid var(--line);margin-top:16px;padding-top:10px}
+#terrStops {max-height:240px;overflow:auto}
+#terrStops li {padding:3px 0}
+#terrStops span {margin-right:9px}
+#terrStops button {margin-left:4px;padding:2px 8px}
+.terr-stop {display:grid;place-items:center;background:#5f39ad;border:2px solid #fff;color:#fff;border-radius:50%;font-weight:700}
+#terrDetails>div {border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px}
+#terrDetails p,.leaflet-popup-content p {margin:5px 0}
+
+.terr-drawing {cursor:crosshair}
+.terr-drawing .leaflet-interactive {pointer-events:none!important}

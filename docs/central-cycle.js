@@ -21,9 +21,9 @@
     trecho:trecho(row.trecho||row.trT||row.tr)||trecho(p.tr)||trecho(only(ks,k=>k.trecho))||'Sem trecho'};
   }
   function geographic(r){
-   return (!F.planoGlobal||norm(r.plano)===norm(F.planoGlobal))&&(!F.poloGlobal||norm(r.polo)===norm(F.poloGlobal))&&
-    (!F.localidadeGlobal||norm(r.mun)===norm(F.localidadeGlobal))&&em(F.polo,r.polo)&&em(F.conj,r.conj)&&em(F.alim,r.alim)&&em(F.trP,r.trecho)&&
-    (!F.chave||norm(r.chave).includes(norm(F.chave)));
+   const global=(filter,value)=>!filter||Array.isArray(filter)&&!filter.length||[].concat(filter).some(choice=>norm(choice)===norm(value));
+   return global(F.planoGlobal,r.plano)&&global(F.poloGlobal,r.polo)&&global(F.localidadeGlobal,r.mun)&&em(F.polo,r.polo)&&em(F.conj,r.conj)&&em(F.alim,r.alim)&&em(F.trP,r.trecho)&&
+    C.keyMatches(F.chave,r.chave);
   }
   function matches(r,ignoreMonth=false){
    const status={'OS pendente':'OS pendente','Fora do prazo':'Fora do prazo','Vence em breve':'Urgente','No prazo':'Dentro do prazo','Sem prazo calculável':'Sem dados'}[r.status]||'Sem dados';
@@ -67,7 +67,7 @@
   const {historicById,pruningHistory}=pruningRecords(now);
   const historic=[...historicById.values()];
   // An explicit VERA ID is the only automatic link between the two tree sources.
-  const consolidated=M.build({trees:catalog,posts:historic,keys:raw('chaves'),reference:source,date:now,lead:C.prem('antecedencia'),months:6,urgent:C.prem('urgente'),managedCycle:true,clearance:1.6});
+  const consolidated=M.build({trees:catalog,posts:historic,keys:raw('chaves'),reference:source,date:now,lead:C.prem('antecedencia'),months:6,urgent:C.prem('urgente'),managedCycle:true,observedCycle:true,clearance:1.6});
   const rows=consolidated.map(r=>{
    if(r.estimated)return enrich({...r,layer:r.cat==='Só SS'?'ss':r.cat==='OS executada'?'nv':'ab'});
    const current=byId.get(r.id)||byId.get('vera-'+r.id);

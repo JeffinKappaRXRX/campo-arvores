@@ -2,6 +2,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const M=require('../docs/manejo-core.js');
+const core=vm.runInNewContext(fs.readFileSync('docs/central-core.js','utf8')+'\nCentral;',{});
 const keys=[{chave:'C1',polo:'RBR',conj:1,alim:'A1',plano:'P1',mun:'Rio Branco',trecho:1},{chave:'C2',polo:'CZS',conj:2,alim:'A2',plano:'P2',mun:'Cruzeiro do Sul',trecho:2}];
 const data={chaves:keys,parque_postes:[
  {id:'226-101',chave:'C1',alim:'A1',lat:-9.9,lon:-67.8,tr:1,cat:'OS executada'},
@@ -16,7 +17,7 @@ const mapData={trees:[
  {id:'live-2',raw:{id:'live-2',poda:'sim',projection:'sim'},origem:'Campo (prévia)',alimentador:'A2',lat:-7.61,lon:-72.71,classe:'ALTO'},
  {id:'v-extra',especies:'Árvore sem previsão',alimentador:'A1',lat:-9.92,lon:-67.82}
 ],mergedIds:['vera-retired']};
-const Central={dados:{resumo:{hoje:'2026-11-04'}},linhasRaw:n=>data[n]||[],prem:n=>({antecedencia:60,mesesNaoVera:6,urgente:30}[n]),
+const Central={dados:{resumo:{hoje:'2026-11-04'}},linhasRaw:n=>data[n]||[],prem:n=>({antecedencia:60,mesesNaoVera:6,urgente:30}[n]),keyMatches:core.keyMatches,
  em:(f,v)=>!f||!f.length||[].concat(f).map(String).includes(String(v))};
 vm.runInNewContext(fs.readFileSync('docs/central-cycle.js','utf8'),{Central,CampoManejo:{...M,today:()=> '2026-11-16'},parent:{CampoParque:{unifiedSnapshot:()=>mapData}},window:{}});
 const model=F=>Central.cycleMap.prepare(F),all=model({}),find=id=>all.rows.find(r=>r.id===id);
@@ -33,7 +34,8 @@ assert.equal(find('103').deadline,'2026-07-31','fallback calendar month clamps e
 assert.equal(all.point(find('103')),false,'missing coordinates remain in the filtered list');
 assert.equal(find('live-2').trecho,'T2');
 const ids=F=>Array.from(model(F).rows,r=>r.id).sort();
-assert.deepEqual(ids({planoGlobal:'P1',trP:['T1'],prazoP:['Fora do prazo']}),['v1']);
+assert.deepEqual(ids({planoGlobal:'P1',trP:['T1'],cycleStage:['Fora do prazo']}),['v1']);
+assert.deepEqual(ids({planoGlobal:[],poloGlobal:[],localidadeGlobal:[]}),ids({}),'cleared multiple global filters keep all matching rows');
 assert.deepEqual(ids({trP:['T2'],cyclePoda:['sim'],cycleProjection:['sim']}),['live-2']);
 assert.deepEqual(ids({alim:['A2'],mes:'2027-01'}),['102']);
 assert.deepEqual(ids({buscaT:'oiti editado',cycleRisk:['ALTO']}),['v1']);
