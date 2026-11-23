@@ -20,6 +20,11 @@
  <label class="route-keys">Chaves <textarea name="blocks" rows="3" placeholder="RBR554&#10;RBR444" aria-describedby="routeKeyHelp"></textarea><small id="routeKeyHelp">Separe por vírgula, espaço ou quebra de linha.</small></label></div>
  <div class="route-buttons"><button type="submit" class="primary">Aplicar filtros</button><button type="button" id="routeClearNetwork">Limpar filtro</button><button type="button" id="routeFilterMap" hidden>Ver no mapa</button></div>
  </form>
+ <div id="routeBlockSelection">
+ <label><input id="routeSelectByBlock" type="checkbox"> Selecionar por chave inteira</label>
+ <p id="routeBlockStatus" role="status"></p>
+ <ul id="routeBlockChoices" class="route-list"></ul>
+ </div>
  <p id="routeMapLegend" class="route-legend-mark" hidden>Vermelho: recorte filtrado. Roxo: vãos incluídos no plano.</p>
  <details><summary>Complemento cadastral local</summary><label>Catálogo VERA (.json.gz)<input type="file" id="routeReference" accept=".gz,application/gzip"></label><p id="routeReferenceStatus" role="status"></p></details>
  <p id="routeNetworkStatus" role="status">Deixe os trechos em branco para incluir todos.</p>
@@ -56,6 +61,75 @@
  const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
  let draft=[],candidates=[],filterKeys=[],previewComplete=false,extent=null,filterTimer,filterRequest=0,feedersList=new Set(),historyCapacity=false,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null,withdrawRoute=null,withdrawing=false;
  let teamByAccount=new Map(),publishedGroups=[],selectedPublished=new Set(),shownPublished=[];
+ const blockMode=$('routeSelectByBlock'),blockChoices=$('routeBlockChoices'),blockStatus=$('routeBlockStatus');
+ const chosenBlocks=new Map(),pendingBlocks=new Map();
+ function paintBlocks(){
+  const codes=[...new Set([...filterKeys,...candidates.map(({span})=>span.block).filter(Boolean),...chosenBlocks.keys(),...pendingBlocks.keys()])];
+  blockChoices.hidden=!blockMode.checked;
+  const selected=blockChoices.querySelector(':focus')?.dataset.block;
+  blockChoices.innerHTML=blockMode.checked?codes.map(code=>{
+   const spans=chosenBlocks.get(code),pending=pendingBlocks.has(code);
+   return `<li><label><input type="checkbox" data-block="${esc(code)}" ${spans||pending?'checked':''} ${job?'disabled':''}> <strong>${esc(code)}</strong>${pending?' · carregando':spans?' · '+spans.length+' vão(s) · '+km(M.metres(spans)):''}</label></li>`;
+  }).join(''):'';
+  if(selected)for(const input of blockChoices.querySelectorAll('input'))if(input.dataset.block===selected){input.focus({preventScroll:true});break;}
+ }
+ function resetBlocks(){
+  pendingBlocks.clear();chosenBlocks.clear();blockStatus.textContent='';
+ }
+ function rebuildBlocks(){
+  const previous=new Map(draft.map(span=>[span.id,span]));
+  const spans=[...new Map([...chosenBlocks.values()].flat().map(span=>[span.id,span])).values()];
+  draft=M.order(spans.map(span=>previous.get(span.id)||span),[...chosenBlocks.keys()]);
+  if(outlet&&!M.keySections(draft,outlet).length){
+   outlet=null;
+   $('routeOutletStatus').textContent='Saída ainda não vinculada';
+  }
+  draftId=null;filteredDraft=false;paintDraft();
+ }
+ async function selectBlock(code,wanted){
+  if(!blockMode.checked||job||!M.identifier(code))return;
+  if(!wanted){
+   pendingBlocks.delete(code);chosenBlocks.delete(code);
+   rebuildBlocks();
+   blockStatus.textContent=code+' removida da rota.';
+   return;
+  }
+  if(chosenBlocks.has(code)||pendingBlocks.has(code))return;
+  const ticket={};pendingBlocks.set(code,ticket);paintDraft();
+  const active=()=>blockMode.checked&&!job&&pendingBlocks.get(code)===ticket;
+  try{
+   const result=await window.CampoControlMap.routeNetwork({blocks:[code]});
+   if(!active())return;
+   const spans=[...new Map(result.features.map(feature=>{
+    const span=M.feature(feature);
+    return [span.id,span];
+   })).values()];
+   if(result.capped||result.missingColumns||spans.length!==result.total||spans.some(span=>span.block!==code))throw Error('A consulta não retornou o bloco inteiro.');
+   if(!spans.length)throw Error('Chave sem vãos MT na base.');
+   const unique=new Set([...draft,...spans].map(span=>span.id));
+   if(unique.size>10000)throw Error('O plano pode ter até 10.000 vãos.');
+   pendingBlocks.delete(code);chosenBlocks.set(code,spans);rebuildBlocks();
+   window.CampoControlMap?.routeOverlay?.(draft,null,true,M.bufferMetres(form.elements.buffer.value));
+   blockStatus.textContent=code+' incluída com '+spans.length+' vão(s) · '+km(M.metres(spans))+'.';
+  }catch(error){
+   if(!active())return;
+   pendingBlocks.delete(code);paintDraft();
+   blockStatus.textContent=code+' · '+error.message;
+  }
+ }
+ blockMode.onchange=()=>{
+  if(job){blockMode.checked=!blockMode.checked;return;}
+  if(draft.length&&!confirm('Limpar o plano atual e trocar o modo de seleção?')){blockMode.checked=!blockMode.checked;return;}
+  resetBlocks();draft=[];draftId=null;filteredDraft=false;outlet=null;
+  if(blockMode.checked)blockStatus.textContent='Filtre a rede ou selecione uma chave no mapa.';
+  $('routeOutletStatus').textContent='Saída ainda não vinculada';
+  window.CampoControlMap?.setRouteFilter(blockMode.checked?null:candidates.map(x=>x.feature));
+  paintDraft();
+ };
+ blockChoices.onchange=event=>{
+  const code=event.target.dataset.block;
+  if(code)void selectBlock(code,event.target.checked);
+ };
  const teamLabel=(id,name)=>teamByAccount.has(id)?teamByAccount.get(id)+' · '+name:name;
  const today=()=>M.day(Date.now());
  $('routeKpiStart').value=today().slice(0,7)+'-01';$('routeKpiEnd').value=today();form.elements.planStart.value=today();
@@ -64,9 +138,12 @@
  function checkpoint(){try{if(job)sessionStorage.setItem(jobKey,JSON.stringify(job));else sessionStorage.removeItem(jobKey);}catch{}}
  function paintCandidates(){
   const selected=new Set(draft.map(s=>s.id));
-  $('routeMapLegend').hidden=!candidates.length;
-  $('routeMatches').hidden=!candidates.length;
-  $('routeFilterMap').hidden=!candidates.length;
+  paintBlocks();
+  blockMode.disabled=Boolean(job);
+  $('routeMapLegend').hidden=blockMode.checked?!draft.length:!candidates.length;
+  $('routeMapLegend').textContent=blockMode.checked?'Roxo: blocos inteiros incluídos na rota.':'Vermelho: recorte filtrado. Roxo: vãos incluídos no plano.';
+  $('routeMatches').hidden=blockMode.checked||!candidates.length;
+  $('routeFilterMap').hidden=blockMode.checked?!draft.length:!candidates.length;
   $('routeCandidates').innerHTML=candidates.slice(0,250).map(({span:s})=>`<li><div><strong>${esc(s.id)}</strong><small>${esc([s.block,s.feeder,s.section?'T'+s.section:'',s.zone].filter(Boolean).join(' · '))}</small><small>${km(s.metres)}${s.estimated?' · pela geometria':''}${s.poles?.length?' · postes '+esc(s.poles.join(' / ')):''}</small></div><div class="route-buttons"><button type="button" data-focus="${esc(s.id)}">Enquadrar</button><button type="button" data-add="${esc(s.id)}" ${selected.has(s.id)?'disabled':''}>${selected.has(s.id)?'Na rota':'Adicionar'}</button></div></li>`).join('');
   $('routeAddAll').disabled=!previewComplete||!candidates.length||Boolean(job);
   $('routeAddAll').textContent='Usar todos os vãos no plano · '+km(M.metres(candidates.map(x=>x.span)));
@@ -86,7 +163,10 @@
  }
  search.addEventListener('input',editedFilters);
  $('routeClearNetwork').onclick=()=>{clearTimeout(filterTimer);search.reset();if(filteredDraft&&!job){draft=[];draftId=null;filteredDraft=false;}clearNetwork();paintDraft();searchStatus.textContent='Filtro limpo.';};
- $('routeFilterMap').onclick=()=>window.CampoControlMap?.setRouteFilter(candidates.map(x=>x.feature),true,true,extent);
+ $('routeFilterMap').onclick=()=>{
+  if(blockMode.checked)window.CampoControlMap?.routeOverlay?.(draft,null,true,M.bufferMetres(form.elements.buffer.value));
+  else window.CampoControlMap?.setRouteFilter(candidates.map(x=>x.feature),true,true,extent);
+ };
  $('routeReference').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;
   const note=$('routeReferenceStatus'),input=e.target;input.disabled=true;
@@ -129,12 +209,13 @@
    if(result.missingColumns)info.push('A consulta está incompleta: faltam campos no GPKG e a referência por ID não está disponível. Importe o complemento cadastral por ID nesta tela.');
    if(!candidates.length&&!result.missingColumns)info.push(bounds?'Nenhum vão na área atual. Desmarque Limitar à área visível para consultar todo o alimentador.':'O recorte não contém vãos com essa combinação de filtros.');
    if(invalid||result.features.length<Math.min(result.total,10000))info.push('Alguns registros estão sem ID, geometria ou extensão utilizável.');
+   if(blockMode.checked)info.push('Marque as chaves abaixo. Cada chave carrega o bloco inteiro, inclusive fora deste recorte.');
    searchStatus.textContent=info.join(' ');
-   if(previewComplete&&candidates.length&&(!draft.length||filteredDraft)){
+   if(!blockMode.checked&&previewComplete&&candidates.length&&(!draft.length||filteredDraft)){
     draft=M.order(candidates.map(x=>x.span),filterKeys);filteredDraft=true;draftId=null;
     if(!form.elements.name.value&&feeders.length===1)form.elements.name.value=('Vistoria '+feeders[0]+(sections.length?' '+sections.map(section=>'T'+section).join('+'):'' )).slice(0,100);
    }
-   window.CampoControlMap.setRouteFilter(candidates.map(x=>x.feature),Boolean(candidates.length),scroll&&Boolean(candidates.length),extent);
+   window.CampoControlMap.setRouteFilter(blockMode.checked?null:candidates.map(x=>x.feature),Boolean(candidates.length),scroll&&Boolean(candidates.length),extent);
    paintDraft();
   }catch(error){if(serial===filterRequest){searchStatus.textContent=error.message;previewComplete=false;paintCandidates();}}
   finally{if(serial===filterRequest)button.disabled=false;}
@@ -165,7 +246,10 @@
   $('routeMissingData').hidden=!missing;
   paintDeadline();
   $('routeAssign').textContent=job?'Retomar atribuição':filteredDraft?'Publicar rota filtrada':'Atribuir rota';
-  $('routeDraftList').hidden=draft.length>250;
+  $('routeDraftList').hidden=blockMode.checked||draft.length>250;
+  $('routeImport').disabled=blockMode.checked;
+  $('routeAssign').disabled=publishing||pendingBlocks.size>0;
+  if(!selecting)$('routePick').textContent=blockMode.checked?'Selecionar chaves no mapa':'Selecionar vãos no mapa';
   const paths=M.pendingPaths(draft,new Map()),stops=M.roadStops(paths),road=$('routeRoad');
   road.hidden=!stops.length;
   if(stops.length){
@@ -209,8 +293,8 @@
   status.textContent=draft.length+' vão(s) no plano.';
  }
  $('routePick').onclick=()=>{
-  selecting=!selecting;$('routePick').setAttribute('aria-pressed',selecting);$('routePick').textContent=selecting?'Encerrar seleção':'Selecionar vãos no mapa';
-  status.textContent=selecting?'Clique nos vãos da rede MT abaixo. A ordem dos cliques define a rota.':'Seleção encerrada.';
+  selecting=!selecting;$('routePick').setAttribute('aria-pressed',selecting);$('routePick').textContent=selecting?'Encerrar seleção':blockMode.checked?'Selecionar chaves no mapa':'Selecionar vãos no mapa';
+  status.textContent=selecting?(blockMode.checked?'Clique em um vão da rede MT para marcar ou desmarcar a chave inteira.':'Clique nos vãos da rede MT abaixo. A ordem dos cliques define a rota.'):'Seleção encerrada.';
  };
  $('routeImport').onchange=async e=>{
   try{const f=e.target.files[0];if(!f)return;if(f.size>3000000)throw Error('Importe somente o recorte da rota.');
@@ -242,11 +326,11 @@
  };
  form.onsubmit=async e=>{
   e.preventDefault();
-  if(publishing)return;
+  if(publishing||pendingBlocks.size)return;
   if(!draft.length&&!job){status.textContent='Selecione pelo menos um vão.';return;}
   if(!job){
    const keyGroups=M.keySections(draft,outlet);
-   if(draft.some(span=>span.block)&&!keyGroups.length){
+   if(!blockMode.checked&&draft.some(span=>span.block)&&!keyGroups.length){
     status.textContent='Marque a saída da subestação com a rede T1 conectada para habilitar a vistoria por chave.';return;
    }
    const known=new Set(keyGroups.flatMap(key=>key.segments.flatMap(segment=>segment.ids)));
@@ -256,6 +340,7 @@
    const gaps=ordered.slice(1).filter((s,i)=>M.distance(M.last(ordered[i]),M.first(s))>25);
    const parts=M.routeParts(ordered);
    const notices=[];
+   if(blockMode.checked&&!keyGroups.length)notices.push('Sem saída T1 vinculada, o inspetor acompanha esta rota por GPS e vão.');
    if(keyGroups.length&&draft.some(span=>span.block&&!known.has(span.id)))notices.push('Parte da rede não tem continuidade comprovada com a saída escolhida e ficará disponível para GPS/vão.');
    if(parts.length>160){status.textContent='O recorte excedeu o tamanho de uma rota. Refine os filtros e tente novamente.';return;}
    if(parts.length>1)notices.push('O inspetor verá a rota inteira no mapa e poderá seguir '+parts.length+' partes numeradas.');
@@ -281,7 +366,7 @@
     if(job!==batch)return;
     batch.index++;checkpoint();
    }
-   draft=[];outlet=null;$('routeOutletStatus').textContent='Saída ainda não vinculada';job=null;checkpoint();draftId=null;filteredDraft=false;form.reset();form.elements.planStart.value=today();historyCapacity=false;paintDraft();
+   resetBlocks();draft=[];outlet=null;$('routeOutletStatus').textContent='Saída ainda não vinculada';job=null;checkpoint();draftId=null;filteredDraft=false;form.reset();form.elements.planStart.value=today();historyCapacity=false;paintDraft();
    status.textContent='Rota disponível para o inspetor em Minhas rotas.';
    try{await refresh();}catch{status.textContent+=' Use Atualizar para recarregar a lista de rotas.';}
   }catch(error){
@@ -504,6 +589,21 @@
    const layer=String(f.properties?._layer||'').normalize('NFD').toUpperCase().replace(/[^A-Z0-9]/g,'');
    if(!f.geometry?.type?.endsWith('LineString')||(f.properties?._class&&f.properties._class!=='MT'&&!/VAO.*(?:MT|PRIMARIA)|REDE.*(?:MT|PRIMARIA)/.test(layer)))return false;
    const candidate=candidates.find(x=>x.feature.id===f.id);
+   if(blockMode.checked){
+    const toggle=span=>{
+     if(!span.block){blockStatus.textContent='Vão sem chave cadastrada.';return;}
+     void selectBlock(span.block,!chosenBlocks.has(span.block)&&!pendingBlocks.has(span.block));
+    };
+    if(candidate){toggle(candidate.span);return true;}
+    try{const span=M.feature(f);if(span.block||!f.id){toggle(span);return true;}}catch{}
+    const serial=filterRequest;
+    void window.CampoControlMap.routeNetwork({featureId:f.id}).then(result=>{
+     if(!selecting||!blockMode.checked||serial!==filterRequest||job)return;
+     if(!result.features.length)throw Error('Vão MT indisponível na base instalada.');
+     toggle(M.feature(result.features[0]));
+    }).catch(error=>{if(selecting&&blockMode.checked&&serial===filterRequest)blockStatus.textContent=error.message;});
+    return true;
+   }
    if(candidate){add([candidate.span]);return true;}
    if(!f.id){try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;}
    const serial=filterRequest;
@@ -527,6 +627,6 @@
    }catch{}
    load();
   },
-  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
+  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;blockMode.checked=false;resetBlocks();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();
