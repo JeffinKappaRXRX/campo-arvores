@@ -61,13 +61,13 @@ const read=file=>fs.readFileSync(file,'utf8');
  assert.deepEqual(query({blocks:['RBR6496'],sections:['1','2'],zone:'URBANO'}).features.map(f=>M.feature(f).id),['6784695']);
  const dom=new JSDOM('<main><div id="mapFrame"><div id="controlMap"></div></div></main>',{runScripts:'outside-only',url:'https://campo.test'});
  const w=dom.window,d=w.document,$=id=>d.getElementById(id);
- let onMap,submitted,response=network,failPart=false;
+ let onMap,submitted,overlays,response=network,failPart=false;
  const attempts=[];
  w.CampoControl={authorized:()=>true,api:async(path,body)=>{
   if(body){submitted=JSON.parse(JSON.stringify(body));attempts.push(submitted);if(failPart&&body.name.endsWith("(2/2)"))throw Error("Rede indisponível");return {};}
   return path.endsWith('users')?{users:[{id:'inspetor',name:'Inspetor',passwordConfigured:true}]}:{routes:[],visits:[]};
  }};
- w.CampoControlMap={routeNetwork:async filters=>{assert.deepEqual(JSON.parse(JSON.stringify(filters)),expected);return response;},setRouteFilter:features=>{onMap=features?Array.from(features,f=>f.properties.Id):undefined;},routeOverlay(){},pickOutlet(callback){callback([...response.features[0].geometry.coordinates[0]]);}};
+ w.CampoControlMap={routeNetwork:async filters=>{assert.deepEqual(JSON.parse(JSON.stringify(filters)),expected);return response;},setRouteFilter:features=>{onMap=features?Array.from(features,f=>f.properties.Id):undefined;},routeOverlay(){},routeOverlayGroups(groups){overlays=groups;},pickOutlet(callback){callback([...response.features[0].geometry.coordinates[0]]);}};
  w.confirm=()=>true;w.TextEncoder=TextEncoder;
  for(const f of ['docs/route-core.js','docs/route-planner.js'])vm.runInContext(read(f),dom.getInternalVMContext());
  assert.equal($('routePlanner').nextElementSibling,$('mapFrame'));
@@ -124,15 +124,27 @@ const read=file=>fs.readFileSync(file,'utf8');
  w.CampoControl.api=async(path,body)=>{
   if(path==='/api/routes/return'){withdrawnPayload=JSON.parse(JSON.stringify(body));withdrawn=true;return {returned:{...body,reason:'Reatribuição pela gestão'}};}
   if(path.endsWith('users'))return {users:[{id:'inspetor',name:'Inspetor',passwordConfigured:true}]};
+  if(path.endsWith('/equipes'))return {teams:[{id:'team-1',name:'BV-MT01'}],members:[{userId:'inspetor',teamId:'team-1'}]};
   const route=withdrawn?{...managementRoute,returned:{reason:'Reatribuição pela gestão',actorName:'Gestor',createdAt:'2026-11-18T20:00:00Z',note:'Troca de equipe'}}:managementRoute;
-  return {routes:[route],visits:[]};
+  const extra={...managementRoute,id:'second-managed-route',name:'Segunda rota'};
+  return {routes:[route,extra],visits:[]};
  };
  $('routeRefresh').click();await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal($('routeOperator').options[1].textContent,'BV-MT01 · Inspetor');
+ $('routeShowAll').click();
+ assert.equal(overlays.length,2);
+ assert(overlays.every(overlay=>overlay.label.startsWith('BV-MT01 · Inspetor')));
+ $('routeClearPublished').click();
+ assert.equal(overlays.length,0);
+ const choice=$('routePublished').querySelector('[data-route-choice]');choice.click();
+ $('routeShowSelected').click();assert.equal(overlays.length,1);
+ $('routePublished').querySelector('[data-route-map="second-managed-route"]').click();
+ assert.equal(overlays.length,1);assert.match(overlays[0].label,/Segunda rota/);
  const withdrawButton=$('routePublished').querySelector('[data-route-withdraw]');assert(withdrawButton);withdrawButton.click();
  assert.equal($('routeWithdrawDialog').hasAttribute('open'),true);$('routeWithdrawReason').value='gestao_reatribuicao';$('routeWithdrawNote').value='Troca de equipe';
  $('routeWithdrawForm').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,10));
  assert.equal(withdrawnPayload.routeId,'managed-route');assert.equal(withdrawnPayload.reasonCode,'gestao_reatribuicao');
- assert.match($('routePublished').textContent,/DEVOLVIDA/);assert.equal($('routePublished').querySelector('[data-route-withdraw]'),null);
+ assert.match($('routePublished').textContent,/DEVOLVIDA/);assert.equal($('routePublished').querySelector('[data-route-withdraw="managed-route"]'),null);
  dom.window.close();db.close();
  console.log('PASS: filtro SQL exato, atribuição e retirada administrativa da rota pela gestão.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

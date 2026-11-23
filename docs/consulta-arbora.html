@@ -26,7 +26,7 @@
   </header>
   <main class="shell">
     <section class="intro">
-      <div><h1>Inspeções e cadastros</h1><p>Produtividade dos inspetores e cobertura das rotas de vegetação.</p></div>
+      <div><h1>Inspeções e cadastros</h1><p>Produtividade das equipes e cobertura das rotas de vegetação.</p></div>
       <span id="updated"></span>
     </section>
     <section class="panel login" id="login">
@@ -43,7 +43,7 @@
         <div class="filter-grid">
           <label>De<input type="date" name="from"></label>
           <label>Até<input type="date" name="to"></label>
-          <label>Inspetor<select name="inspector"><option value="">Todos</option></select></label>
+          <label>Equipe<select name="inspector"><option value="">Todos</option></select></label>
         </div>
         <p id="dataStatus" role="status"></p>
       </form>
@@ -64,20 +64,25 @@
           <p>Estimativa pelo tempo ativo medido nos cadastros filtrados. Deslocamento, pausas e sincronização ficam fora do tempo ativo.</p><h3>Posição em relação à rede</h3><div id="positions"></div>
         </article>
         <article class="panel full">
-          <h2>Produtividade por inspetor</h2>
+          <h2>Produtividade por equipe</h2>
           <div id="inspectors" class="table-wrap"></div>
           <h3>Cadastros por alimentador</h3><div id="feedersKpi" class="table-wrap"></div>
         </article>
       </section>
       <section class="panel" id="routesPanel">
-        <h2>KPI de rotas por inspetor</h2>
+        <h2>KPI de rotas por equipe</h2>
         <p>O cumprimento compara a rede vistoriada com a meta do período selecionado.</p>
         <div id="routes" class="table-wrap"></div>
-        <h3>Mapa por rota</h3>
-        <label>Selecione uma rota<select id="routeSelect"><option value="">Selecione</option></select></label>
+        <h3>Rotas no mapa</h3>
+        <div class="actions">
+          <button type="button" id="routeViewSelected" disabled>Ver selecionadas</button>
+          <button type="button" id="routeViewAll" disabled>Ver todas as rotas</button>
+          <button type="button" id="routeClearMap" disabled>Limpar mapa</button>
+        </div>
+        <div id="routeChoices" class="table-wrap"></div>
         <p id="routeMapStatus" role="status"></p>
         <div id="map" aria-label="Mapa de cobertura da rota" hidden></div>
-        <div id="legend" class="legend" hidden><span><i style="background:#168756"></i>Vistoriado</span><span><i style="background:#ee344a"></i>Pendente</span><span><i style="background:#255fa5"></i>Saída da subestação</span></div>
+        <div id="routeMapLabels" class="legend"></div><div id="legend" class="legend" hidden><span><i style="background:#168756"></i>Vistoriado</span><span><i style="background:#ee344a"></i>Pendente</span><span><i style="background:#255fa5"></i>Saída da subestação</span></div>
       </section>
     </div>
   </main>

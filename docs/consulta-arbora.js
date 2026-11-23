@@ -11,7 +11,8 @@
  const pct=value=>value.toLocaleString('pt-BR',{style:'percent',maximumFractionDigits:1});
  const fields=$('filters').elements;
  fields.from.value=today.slice(0,7)+'-01';fields.to.value=today;
- let data,current,map,routeLayer,loadSerial=0,mapSerial=0,loading=false;
+ let data,current,map,routeLayer,loadSerial=0,loading=false;
+ let availableRoutes=[],selectedRoutes=new Set(),shownRoutes=[],viewMode=null,mapSignature='',mapController=null;
  function filterValues(){
   return {from:fields.from.value,through:fields.to.value,inspectors:fields.inspector.value?[fields.inspector.value]:[]};
  }
@@ -35,7 +36,7 @@
   if(!current)return;
   const {summary,daily,operators,todayInPeriod}=current;
   CampoForecast.paint({summary,daily});
-  const count=daily.find(row=>row.name===today)?.count||0,goal=100*operators.length,minimum=70*operators.length;
+  const count=daily.find(row=>row.name===today)?.count||0,people=operators.reduce((sum,team)=>sum+team.operatorCount,0),goal=100*people,minimum=70*people;
   $('dailyGoal').textContent=todayInPeriod&&goal?fmt(count)+' hoje · '+pct(count/goal)+' da meta de '+fmt(goal)+' cadastros'+(count<minimum?' · faltam '+fmt(minimum-count)+' para o mínimo':''):'';
  }
  function productivity(rows,operators,todayInPeriod){
@@ -58,41 +59,80 @@
   $('positions').innerHTML=F.group(rows,'position').map(row=>'<div class="position"><span>'+esc(row.name)+'</span><meter max="'+summary.count+'" value="'+row.count+'"></meter><b>'+fmt(row.count)+'</b></div>').join('')||'<p>Nenhum cadastro de campo no período.</p>';
   $('feedersKpi').innerHTML=table(['Alimentador','Cadastros','Poda','Tempo médio'],F.group(rows,'feeder').map(row=>[esc(row.name),fmt(row.count),fmt(row.poda),duration(row.mean)]),'Nenhum alimentador no recorte.');
   const groups=new Map(F.group(rows,'inspector').map(row=>[row.name,row]));
-  $('inspectors').innerHTML=table(['Inspetor','Cadastros','Tempo médio','Mediana','Cadastros / hora ativa','Tempo medido','Poda','Sem identificação','Incompletos','Hoje','Meta diária'],operators.map(name=>{
-   const row=groups.get(name)||F.summary([]);
-   const todayCount=rows.filter(record=>record.day===today&&record.inspector===name).length;
-   return [esc(name),fmt(row.count),duration(row.mean),duration(row.median),fmt(row.measured/row.hours),fmt(row.measured)+' / '+fmt(row.count),fmt(row.poda),fmt(row.identification),fmt(row.missing),todayInPeriod?fmt(todayCount):'—',todayInPeriod?pct(todayCount/100):'—'];
+  $('inspectors').innerHTML=table(['Equipe','Cadastros','Tempo médio','Mediana','Cadastros / hora ativa','Tempo medido','Poda','Sem identificação','Incompletos','Hoje','Meta diária'],operators.map(team=>{
+   const row=groups.get(team.id)||F.summary([]);
+   const todayCount=rows.filter(record=>record.day===today&&record.inspector===team.id).length;
+   return [esc(team.label),fmt(row.count),duration(row.mean),duration(row.median),fmt(row.measured/row.hours),fmt(row.measured)+' / '+fmt(row.count),fmt(row.poda),fmt(row.identification),fmt(row.missing),todayInPeriod?fmt(todayCount):'—',todayInPeriod?pct(todayCount/(100*team.operatorCount)):'—'];
   }),'Nenhum inspetor divulgado.');
  }
  function routes(filter,list,operators){
   const summaries=new Map(F.routeSummary(list,filter,today).map(row=>[row.name,row]));
-  $('routes').innerHTML=table(['Inspetor','Meta','Rede vistoriada creditada','Cumprimento','Rede paralela','GPS','Dias de saída','Situação até a data'],
-   operators.map(name=>{
-    const row=summaries.get(name);
-    if(!row)return [esc(name),'—','0,000 km','—','—','—','0','Sem meta ou vistoria no período'];
-    return [esc(name),km(row.due),km(row.done),row.due?pct(row.credited/row.due):'Sem meta',
-     km(row.shared),km(row.track),fmt(row.days.size),row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada'];
+  $('routes').innerHTML=table(['Equipe','Meta','Rede vistoriada creditada','Cumprimento','Rede paralela','GPS','Dias de saída','Situação até a data','Ver rota'],
+   operators.map(team=>{
+    const row=summaries.get(team.id),routeCount=list.filter(route=>route.inspector===team.id).length;
+    const view=routeCount?'<button type="button" data-team-map="'+esc(team.id)+'">'+(routeCount===1?'Ver rota':'Ver '+routeCount+' rotas')+'</button>':'—';
+    if(!row)return [esc(team.label),'—','0,000 km','—','—','—','0','Sem meta ou vistoria no período',view];
+    return [esc(team.label),km(row.due),km(row.done),row.due?pct(row.credited/row.due):'Sem meta',
+     km(row.shared),km(row.track),fmt(row.days.size),row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada',view];
    }),'Nenhum inspetor divulgado.');
-  const select=$('routeSelect'),old=select.value;
-  select.replaceChildren(new Option('Selecione uma rota',''));
-  for(const route of list)select.add(new Option(route.inspector+' · '+route.name,route.id));
-  if(list.some(route=>route.id===old))select.value=old;
-  else if(list.length===1)select.value=list[0].id;
-  select.disabled=!list.length;
+  availableRoutes=list;
+  if(viewMode==='all'||viewMode?.team){
+   for(const route of list)if(viewMode==='all'||route.inspector===viewMode.team)selectedRoutes.add(route.id);
+  }
+  paintRouteChoices();
+ }
+ function routeLabel(route){
+  const team=data.groups.find(group=>group.id===route.inspector);
+  return [team?.label,route.name].filter(Boolean).join(' · ');
+ }
+ function paintRouteButtons(){
+  $('routeViewSelected').disabled=!availableRoutes.some(route=>selectedRoutes.has(route.id));
+  $('routeViewAll').disabled=!availableRoutes.length;
+  $('routeClearMap').disabled=!shownRoutes.length&&!viewMode;
+ }
+ function paintRouteChoices(){
+  $('routeChoices').innerHTML=table(['Selecionar','Equipe e rota','Planejado','Vistoriado','Pendente','Ver rota'],availableRoutes.map(route=>[
+   '<input aria-label="Selecionar '+esc(routeLabel(route))+'" type="checkbox" data-route-choice="'+esc(route.id)+'"'+(selectedRoutes.has(route.id)?' checked':'')+'>',
+   esc(routeLabel(route)),km(route.planned),km(route.confirmed),km(route.pending),
+   '<button type="button" data-single-route="'+esc(route.id)+'">Ver rota</button>'
+  ]),'Nenhuma rota no filtro.');
+  paintRouteButtons();
+ }
+ function clearMap(){
+  shownRoutes=[];viewMode=null;
+  hideMap();
+  paintRouteButtons();
+ }
+ function showRoutes(ids,mode){
+  selectedRoutes=new Set(ids);
+  shownRoutes=ids;viewMode=mode;
+  paintRouteChoices();
+  void showMap(true);
  }
  function hideMap(message=''){
-  mapSerial++;
+  mapController?.abort();mapSignature='';
   routeLayer?.clearLayers();
   $('map').hidden=$('legend').hidden=true;
   $('routeMapStatus').textContent=message;
+  $('routeMapLabels').textContent='';
  }
  async function showMap(fit=true){
-  const id=$('routeSelect').value,route=data?.routes.find(item=>item.id===id);
-  if(!route){hideMap();return;}
-  const serial=++mapSerial;
+  const routes=availableRoutes.filter(route=>viewMode==='all'||(viewMode?.team?route.inspector===viewMode.team:shownRoutes.includes(route.id)));
+  if(!routes.length){hideMap();return;}
+  const signature=JSON.stringify(routes.map(route=>[route.id,route.revision,route.confirmed,route.pending,routeLabel(route)]));
+  if(signature===mapSignature&&!fit)return;
+  const controller=new AbortController();
+  mapController?.abort();mapController=controller;
   try{
-   const view=await api('rota?'+new URLSearchParams({id}));
-   if(serial!==mapSerial)return;
+   const views=new Map();
+   for(let start=0;start<routes.length;start+=12){
+    const params=new URLSearchParams({batch:'1'});
+    for(const route of routes.slice(start,start+12))params.append('id',route.id);
+    const result=await api('rota?'+params,{signal:controller.signal});
+    for(const view of result.routes)views.set(view.id,view);
+   }
+   if(controller.signal.aborted)return;
+   const tally=key=>routes.reduce((sum,route)=>sum+(views.has(route.id)?route[key]||0:0),0);
    $('map').hidden=$('legend').hidden=false;
    if(!map){
     map=L.map('map',{preferCanvas:true}).setView([-9.97,-67.81],11);
@@ -100,17 +140,30 @@
     routeLayer=L.featureGroup().addTo(map);
    }
    routeLayer.clearLayers();
-   for(const [kind,color] of [['pending','#ee344a'],['confirmed','#168756']]){
-    for(const line of view.lines[kind])L.polyline(line.map(([lon,lat])=>[lat,lon]),{color,weight:5}).addTo(routeLayer);
+   const colors=['#78b8ff','#c3a5ff','#ffa361','#f0d65c','#7ee5c0','#ff99b2'];
+   const labels=[];
+   for(const [i,route] of routes.entries()){
+    const view=views.get(route.id);
+    if(!view)continue;
+    const label=esc(routeLabel(route)),accent=colors[i%colors.length];
+    labels.push('<span><i style="background:'+accent+'"></i>'+label+'</span>');
+    for(const [kind,color] of [['pending','#ee344a'],['confirmed','#168756']]){
+     if(!view.lines[kind].length)continue;
+     const paths=view.lines[kind].map(line=>line.map(([lon,lat])=>[lat,lon]));
+     L.polyline(paths,{color:accent,weight:10,opacity:.85,interactive:false}).addTo(routeLayer);
+     L.polyline(paths,{color,weight:5}).addTo(routeLayer).bindTooltip(label);
+    }
+    if(view.outlet)L.circleMarker([view.outlet[1],view.outlet[0]],{radius:7,color:'#255fa5',fillOpacity:1}).addTo(routeLayer).bindTooltip('Saída da subestação · '+label);
+    for(const key of view.keys)L.circleMarker([key.point[1],key.point[0]],{radius:5,color:key.pending?'#ee344a':'#168756',fillOpacity:1}).addTo(routeLayer)
+     .bindTooltip(esc(key.code)+(key.pending?' · '+key.pending+' trecho(s) pendente(s)':' · encerrada')+' · '+label);
    }
-   if(view.outlet)L.circleMarker([view.outlet[1],view.outlet[0]],{radius:7,color:'#255fa5',fillOpacity:1}).addTo(routeLayer).bindTooltip('Saída da subestação');
-   for(const key of view.keys)L.circleMarker([key.point[1],key.point[0]],{radius:5,color:key.pending?'#ee344a':'#168756',fillOpacity:1}).addTo(routeLayer)
-    .bindTooltip(esc(key.code)+(key.pending?' · '+key.pending+' trecho(s) pendente(s)':' · encerrada'));
+   $('routeMapLabels').innerHTML=labels.join('');
    map.invalidateSize();
    if(fit&&routeLayer.getBounds().isValid())map.fitBounds(routeLayer.getBounds(),{padding:[26,26],maxZoom:17});
-   $('routeMapStatus').textContent=km(route.planned)+' planejados · '+km(route.confirmed)+' vistoriados na rota · '+km(route.pending)+' pendentes'+(route.keys?' · '+route.closed+'/'+route.keys+' chaves encerradas':'');
+   $('routeMapStatus').textContent=views.size+' rota(s) · '+km(tally('planned'))+' planejados · '+km(tally('confirmed'))+' vistoriados · '+km(tally('pending'))+' pendentes'+(tally('keys')?' · '+tally('closed')+'/'+tally('keys')+' chaves encerradas':'');
+   mapSignature=signature;
   }catch(error){
-   if(serial===mapSerial)hideMap(error.message);
+   if(!controller.signal.aborted)hideMap(error.message);
   }
  }
  function render(fit=true){
@@ -118,17 +171,16 @@
   const filter=filterValues(),invalid=filter.from&&filter.through&&filter.from>filter.through;
   $('dataStatus').textContent=invalid?'A data inicial deve ser anterior ou igual à data final.':
    !data.archiveAvailable?'Arquivo do Drive indisponível. Indicadores de cadastro mostram os dados da base central.':'';
-  const operators=invalid?[]:data.inspectors.filter(name=>!filter.inspectors.length||filter.inspectors.includes(name));
+  const operators=invalid?[]:data.groups.filter(team=>!filter.inspectors.length||filter.inspectors.includes(team.id));
   productivity(invalid?[]:F.apply(data.field,filter),operators,!invalid&&F.period(today,filter.from,filter.through));
-  const active=invalid?[]:data.routes.filter(route=>operators.includes(route.inspector));
+  const active=invalid?[]:data.routes.filter(route=>operators.some(team=>team.id===route.inspector));
   routes(filter,active,operators);
   void showMap(fit);
  }
  function lock(){
   data=current=null;loadSerial++;loading=false;
-  hideMap();
-  for(const id of ['metrics','daily','dailyGoal','forecast','forecastTarget','positions','inspectors','feedersKpi','routes'])$(id).textContent='';
-  $('routeSelect').replaceChildren(new Option('Selecione uma rota',''));
+  clearMap();availableRoutes=[];selectedRoutes.clear();paintRouteButtons();
+  for(const id of ['metrics','daily','dailyGoal','forecast','forecastTarget','positions','inspectors','feedersKpi','routes','routeChoices'])$(id).textContent='';
   fields.inspector.replaceChildren(new Option('Todos',''));
   $('sessionActions').hidden=$('workspace').hidden=true;
   $('login').hidden=false;$('updated').textContent='';
@@ -144,8 +196,8 @@
    if(serial!==loadSerial)return;
    data=result;
    const select=fields.inspector,old=select.value;
-   select.replaceChildren(new Option('Todos',''),...data.inspectors.map(name=>new Option(name,name)));
-   if(data.inspectors.includes(old))select.value=old;
+   select.replaceChildren(new Option('Todos',''),...data.groups.map(team=>new Option(team.label,team.id)));
+   if(data.groups.some(team=>team.id===old))select.value=old;
    $('updated').textContent='Atualizado em '+dateTime.format(new Date(data.updatedAt));
    render(fit);
   }catch(error){
@@ -174,7 +226,23 @@
  $('filters').onsubmit=event=>{event.preventDefault();render();};
  $('filters').onchange=()=>render();
  $('filters').onreset=()=>setTimeout(render,0);
- $('routeSelect').onchange=()=>void showMap();
+ $('routeChoices').onchange=event=>{
+  const id=event.target.dataset.routeChoice;
+  if(!id)return;
+  if(event.target.checked)selectedRoutes.add(id);else selectedRoutes.delete(id);
+  paintRouteButtons();
+ };
+ $('routeChoices').onclick=event=>{
+  const id=event.target.closest('[data-single-route]')?.dataset.singleRoute;
+  if(id)showRoutes([id],null);
+ };
+ $('routes').onclick=event=>{
+  const team=event.target.closest('[data-team-map]')?.dataset.teamMap;
+  if(team)showRoutes(availableRoutes.filter(route=>route.inspector===team).map(route=>route.id),{team});
+ };
+ $('routeViewSelected').onclick=()=>showRoutes(availableRoutes.filter(route=>selectedRoutes.has(route.id)).map(route=>route.id),null);
+ $('routeViewAll').onclick=()=>showRoutes(availableRoutes.map(route=>route.id),'all');
+ $('routeClearMap').onclick=()=>{selectedRoutes.clear();clearMap();paintRouteChoices();};
  $('refresh').onclick=()=>void load(false);
  $('logout').onclick=async()=>{
   try{

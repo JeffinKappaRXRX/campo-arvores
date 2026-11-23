@@ -3,10 +3,80 @@
  const root=document.getElementById('acessosGerenciais');
  const form=document.getElementById('gerencialInspectorForm'),choices=document.getElementById('gerencialInspectorChoices'),notice=document.getElementById('gerencialInspectorStatus');
  const submit=form.querySelector('button');
+ const teamForm=document.getElementById('gerencialTeamCreate'),teamLinks=document.getElementById('gerencialTeamLinks');
+ const showNames=document.getElementById('gerencialShowNames'),teamStatus=document.getElementById('gerencialTeamStatus');
+ const teamSubmit=teamForm.querySelector('button'),teamPath='/api/admin/gerencial/equipes';
+ let activeAccounts=[],teamState=null,configGeneration=0;
+ function renderTeams(){
+  if(!teamState||!window.CampoControl.authorized())return;
+  const assignments=new Map(teamState.members.map(row=>[row.userId,row.teamId]));
+  teamLinks.replaceChildren();
+  for(const account of activeAccounts){
+   const row=teamLinks.insertRow(),select=document.createElement('select');
+   row.insertCell().textContent=account.name;
+   select.setAttribute('aria-label','Equipe de '+account.name);
+   select.add(new Option('Sem equipe',''));
+   for(const team of teamState.teams)select.add(new Option(team.name,team.id));
+   select.value=assignments.get(account.id)||'';
+   select.onchange=async()=>{
+    const generation=configGeneration,previous=teamState.members.find(member=>member.userId===account.id)?.teamId||'';
+    select.disabled=true;
+    try{
+     const link=await window.CampoControl.api(teamPath,{action:'assign',userId:account.id,teamId:select.value||null});
+     if(generation!==configGeneration||!window.CampoControl.authorized())return;
+     teamState.members=teamState.members.filter(member=>member.userId!==account.id);
+     if(link.teamId)teamState.members.push(link);
+     teamStatus.textContent=link.teamId?'Equipe vinculada.':'Vínculo removido.';
+     window.dispatchEvent(new Event('campo-gerencial-equipes'));
+    }catch(error){
+     if(generation===configGeneration){select.value=previous;teamStatus.textContent=error.message;}
+    }finally{select.disabled=false;}
+   };
+   row.insertCell().append(select);
+  }
+  showNames.checked=teamState.showInspectorNames;
+  teamSubmit.disabled=showNames.disabled=false;
+ }
+ async function loadTeams(turn){
+  try{
+   const state=await window.CampoControl.api(teamPath);
+   if(turn!==configGeneration||!window.CampoControl.authorized())return;
+   teamState=state;renderTeams();
+  }catch(error){if(turn===configGeneration)teamStatus.textContent=error.message;}
+ }
+ teamForm.onsubmit=async event=>{
+  event.preventDefault();
+  const turn=configGeneration;
+  teamSubmit.disabled=true;
+  try{
+   const {team}=await window.CampoControl.api(teamPath,{action:'create',name:teamForm.elements.teamName.value});
+   if(turn!==configGeneration||!window.CampoControl.authorized())return;
+   teamForm.reset();
+   teamStatus.textContent='Equipe '+team.name+' criada.';
+   await loadTeams(turn);
+   window.dispatchEvent(new Event('campo-gerencial-equipes'));
+  }catch(error){if(turn===configGeneration)teamStatus.textContent=error.message;}
+  finally{if(turn===configGeneration)teamSubmit.disabled=!window.CampoControl.authorized();}
+ };
+ showNames.onchange=async()=>{
+  const turn=configGeneration,wanted=showNames.checked;
+  showNames.disabled=true;
+  try{
+   const result=await window.CampoControl.api(teamPath,{action:'visibility',showInspectorNames:wanted});
+   if(turn!==configGeneration||!window.CampoControl.authorized())return;
+   teamState.showInspectorNames=result.showInspectorNames;
+   teamStatus.textContent=wanted?'Nomes exibidos na visão gerencial.':'Visão gerencial atualizada com os nomes das equipes.';
+  }catch(error){
+   if(turn===configGeneration){showNames.checked=!wanted;teamStatus.textContent=error.message;}
+  }finally{if(turn===configGeneration)showNames.disabled=!window.CampoControl.authorized();}
+ };
  async function inspectors(){
+  const turn=++configGeneration;
   try{
    const {accounts,enabled}=await window.CampoControl.api('/api/admin/gerencial/inspetores');
-   if(!window.CampoControl.authorized())return;
+   if(turn!==configGeneration||!window.CampoControl.authorized())return;
+   activeAccounts=accounts;
+   void loadTeams(turn);
    const selected=new Set(enabled.map(account=>account.id));
    choices.replaceChildren(...accounts.map(account=>{
     const label=document.createElement('label'),input=document.createElement('input');
@@ -59,7 +129,8 @@
  refresh.onclick=()=>void load();
  more.onclick=()=>void load(true);
  window.addEventListener('campo-control-logout',()=>{
-  generation++;
+  generation++;configGeneration++;activeAccounts=[];teamState=null;
+  teamLinks.replaceChildren();teamForm.reset();showNames.checked=false;showNames.disabled=teamSubmit.disabled=true;teamStatus.textContent='';
   list.replaceChildren();
   choices.replaceChildren();submit.disabled=true;notice.textContent='';
   more.hidden=true;

@@ -43,18 +43,20 @@
  <div class="route-grid"><label>Dia da vistoria<input id="routeDay" type="date"></label><label>Mês da vistoria<input id="routeMonth" type="month"></label>
  <label>Inspetor<select id="routeOperator"><option value="">Todos</option></select></label><label>Recorte<input id="routeFilter" type="search" placeholder="Localidade, alimentador ou rota"></label>
  <label><span><input id="routeShowTests" type="checkbox"> Mostrar homologação</span></label><label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
- <p id="routeTotals" aria-live="polite"></p><p id="routeHistoryStatus" role="status"></p><div id="routePublished"></div></details>`;
+ <p id="routeTotals" aria-live="polite"></p><div class="route-buttons"><button type="button" id="routeShowSelected" disabled>Ver selecionadas</button><button type="button" id="routeShowAll" disabled>Ver todas as rotas</button><button type="button" id="routeClearPublished" disabled>Limpar mapa</button></div><p id="routeHistoryStatus" role="status"></p><div id="routePublished"></div></details>`;
  $('mapFrame').before(panel);
  const withdrawDialog=document.createElement('dialog');withdrawDialog.id='routeWithdrawDialog';withdrawDialog.className='route-return-dialog';
  withdrawDialog.innerHTML=`<form id="routeWithdrawForm"><div class="sectionhead"><div><span class="eyebrow">CONTROLE DA GESTÃO</span><h2>Retirar rota do inspetor</h2></div><button type="button" id="routeWithdrawClose" class="secondary">Fechar</button></div><p id="routeWithdrawSummary"></p><p><strong>Atenção:</strong> a rota sairá da carteira do inspetor na próxima sincronização. O histórico já recebido será preservado, mas uma saída ainda não sincronizada no aparelho poderá não ser aceita.</p><label>Motivo<select id="routeWithdrawReason" required><option value="">Selecione</option><option value="gestao_reatribuicao">Reatribuição ou ajuste da equipe</option><option value="gestao_correcao">Correção da rota</option><option value="gestao_homologacao">Homologação ou teste</option><option value="gestao_solicitacao">Solicitação do inspetor</option><option value="gestao_outro">Outro</option></select></label><label>Observação<textarea id="routeWithdrawNote" maxlength="480" rows="3" placeholder="Detalhe quando necessário"></textarea></label><p id="routeWithdrawFeedback" role="status"></p><button type="submit" class="primary" id="routeWithdrawConfirm">Retirar rota do inspetor</button></form>`;
  document.body.append(withdrawDialog);
  const kpis=document.createElement('article');kpis.className='panel route-card';kpis.id='routeKpis';
- kpis.innerHTML=`<div class="panel-head"><h3>KPI de rotas por inspetor</h3></div><div class="route-grid">
+ kpis.innerHTML=`<div class="panel-head"><h3>KPI de rotas por equipe e inspetor</h3></div><div class="route-grid">
  <label>De<input id="routeKpiStart" type="date"></label><label>Até<input id="routeKpiEnd" type="date"></label><label>Inspetor<select id="routeKpiOperator"><option value="">Todos</option></select></label>
  </div><div id="routeKpiTable" class="route-kpi-scroll" aria-live="polite"></div>`;
  $('mapFrame').after(kpis);
  const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
  let draft=[],candidates=[],filterKeys=[],previewComplete=false,extent=null,filterTimer,filterRequest=0,feedersList=new Set(),historyCapacity=false,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null,withdrawRoute=null,withdrawing=false;
+ let teamByAccount=new Map(),publishedGroups=[],selectedPublished=new Set(),shownPublished=[];
+ const teamLabel=(id,name)=>teamByAccount.has(id)?teamByAccount.get(id)+' · '+name:name;
  const today=()=>M.day(Date.now());
  $('routeKpiStart').value=today().slice(0,7)+'-01';$('routeKpiEnd').value=today();form.elements.planStart.value=today();
  const planned=routes=>[...new Map(routes.flatMap(r=>r.spans).map(s=>[s.id,s])).values()];
@@ -347,7 +349,8 @@
    reconciliation=' · SGM executada no período '+km(totals.executed)+' · pendente na referência '+km(totals.pending)+' · sem OS VERA '+km(totals.none)+' · sem chave '+km(totals.unclassified)+' · demais '+km(totals.noDate);
   }
   $('routeTotals').textContent='Planejado '+km(total)+' · confirmado no período '+km(period)+' · crédito paralelo '+km(periodCoverage.sharedMetres)+' · total creditado '+km(period+periodCoverage.sharedMetres)+' · GPS registrado '+km(track)+' · falta na campanha '+km(Math.max(0,total-all))+reconciliation;
-  $('routePublished').innerHTML=M.campaignParts(routes).map(parts=>{
+  publishedGroups=M.campaignParts(routes);
+  $('routePublished').innerHTML=publishedGroups.map(parts=>{
    const r=parts[0],routeSpans=parts.flatMap(part=>part.spans),routeIds=new Set(parts.map(part=>part.id));
    const related=snapshot.visits.filter(v=>routeIds.has(v.routeId)),done=M.coverage(routeSpans,related),last=related.at(-1),returned=r.returned;
    const total=M.metres(routeSpans),remaining=Math.max(0,total-done.metres),credited=done.metres+done.sharedMetres,targets=M.schedule(r.plan,total);
@@ -355,10 +358,43 @@
    const shared=done.sharedMetres?' · '+km(done.sharedMetres)+' de outros alimentadores · '+extras.length+' vãos concluídos'+(codes.length?' ('+codes.join(', ')+')':''):'';
    const inFilter=M.coverage(routeSpans,related,v=>inPeriod(v.day)).metres;
    const returnedText=returned?`<p><strong>DEVOLVIDA · ${esc(returned.reason)}</strong> · por ${esc(returned.actorName)} em ${esc(new Date(returned.createdAt).toLocaleString('pt-BR'))}${returned.note?' · '+esc(returned.note):''}${returned.authorizedBy?' · autorizada por '+esc(returned.authorizedBy.name):''}</p>`:'';
-   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}${isTest(r)?' · Homologação':''}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(r.operator)}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><div class="route-buttons"><button type="button" data-route-map="${esc(r.id)}">${returned?'Ver rota devolvida':remaining>.001?'Ver rota e pendências':'Ver cobertura'}</button>${returned?'':`<button type="button" class="secondary" data-route-withdraw="${esc(r.id)}">Retirar do inspetor</button>`}${!r.outlet&&!returned?`<button type="button" class="secondary" data-route-outlet="${esc(r.id)}">Vincular saída da subestação</button>`:''}${isTest(r)?`<button type="button" class="secondary" data-route-test-delete="${esc(r.id)}">Excluir homologação</button>`:`<button type="button" class="secondary" data-route-test-mark="${esc(r.id)}">Marcar como homologação</button>`}</div></div>`;
+   return `<div class="route-result"><strong>${esc(r.campaign?.name||r.name)}${isTest(r)?' · Homologação':''}</strong><small>${esc(r.locality)} · ${esc(r.feeder)} · ${esc(M.sectionLabel(r))} ${esc(r.zone)} · ${esc(teamLabel(r.assignee,r.operator))}</small>${returnedText}<p><strong>${km(total)} planejados</strong> · ${km(done.metres)} confirmados na rota · ${km(credited)} creditados no total · ${km(remaining)} pendentes${day||month?' · '+km(inFilter)+' vistoriados no período':''}${last?' · última em '+esc(last.day):''}${esc(shared)}${targets.length?' · prazo '+esc(targets.at(-1).day.split('-').reverse().join('/')):''}</p><div class="route-buttons"><label class="map-check"><input type="checkbox" data-route-choice="${esc(r.id)}"${selectedPublished.has(r.id)?' checked':''}> Selecionar para o mapa</label><button type="button" data-route-map="${esc(r.id)}">Ver rota</button>${returned?'':`<button type="button" class="secondary" data-route-withdraw="${esc(r.id)}">Retirar do inspetor</button>`}${!r.outlet&&!returned?`<button type="button" class="secondary" data-route-outlet="${esc(r.id)}">Vincular saída da subestação</button>`:''}${isTest(r)?`<button type="button" class="secondary" data-route-test-delete="${esc(r.id)}">Excluir homologação</button>`:`<button type="button" class="secondary" data-route-test-mark="${esc(r.id)}">Marcar como homologação</button>`}</div></div>`;
   }).join('')||'<p>Nenhuma rota neste filtro.</p>';
+  paintRouteMapButtons();
   paintKpis();
  }
+ function paintRouteMapButtons(){
+  $('routeShowSelected').disabled=!publishedGroups.some(group=>selectedPublished.has(group[0].id));
+  $('routeShowAll').disabled=!publishedGroups.length;
+  $('routeClearPublished').disabled=!shownPublished.length;
+ }
+ function showPublished(groups,focus=true){
+  if(focus)clearNetwork();
+  const colors=['#78b8ff','#c3a5ff','#ffae77','#f0d65c','#7ee5c0','#ff99b2'];
+  const overlays=groups.map((parts,index)=>{
+   const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+   const cover=M.coverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId)));
+   return {spans,covered:cover.bySpan,buffer:M.bufferMetres(route.buffer),outlet:route.outlet,
+    label:teamLabel(route.assignee,route.operator)+' · '+(route.campaign?.name||route.name),accent:colors[index%colors.length]};
+  });
+  shownPublished=groups.map(group=>group[0].id);
+  if(window.CampoControlMap?.routeOverlayGroups)window.CampoControlMap.routeOverlayGroups(overlays,focus);
+  else if(overlays.length===1)window.CampoControlMap?.routeOverlay?.(overlays[0].spans,overlays[0].covered,focus,overlays[0].buffer);
+  $('routeHistoryStatus').textContent=groups.length?groups.length+' rota(s) no mapa. Verde indica trechos vistoriados e vermelho indica pendências.':'';
+  paintRouteMapButtons();
+ }
+ $('routePublished').onchange=e=>{
+  const id=e.target.dataset.routeChoice;
+  if(!id)return;
+  if(e.target.checked)selectedPublished.add(id);else selectedPublished.delete(id);
+  paintRouteMapButtons();
+ };
+ $('routeShowSelected').onclick=()=>showPublished(publishedGroups.filter(group=>selectedPublished.has(group[0].id)));
+ $('routeShowAll').onclick=()=>showPublished(publishedGroups);
+ $('routeClearPublished').onclick=()=>{
+  showPublished([],false);
+  selectedPublished.clear();paint();
+ };
  $('routePublished').onclick=async e=>{
    const {routeOutlet:legacyOutlet,routeTestDelete:remove,routeTestMark:mark}=e.target.dataset;
    const historyStatus=$('routeHistoryStatus');
@@ -387,11 +423,8 @@
     withdrawRoute=parts[0];$('routeWithdrawForm').reset();$('routeWithdrawFeedback').textContent='';$('routeWithdrawSummary').textContent=(withdrawRoute.campaign?.name||withdrawRoute.name)+' · '+withdrawRoute.operator+' · '+withdrawRoute.feeder;
     if(typeof withdrawDialog.showModal==='function')withdrawDialog.showModal();else withdrawDialog.setAttribute('open','');return;
    }
-   const parts=M.campaignParts(snapshot.routes).find(group=>group[0].id===e.target.dataset.routeMap);if(!parts)return;
-  const spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
-  const cover=M.coverage(spans,snapshot.visits.filter(v=>ids.has(v.routeId)));
-  clearNetwork();
-  window.CampoControlMap?.routeOverlay?.(spans,cover.bySpan,true,M.bufferMetres(parts[0].buffer));
+   const group=publishedGroups.find(parts=>parts[0].id===e.target.dataset.routeMap);
+   if(group)showPublished([group]);
  };
  const closeWithdraw=()=>{if(withdrawing)return;withdrawRoute=null;if(typeof withdrawDialog.close==='function')withdrawDialog.close();else withdrawDialog.removeAttribute('open');};
  $('routeWithdrawClose').onclick=closeWithdraw;
@@ -429,20 +462,33 @@
   }
   if(!rows.size){table.textContent='Nenhuma rota com meta ou vistoria no período.';return;}
   const pct=f=>f.toLocaleString('pt-BR',{style:'percent',maximumFractionDigits:1});
-   table.innerHTML='<table><thead><tr><th>Inspetor</th><th>Meta</th><th>Rede vistoriada creditada</th><th>Cumprimento</th><th>Desse total, rede paralela</th><th>GPS</th><th>Dias de saída</th><th>Situação até a data</th></tr></thead><tbody>'+[...rows.values()].map(row=>'<tr><td>'+esc(row.name)+'</td><td>'+km(row.due)+'</td><td>'+km(row.done)+'</td><td>'+(row.due?pct(row.credited/row.due):'Sem meta')+'</td><td>'+km(row.shared)+'</td><td>'+km(row.track)+'</td><td>'+row.days.size+'</td><td>'+(row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada')+'</td></tr>').join('')+'</tbody></table>';
+   table.innerHTML='<table><thead><tr><th>Equipe / inspetor</th><th>Meta</th><th>Rede vistoriada creditada</th><th>Cumprimento</th><th>Desse total, rede paralela</th><th>GPS</th><th>Dias de saída</th><th>Situação até a data</th><th>Ver rota</th></tr></thead><tbody>'+[...rows.entries()].map(([id,row])=>'<tr><td>'+esc(teamLabel(id,row.name))+'</td><td>'+km(row.due)+'</td><td>'+km(row.done)+'</td><td>'+(row.due?pct(row.credited/row.due):'Sem meta')+'</td><td>'+km(row.shared)+'</td><td>'+km(row.track)+'</td><td>'+row.days.size+'</td><td>'+(row.lag?row.lag+' rota(s) abaixo da meta acumulada':row.expected?'Em dia com o plano':row.due?'Meta futura':'Sem meta registrada')+'</td><td><button type="button" data-kpi-map="'+esc(id)+'">Ver rotas</button></td></tr>').join('')+'</tbody></table>';
  }
+ $('routeKpiTable').onclick=e=>{
+  const id=e.target.dataset.kpiMap;
+  if(id)showPublished(M.campaignParts(snapshot.routes.filter(route=>route.assignee===id&&!route.returned&&!isTest(route))));
+ };
  for(const id of ['routeKpiStart','routeKpiEnd','routeKpiOperator'])$(id).addEventListener('input',paintKpis);
  async function refresh(){
   if(!window.CampoControl?.authorized())return;
-  const [state,accounts]=await Promise.all([api('/api/routes'),api('/api/admin/users')]);if(!window.CampoControl?.authorized())return;snapshot=state;
+  const [state,accounts,teams]=await Promise.all([api('/api/routes'),api('/api/admin/users'),api('/api/admin/gerencial/equipes').catch(()=>({}))]);
+  if(!window.CampoControl?.authorized())return;
+  snapshot=state;
+  const names=new Map((teams.teams||[]).map(team=>[team.id,team.name]));
+  teamByAccount=new Map((teams.members||[]).filter(member=>names.has(member.teamId)).map(member=>[member.userId,names.get(member.teamId)]));
   const users=(accounts.users||[]).filter(u=>!u.blocked&&!u.deleted_at&&u.passwordConfigured);
   for(const select of [form.elements.assignee,$('routeOperator'),$('routeKpiOperator')]){
    const old=select.value;select.replaceChildren(new Option(select===form.elements.assignee?'Selecione':'Todos',''));
-   for(const u of users)select.add(new Option(u.name,u.id));select.value=old;
+   for(const u of users)select.add(new Option(teamLabel(u.id,u.name),u.id));select.value=old;
   }
   paint();
+  if(shownPublished.length){
+   const shown=new Set(shownPublished);
+   showPublished(M.campaignParts(snapshot.routes).filter(group=>shown.has(group[0].id)),false);
+  }
  }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
+ window.addEventListener('campo-gerencial-equipes',load);
  $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();});
  for(const id of ['routeDay','routeMonth','routeOperator','routeFilter','routeShowTests'])$(id).addEventListener('input',()=>{
   if(id==='routeDay'&&$(id).value)$('routeMonth').value='';
@@ -481,6 +527,6 @@
    }catch{}
    load();
   },
-  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
+  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();

@@ -111,6 +111,68 @@ async function gerencialSelection(request,env,admin){
  await db.prepare('INSERT INTO campo_gerencial_vitrine(id,inspector_ids) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET inspector_ids=excluded.inspector_ids').bind(JSON.stringify(ids)).run();
  return json({enabled:scope.accounts.filter(account=>ids.includes(account.id))});
 }
+async function gerencialTeams(db){
+ const [teams,members,preference]=await Promise.all([
+  db.prepare('SELECT id,nome AS name FROM campo_gerencial_equipes ORDER BY nome').all(),
+  db.prepare('SELECT user_id AS userId,equipe_id AS teamId FROM campo_gerencial_equipe_membros').all(),
+  db.prepare("SELECT value FROM campo_admin_settings WHERE id='gerencial_show_inspectors'").first()
+ ]);
+ return {teams:teams.results,members:members.results,showInspectorNames:preference?.value==='true'};
+}
+async function gerencialManageTeams(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=await adminDb(env);
+ if(request.method==='GET')return json(await gerencialTeams(db));
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const input=await sharedBody(request,12000);
+ if(input.action==='create'){
+  const name=typeof input.name==='string'?input.name.trim().replace(/\s+/g,' ').toLocaleUpperCase('pt-BR'):'';
+  if(!/^[\p{L}\p{N}][\p{L}\p{N} ./_-]{0,39}$/u.test(name))throw sharedError('Informe um código ou nome de equipe de até 40 caracteres.');
+  const id=crypto.randomUUID();
+  const result=await db.prepare('INSERT OR IGNORE INTO campo_gerencial_equipes(id,nome) VALUES(?,?)').bind(id,name).run();
+  if(!result.meta?.changes)throw sharedError('Já existe uma equipe com esse nome.',409);
+  return json({team:{id,name}},201);
+ }
+ if(input.action==='assign'){
+  const {userId,teamId}=input;
+  if(!CampoRoutes.identifier(userId)||(teamId!==null&&!CampoRoutes.identifier(teamId)))throw sharedError('Vínculo de equipe inválido.');
+  const account=await db.prepare("SELECT id FROM campo_users u WHERE id=? AND role='inspector' AND blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle l WHERE l.user_id=u.id)").bind(userId).first();
+  if(!account)throw sharedError('Selecione um inspetor ativo.',404);
+  if(teamId===null)await db.prepare('DELETE FROM campo_gerencial_equipe_membros WHERE user_id=?').bind(userId).run();
+  else{
+   const found=await db.prepare('SELECT id FROM campo_gerencial_equipes WHERE id=?').bind(teamId).first();
+   if(!found)throw sharedError('Equipe não encontrada.',404);
+   await db.prepare('INSERT INTO campo_gerencial_equipe_membros(user_id,equipe_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET equipe_id=excluded.equipe_id').bind(userId,teamId).run();
+  }
+  return json({userId,teamId});
+ }
+ if(input.action==='visibility'&&typeof input.showInspectorNames==='boolean'){
+  await db.prepare("INSERT INTO campo_admin_settings(id,value,updated_at) VALUES('gerencial_show_inspectors',?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
+   .bind(String(input.showInspectorNames),new Date().toISOString()).run();
+  return json({showInspectorNames:input.showInspectorNames});
+ }
+ throw sharedError('Ação de equipe inválida.');
+}
+function gerencialTeamGroups(enabled,{teams,members,showInspectorNames}){
+ const byTeam=new Map(teams.map(team=>[team.id,team])),assignments=new Map(members.map(member=>[member.userId,member.teamId]));
+ const groups=new Map(),operators=new Map();
+ let unassigned=0;
+ for(const account of [...enabled].sort((a,b)=>a.id.localeCompare(b.id))){
+  const team=byTeam.get(assignments.get(account.id));
+  const id=team?.id||'unlinked-'+(++unassigned);
+  if(!groups.has(id))groups.set(id,{id,label:team?.name||'Sem equipe '+unassigned,operatorCount:0});
+  const group=groups.get(id);
+  group.operatorCount++;
+  if(showInspectorNames)(group.inspectors??=[]).push(account.name);
+  operators.set(account.id,group);
+ }
+ for(const group of groups.values()){
+  group.inspectors?.sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  if(showInspectorNames)group.label+=' · '+group.inspectors.join(', ');
+  delete group.inspectors;
+ }
+ return {groups:[...groups.values()].sort((a,b)=>a.label.localeCompare(b.label,'pt-BR',{numeric:true})),operators};
+}
 async function gerencialRouteSource(db,enabled){
  if(!enabled.length)return {routes:[],visits:[]};
  const scope=JSON.stringify(enabled.map(account=>account.id));
@@ -132,16 +194,21 @@ async function gerencialRouteSource(db,enabled){
 }
 async function gerencialData(env){
  const db=await adminDb(env);
- const [{enabled},data]=await Promise.all([gerencialInspectors(db),controlUniverse(env)]);
+ const [{enabled,accounts},data,settings]=await Promise.all([gerencialInspectors(db),controlUniverse(env),gerencialTeams(db)]);
+ const {groups,operators}=gerencialTeamGroups(enabled,settings);
  const source=await gerencialRouteSource(db,enabled);
  const byId=new Map(enabled.map(account=>[account.id,account]));
- const byName=new Map(enabled.map(account=>[gerencialName(account.name),account]));
+ const byName=new Map();
+ for(const account of accounts){
+  const name=gerencialName(account.name);
+  byName.set(name,byName.has(name)?null:byId.get(account.id));
+ }
  const field=data.records.filter(gerencialActiveField).flatMap(r=>{
   const name=gerencialName(r.collectionInspector||r.inspector);
   const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(name);
   if(!operator)return [];
   return [{
-   inspector:operator.name,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
+   inspector:operators.get(operator.id).id,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
    poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
    identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0
   }];
@@ -151,36 +218,42 @@ async function gerencialData(env){
   const visits=source.visits.filter(visit=>ids.has(visit.routeId)),planned=CampoRoutes.metres(spans),cover=CampoRoutes.coverage(spans,visits);
   const keys=CampoRoutes.keySections(spans,route.outlet),closed=keys.filter(section=>CampoRoutes.keyProgress(section,cover.bySpan).every(segment=>segment.closed));
   return {
-   id,name:route.campaign?.name||route.name,inspector:byId.get(route.assignee).name,feeder:route.feeder,
+   id,name:settings.showInspectorNames?(route.campaign?.name||route.name):[route.feeder,CampoRoutes.sectionLabel(route),controlDay(route.createdAt).split('-').reverse().join('/')].filter(Boolean).join(' · '),
+   inspector:operators.get(route.assignee).id,feeder:route.feeder,revision:visits.at(-1)?.receivedAt||null,
    planned,confirmed:cover.metres,pending:Math.max(0,planned-cover.metres),keys:keys.length,closed:closed.length,
    daily:CampoRoutes.dailyCoverage(spans,visits),targets:CampoRoutes.schedule(route.plan,planned)
   };
  });
- return json({field,routes,inspectors:enabled.map(account=>account.name),archiveAvailable:data.archive.available,updatedAt:data.generatedAt});
+ return json({field,routes,groups,archiveAvailable:data.archive.available,updatedAt:data.generatedAt});
 }
 function gerencialCampaigns(source,byId){
  return CampoRoutes.campaignParts(source.routes.filter(route=>byId.has(route.assignee)));
 }
 async function gerencialRouteMap(request,env){
- const id=new URL(request.url).searchParams.get('id');
- if(!CampoRoutes.identifier(id))throw sharedError('Rota inválida.');
+ const params=new URL(request.url).searchParams,requested=[...new Set(params.getAll('id'))];
+ if(!requested.length||requested.length>12||requested.some(id=>!CampoRoutes.identifier(id)))throw sharedError('Seleção de rotas inválida.');
  const db=await adminDb(env),{enabled}=await gerencialInspectors(db);
- const source=await gerencialRouteSource(db,enabled);
- const byId=new Map(enabled.map(account=>[account.id,account]));
- const parts=gerencialCampaigns(source,byId).find(group=>(group[0].campaign?.id||group[0].id)===id);
- if(!parts)throw sharedError('Rota indisponível.',404);
- const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
- const cover=CampoRoutes.coverage(spans,source.visits.filter(visit=>ids.has(visit.routeId)));
- const lines=CampoRoutes.mapLines(spans,cover.bySpan);
- const keys=CampoRoutes.keySections(spans,route.outlet).map(section=>({
-  code:section.code,point:section.segments[0].start,
-  pending:CampoRoutes.keyProgress(section,cover.bySpan).filter(segment=>!segment.closed).length
- }));
- return json({lines,keys,outlet:route.outlet});
+ const source=await gerencialRouteSource(db,enabled),byId=new Map(enabled.map(account=>[account.id,account]));
+ const routes=new Map(gerencialCampaigns(source,byId).map(parts=>[parts[0].campaign?.id||parts[0].id,parts]));
+ const views=requested.flatMap(id=>{
+  const parts=routes.get(id);
+  if(!parts)return [];
+  const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+  const cover=CampoRoutes.coverage(spans,source.visits.filter(visit=>ids.has(visit.routeId)));
+  const lines=CampoRoutes.mapLines(spans,cover.bySpan);
+  const keys=CampoRoutes.keySections(spans,route.outlet).map(section=>({
+   code:section.code,point:section.segments[0].start,
+   pending:CampoRoutes.keyProgress(section,cover.bySpan).filter(segment=>!segment.closed).length
+  }));
+  return [{id,lines,keys,outlet:route.outlet}];
+ });
+ if(!views.length)throw sharedError('Rotas indisponíveis.',404);
+ return json(params.has('batch')||requested.length>1?{routes:views}:views[0]);
 }
 async function gerencialAPI(request,env,path,admin){
  try{
   if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
+  if(path==='/api/admin/gerencial/equipes')return await gerencialManageTeams(request,env,admin);
   if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
   const settings=gerencialSettings(env);
   if(path==='/api/gerencial/entrar'&&request.method==='GET')return await gerencialLogin(request,env,settings);

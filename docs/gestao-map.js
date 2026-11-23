@@ -172,24 +172,34 @@
   }
   if(scroll)$('controlMap').scrollIntoView({block:'center',behavior:'smooth'});
  }
- function routeOverlay(spans,covered,focus,buffer=0){
+ function routeOverlayGroups(groups,focus){
   if(!map||cycleActive)return;
-  if(routeLayer)map.removeLayer(routeLayer);
+  routeLayer?.remove();
   routeLayer=L.featureGroup().addTo(map);
-  const M=CampoRoutes,lines=M.mapLines(spans,covered);
-  const style={pane:'controlRoute',interactive:false};
-  if(buffer&&spans.length)L.polygon(M.bufferRings(spans,buffer).map(ring=>[ring.map(([lon,lat])=>[lat,lon])]),{...style,stroke:false,fillColor:'#167da3',fillOpacity:.23,fillRule:'nonzero'}).addTo(routeLayer);
-  for(const [name,color] of [['pending',covered?M.pendingColor:'#7150cf'],['confirmed',M.confirmedColor]]){
-   const paths=lines[name].map(line=>line.map(([x,y])=>[y,x]));
-   if(paths.length){
-    L.polyline(paths,{...style,color:M.haloColor,weight:15,opacity:.8}).addTo(routeLayer);
-    L.polyline(paths,{...style,color,weight:8}).addTo(routeLayer);
+  const M=CampoRoutes,style={pane:'controlRoute',interactive:false};
+  for(const group of groups){
+   const {spans,covered,buffer,label,accent}=group,lines=M.mapLines(spans,covered);
+   if(buffer&&spans.length)L.polygon(M.bufferRings(spans,buffer).map(ring=>[ring.map(([lon,lat])=>[lat,lon])]),{...style,stroke:false,fillColor:accent||'#167da3',fillOpacity:.18,fillRule:'nonzero'}).addTo(routeLayer);
+   for(const [kind,color] of [['pending',covered?M.pendingColor:'#7150cf'],['confirmed',M.confirmedColor]]){
+    const paths=lines[kind].map(line=>line.map(([x,y])=>[y,x]));
+    if(!paths.length)continue;
+    L.polyline(paths,{...style,color:accent||M.haloColor,weight:15,opacity:.8}).addTo(routeLayer);
+    const line=L.polyline(paths,{...style,color,weight:7,interactive:Boolean(label)}).addTo(routeLayer);
+    if(label)line.bindTooltip(escape(label));
    }
+   if(!spans.length)continue;
+   const points=group.outlet?[['Saída da subestação',group.outlet]]:[['Início',M.first(spans[0])],['Fim',M.last(spans.at(-1))]];
+   for(const [name,p] of points)L.circleMarker([p[1],p[0]],{...style,interactive:Boolean(label),radius:6,color:accent||'#123a28',fillColor:'#fff',fillOpacity:1})
+    .addTo(routeLayer).bindTooltip(escape(label?name+' · '+label:name),{permanent:!label});
   }
-  if(spans.length)for(const [name,p]of [['Início',CampoRoutes.first(spans[0])],['Fim',CampoRoutes.last(spans.at(-1))]]){
-   L.circleMarker([p[1],p[0]],{...style,radius:7,color:'#123a28',fillColor:'#fff',fillOpacity:1}).addTo(routeLayer).bindTooltip(name,{permanent:true});
+  if(focus&&routeLayer.getBounds().isValid()){
+   map.invalidateSize();
+   map.fitBounds(routeLayer.getBounds(),{padding:[24,24],maxZoom:19});
+   $('controlMap').scrollIntoView({block:'center'});
   }
-  if(focus&&routeLayer.getBounds().isValid()){map.fitBounds(routeLayer.getBounds(),{padding:[24,24],maxZoom:19});$('controlMap').scrollIntoView({block:'center'});}
  }
- window.CampoControlMap={pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
+ function routeOverlay(spans,covered,focus,buffer=0){
+  routeOverlayGroups([{spans,covered,buffer}],focus);
+ }
+ window.CampoControlMap={pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
 })();
