@@ -20,6 +20,7 @@ function paintStreetPreparation(){
  state.textContent=streetsBusy?'Preparando…':offlineStreets?.partial?'Parcial':offlineStreets?.radius>=30?'30 km salvos':offlineStreets?offlineStreets.radius+' km salvos':'30 km automáticos';
 }
 function queueStreetPreparation(reason='',delay=5000){
+ if(typeof fieldMapLight!=='undefined'&&fieldMapLight)return;
  if(!streetAutomationReady||!streetAutoEnabled)return;
  clearTimeout(streetAutoTimer);streetAutoTimer=setTimeout(()=>void prepareAutomaticStreets().catch(error=>{$('streetStatus').textContent='Preparação aguardando nova tentativa: '+error.message;queueStreetPreparation('falha local',60000);}),delay);
 }
@@ -45,6 +46,7 @@ async function prepareAutomaticStreets(){
  }finally{streetAutoRunning=false;paintStreetPreparation();}
 }
 function streetWorkPositionChanged(){
+ if(typeof fieldMapLight!=='undefined'&&fieldMapLight)return;
  if(Date.now()-streetLastGpsCheck<60000)return;streetLastGpsCheck=Date.now();
  if(!streetAreaReady(streetWorkCenter()))queueStreetPreparation('região do GPS',10000);
 }

@@ -70,16 +70,22 @@ async function refreshGPS(placeTree=false){
   const cached=typeof freshDeviceGPS==='function'?freshDeviceGPS():null;
   const position=cached||await currentGPS();
   if(generation!==gpsGeneration)return;
+  const light=typeof fieldMapLight!=='undefined'&&fieldMapLight;
   if(placeTree){
    origin=position;
    $('lat').value=position.lat.toFixed(7);$('lon').value=position.lon.toFixed(7);
    mapCentered=true;
-   drawPin();
    clearTimeout(draftTimer);
-   void saveDraft().catch(error=>tell('Rascunho ainda não confirmado: '+error.message));
+   await saveDraft().catch(error=>tell('Rascunho ainda não confirmado: '+error.message));
+   if(generation!==gpsGeneration)return;
   }
+  if(typeof trackGpsMapMove==='function')trackGpsMapMove();
+  if(placeTree)drawPin();
   if(typeof acceptLiveGPSPosition==='function')acceptLiveGPSPosition(position,false);
-  if(fieldMap&&!$('map').hidden)fieldMap.setView([position.lat,position.lon],Math.max(17,fieldMap.getZoom()),{animate:false});
+  if(fieldMap&&!$('map').hidden){
+   const zoom=fieldMap.getZoom();
+   fieldMap.setView([position.lat,position.lon],light?Math.max(15,Math.min(17,zoom)):Math.max(16,zoom),{animate:false});
+  }
   if(googleMap&&!$('googleMap').hidden){
    const center={lat:position.lat,lng:position.lon},zoom=Math.max(17,googleMap.getZoom()||17);
    if(googleMap.moveCamera)googleMap.moveCamera({center,zoom});

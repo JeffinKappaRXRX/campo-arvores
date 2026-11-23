@@ -43,7 +43,7 @@ async function initOfflineStreets(){
  streetsInitialized=true;if(typeof initStreetAutomation==='function')await initStreetAutomation();
 }
 const existingBasemapChange=$('basemap').onchange;
-$('basemap').onchange=async(options={})=>{if($('basemap').value!=='google'&&!$('googleMap').hidden&&googleMap){const c=googleMap.getCenter();fieldMap.setView([c.lat(),c.lng()],googleMap.getZoom(),{animate:false});}if(db&&streetsInitialized&&!options.automatic)await req('meta','readwrite',s=>s.put($('basemap').value,'preferredBasemap'));if($('basemap').value==='streets'){
+$('basemap').onchange=async(options={})=>{if(typeof fieldMapLight!=='undefined'&&fieldMapLight)$('basemap').value='local';if($('basemap').value!=='google'&&!$('googleMap').hidden&&googleMap){const c=googleMap.getCenter();fieldMap.setView([c.lat(),c.lng()],googleMap.getZoom(),{animate:false});}if(db&&streetsInitialized&&!options.automatic)await req('meta','readwrite',s=>s.put($('basemap').value,'preferredBasemap'));if($('basemap').value==='streets'){
  if(xyzLayer){fieldMap.removeLayer(xyzLayer);xyzLayer=null;}$('map').hidden=false;$('googleMap').hidden=true;fieldMap.invalidateSize();renderStreets();requestNetworkView();
  }else{if(streetsLayer){fieldMap.removeLayer(streetsLayer);streetsLayer=null;}await existingBasemapChange();}syncFullMapTools();if(typeof streetBasemapChanged==='function')streetBasemapChanged(options.automatic===true);};
 $('fitStreets').onclick=()=>{if(!offlineStreets){$('streetStatus').textContent='Baixe uma área primeiro.';return;}const b=offlineStreets.bounds;$('basemap').value='streets';$('basemap').onchange();fieldMap.fitBounds([[b.south,b.west],[b.north,b.east]]);};
