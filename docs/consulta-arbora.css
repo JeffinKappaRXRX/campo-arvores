@@ -83,3 +83,6 @@ dialog::backdrop {background:#080612aa}
 .map-check input,#routeChoices input[type=checkbox] {width:auto;min-height:0;accent-color:var(--green)}
 .tree-vera {background:#b4ea91}
 .tree-field {background:#4de1d2}
+
+#basemapStatus{font-size:.875rem;color:var(--muted,#c3b9db)}
+#map{background:#252a34}

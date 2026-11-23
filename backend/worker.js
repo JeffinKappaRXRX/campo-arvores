@@ -402,6 +402,63 @@ const CampoRoutes=(()=>{
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
 'use strict';
+const CampoSpanQuality=(()=>{
+ const threshold=60;
+ const coordinate=(value,max)=>(typeof value==='number'||typeof value==='string'&&value.trim()!=='')&&Number.isFinite(Number(value))&&Math.abs(Number(value))<=max;
+ const point=pair=>Array.isArray(pair)&&coordinate(pair[0],180)&&coordinate(pair[1],90);
+ const key=value=>String(value??'').trim().toUpperCase();
+ const metresPerDegree=Math.PI*6371000/180;
+
+ function measure(lat,lon,geometry){
+  if(!coordinate(lat,90)||!coordinate(lon,180))return null;
+  lat=Number(lat);lon=Number(lon);
+  const east=metresPerDegree*Math.cos(lat*Math.PI/180);
+  if(east<1)return null;
+  const lines=geometry?.type==='LineString'?[geometry.coordinates]:
+   geometry?.type==='MultiLineString'?geometry.coordinates:[];
+  let best=null;
+  for(const line of lines||[]){
+   if(!Array.isArray(line))continue;
+   for(let i=1;i<line.length;i++){
+    const a=line[i-1],b=line[i];
+    if(!point(a)||!point(b))continue;
+    const x=(a[0]-lon)*east,y=(a[1]-lat)*metresPerDegree;
+    const dx=(b[0]-a[0])*east,dy=(b[1]-a[1])*metresPerDegree;
+    const length=dx*dx+dy*dy;
+    if(!length)continue;
+    const t=Math.max(0,Math.min(1,-(x*dx+y*dy)/length));
+    const metres=Math.hypot(x+t*dx,y+t*dy);
+    if(!best||metres<best.metres)best={metres,nearest:[Number(a[0])+t*(b[0]-a[0]),Number(a[1])+t*(b[1]-a[1])]};
+   }
+  }
+  return best;
+ }
+ function select(matches,feeder){
+  if(matches.length===1)return matches[0];
+  const exact=key(feeder)?matches.filter(match=>key(match.feeder)===key(feeder)):[];
+  return exact.length===1?exact[0]:null;
+ }
+ function reference(record,nearest){
+  const span=String(record.span??'').trim();
+  if(!span||span.length>1000||!coordinate(record.lat,90)||!coordinate(record.lon,180)||!point(nearest))return null;
+  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number)};
+ }
+ function read(record){
+  const stored=record.spanReference;
+  if(!stored||key(stored.span)!==key(record.span)||key(stored.feeder)!==key(record.feeder)||
+   stored.lat!==Number(record.lat)||stored.lon!==Number(record.lon))return null;
+  const checked=reference(record,stored.nearest);
+  if(!checked)return null;
+  return {...checked,metres:metresPerDegree*Math.hypot((checked.nearest[0]-checked.lon)*Math.cos(checked.lat*Math.PI/180),checked.nearest[1]-checked.lat)};
+ }
+ const format=metres=>new Intl.NumberFormat('pt-BR',{maximumFractionDigits:1}).format(metres>threshold&&metres<threshold+.05?threshold+.1:metres);
+ const alert=check=>check?.metres>threshold?'A árvore está a '+format(check.metres)+' m do vão '+check.span+'. Confira o ponto no mapa e o ID do vão.':'';
+ return {threshold,key,measure,select,reference,read,format,alert};
+})();
+if(typeof window!=='undefined')window.CampoSpanQuality=CampoSpanQuality;
+if(typeof module!=='undefined')module.exports=CampoSpanQuality;
+
+'use strict';
 // Mesma fórmula de risco da análise VERA (analise_vera.py), para as inspeções novas do campo.
 // tests/gestao-risco.cjs compara o resultado com o Python; qualquer mudança aqui precisa ser igual lá.
 (()=>{
@@ -862,6 +919,8 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
+ const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
+ if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
  out.imported=imported||raw.imported===true;out.lastInspector=actor;
  return out;
 }
@@ -1196,6 +1255,7 @@ async function controlAPI(request,env){try{
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
  if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
+ if(p==='/api/control/span-quality')return await adminSpanChecks(env,db,await controlUniverse(env),u.searchParams);
  if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
  if(p==='/api/control/map'){const data=await (u.searchParams.get('archive')==='1'?controlUniverse(env):controlLiveUniverse(env)),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
@@ -1609,80 +1669,150 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  return json({ok:true,status:decision});
 }
 
-// The viewer session is independent of the inspector and administrator sessions.
-const GERENCIAL_COOKIE='__Host-arbora-gerencial';
-const GERENCIAL_PAGE='/consulta-arbora.html';
-const GERENCIAL_TTL=8*3600;
-let gerencialKeys;
-
-function gerencialSettings(env){
- const issuer=String(env.GERENCIAL_ACCESS_ISSUER||'');
- const audience=String(env.GERENCIAL_ACCESS_AUD||'');
- const domains=new Set(String(env.GERENCIAL_EMAIL_DOMAINS||'energisa.com.br').toLowerCase().split(',').map(domain=>domain.trim()).filter(Boolean));
- if(!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(issuer)||!audience)return null;
- return {issuer,audience,domains};
-}
-function gerencialEmail(value,settings){
- const email=String(value||'').trim().toLowerCase();
- const parts=/^[^\s@]+@([a-z0-9.-]+)$/.exec(email);
- return email.length<=254&&parts&&email.includes('energisa')&&settings?.domains.has(parts[1])?email:null;
-}
-async function gerencialAccessIdentity(assertion,settings){
- if(!assertion||assertion.length>8192)return null;
- let header,payload,signature,signed;
- try{
-  const parts=assertion.split('.');
-  if(parts.length!==3||parts.some(part=>!(/^[A-Za-z0-9_-]+$/).test(part)))return null;
-  const decoder=new TextDecoder();
-  header=JSON.parse(decoder.decode(unb64(parts[0])));
-  payload=JSON.parse(decoder.decode(unb64(parts[1])));
-  signature=unb64(parts[2]);
-  signed=encoder.encode(parts[0]+'.'+parts[1]);
- }catch{return null;}
- const now=Date.now()/1000;
- if(header?.alg!=='RS256'||typeof header.kid!=='string'||payload?.iss!==settings.issuer||payload.type!=='app'
-  ||!Array.isArray(payload.aud)||!payload.aud.includes(settings.audience)||!Number.isFinite(payload.exp)||payload.exp<=now
-  ||(payload.nbf!==undefined&&(!Number.isFinite(payload.nbf)||payload.nbf>now)))return null;
- const email=gerencialEmail(payload.email,settings);
- if(!email)return null;
- const cache=gerencialKeys;
- if(cache?.issuer!==settings.issuer||cache.until<=Date.now()||(!cache.keys.has(header.kid)&&cache.fetchedAt+30000<=Date.now())){
-  const response=await fetch(settings.issuer+'/cdn-cgi/access/certs',{redirect:'error',signal:AbortSignal.timeout(5000)});
-  if(!response.ok)throw sharedError('A verificação de e-mail está temporariamente indisponível.',503);
-  const {keys}=await response.json();
-  gerencialKeys={issuer:settings.issuer,fetchedAt:Date.now(),until:Date.now()+300000,keys:new Map(keys.map(key=>[key.kid,key]))};
+// Published route geometry and the private MT package allow checking older records.
+function spanRouteIndex(routes,wanted){
+ const result=new Map();
+ for(const route of routes){
+  if(routeIsTest(route))continue;
+  for(const span of route.spans||[]){
+   const id=CampoSpanQuality.key(span.id);
+   if(!wanted.has(id))continue;
+   if(!result.has(id))result.set(id,new Map());
+   const byFeeder=result.get(id),feeder=CampoSpanQuality.key(span.feeder||route.feeder);
+   if(!byFeeder.has(feeder))byFeeder.set(feeder,{feeder,geometry:{type:'LineString',coordinates:span.line}});
+  }
  }
- const jwk=gerencialKeys.keys.get(header.kid);
- if(!jwk)return null;
- const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
- if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,signature,signed))return null;
- return {email,expiresAt:payload.exp*1000};
+ return new Map([...result].map(([id,byFeeder])=>[id,[...byFeeder.values()]]));
 }
-async function gerencialSession(request,env,settings){
+async function spanPrivateIndex(env,wanted){
+ const index=new Map();
+ if(!wanted.size||!env.LOGIN_GUARD)return index;
+ try{
+  const response=await routeGeometry(new Request('https://campo-internal/api/routes/geometry'),env,true);
+  const reader=response.body.pipeThrough(new DecompressionStream('gzip')).pipeThrough(new TextDecoderStream()).getReader();
+  let buffer='',feeders=null;
+  function add(row){
+   // The compact route package starts each row with a numeric or quoted span ID.
+   const raw=row.slice(1,row.indexOf(','));
+   const id=CampoSpanQuality.key(raw.startsWith('"')?raw.slice(1,-1):raw);
+   if(!wanted.has(id))return;
+   const fields=JSON.parse(row),xy=fields[10],line=[];
+   for(let i=0;i<xy.length;i+=2)line.push([xy[i]/1e6,xy[i+1]/1e6]);
+   if(!index.has(id))index.set(id,[]);
+   index.get(id).push({feeder:feeders[fields[1]],geometry:{type:'LineString',coordinates:line}});
+  }
+  try{
+   for(;;){
+    const {value,done}=await reader.read();
+    if(done)break;
+    buffer+=value;
+    if(!feeders){
+     const rows=buffer.indexOf('"rows":[');
+     if(rows<0){if(buffer.length>500000)throw Error('Cabeçalho do pacote MT inválido.');continue;}
+     feeders=JSON.parse(buffer.slice(0,rows)+'"rows":[]}').feeders;
+     buffer=buffer.slice(rows+8);
+    }
+    // Each row ends with its flat coordinate array and the enclosing row bracket.
+    let from=0,to;
+    while((to=buffer.indexOf(']],',from))!==-1){add(buffer.slice(from,to+2));from=to+3;}
+    buffer=buffer.slice(from);
+    if(buffer.length>500000)throw Error('Linha do pacote MT inválida.');
+   }
+   if(feeders&&buffer.startsWith('[')&&buffer.endsWith(']]]}'))add(buffer.slice(0,-2));
+  }finally{await reader.cancel();}
+  return index;
+ }catch{return new Map();}
+}
+async function spanCheckRecords(env,records,routes){
+ const Q=CampoSpanQuality;
+ const eligible=records.filter(record=>Q.key(record.span)&&sharedCoordinate(record.lat,90)&&sharedCoordinate(record.lon,180));
+ const wanted=new Set(eligible.map(record=>Q.key(record.span)));
+ const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[];
+ function add(record,candidates){
+  const selected=Q.select(candidates||[],record.feeder);
+  const found=Q.measure(record.lat,record.lon,selected?.geometry);
+  if(!found)return false;
+  checked.set(record.id,{...Q.reference(record,found.nearest),metres:found.metres});
+  return true;
+ }
+ for(const record of eligible){
+  const captured=Q.read(record);
+  if(captured)checked.set(record.id,captured);
+  else if(!(record.bt&&!record.mt||record.at&&!record.mt)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
+ }
+ const privateIndex=await spanPrivateIndex(env,new Set(pending.map(record=>Q.key(record.span))));
+ for(const record of pending)add(record,privateIndex.get(Q.key(record.span)));
+ return checked;
+}
+async function adminSpanChecks(env,db,data,params){
+ const filters=controlFilters(params),rows=data.records.filter(record=>controlMatches(record,filters));
+ const page=Number(params.get('page')||0);
+ if(!Number.isSafeInteger(page)||page<0)throw sharedError('Página inválida.');
+ let routes=[];
+ try{
+  const plans=await db.prepare("SELECT data FROM campo_routes WHERE COALESCE(json_extract(data,'$.deletedAt'),'')='' ORDER BY created_at DESC").all();
+  routes=plans.results.map(row=>JSON.parse(row.data));
+ }catch(error){if(!centralMissingTable(error))throw error;}
+ const checked=await spanCheckRecords(env,rows,routes),alerts=rows.flatMap(record=>{
+  const check=checked.get(record.id);
+  return check?.metres>CampoSpanQuality.threshold?[{...check,id:record.id,feeder:record.feeder,species:record.species}]:[];
+ }).sort((a,b)=>b.metres-a.metres);
+ const last=Math.max(0,Math.ceil(alerts.length/50)-1),current=Math.min(page,last);
+ return json({checked:checked.size,total:rows.length,count:alerts.length,items:alerts.slice(current*50,(current+1)*50),page:current,last});
+}
+
+// A viewer link grants read-only access and is independent of field and admin sessions.
+const GERENCIAL_COOKIE='__Host-arbora-gerencial';
+const GERENCIAL_TTL=8*3600;
+const GERENCIAL_LINK_ID='gerencial_viewer_link_hash';
+const gerencialToken=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
+
+async function gerencialLinkHash(db){
+ const setting=await db.prepare('SELECT value FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).first();
+ return setting?.value||null;
+}
+async function gerencialManageLink(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=authDB(env);
+ if(request.method==='GET')return json({enabled:Boolean(await gerencialLinkHash(db))});
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const {action}=await sharedBody(request,256);
+ if(action==='revoke'){
+  await db.prepare('DELETE FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).run();
+  return json({enabled:false});
+ }
+ if(action!=='rotate')throw sharedError('Ação de link inválida.');
+ const token=authRandom(),hash=await authHash(token);
+ await db.prepare('INSERT INTO campo_admin_settings(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
+  .bind(GERENCIAL_LINK_ID,hash,new Date().toISOString()).run();
+ return json({enabled:true,fragment:'acesso='+token});
+}
+async function gerencialSession(request,db){
  const token=authCookie(request,GERENCIAL_COOKIE);
- if(!settings||!(/^[A-Za-z0-9_-]{43}$/).test(token))return null;
- const hash=await authHash(token);
- const row=await authDB(env).prepare('SELECT email,expira_em FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
- return gerencialEmail(row?.email,settings)?{email:row.email,hash}:null;
+ if(!gerencialToken(token))return null;
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash)return null;
+ const hash=await authHash(linkHash+':'+token);
+ const row=await db.prepare('SELECT id FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
+ return row?{hash}:null;
 }
-function gerencialRedirect(error,token,seconds){
- const headers=new Headers({Location:GERENCIAL_PAGE+(error?'?acesso='+error:''),'Cache-Control':'no-store'});
- if(token)headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,seconds));
- return new Response(null,{status:303,headers});
-}
-async function gerencialLogin(request,env,settings){
- if(!settings)return gerencialRedirect('indisponivel');
- const verified=await gerencialAccessIdentity(request.headers.get('Cf-Access-Jwt-Assertion'),settings);
- if(!verified)return gerencialRedirect('email');
- const current=await gerencialSession(request,env,settings);
- if(current?.email===verified.email)return gerencialRedirect();
- const now=Date.now(),seconds=Math.min(GERENCIAL_TTL,Math.floor((verified.expiresAt-now)/1000));
- if(seconds<1)return gerencialRedirect('email');
- const db=authDB(env),token=authRandom(),hash=await authHash(token),stamp=new Date(now).toISOString();
- const queries=[db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) VALUES(?,?,?,?)').bind(verified.email,stamp,now+seconds*1000,hash)];
- if(current)queries.push(db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(stamp,current.hash));
- await db.batch(queries);
- return gerencialRedirect(null,token,seconds);
+async function gerencialLogin(request,env,db){
+ const {token:link}=await sharedBody(request,256);
+ if(!gerencialToken(link))throw sharedError('Link gerencial inválido ou revogado.',401);
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash||!await equalSecret(await authHash(link),linkHash))throw sharedError('Link gerencial inválido ou revogado.',401);
+ if(await gerencialSession(request,db))return json({ok:true});
+ const token=authRandom(),hash=await authHash(linkHash+':'+token);
+ const ip=request.headers.get('CF-Connecting-IP');
+ const network=ip&&env.ADMIN_SESSION_SECRET?b64(new Uint8Array(await crypto.subtle.sign('HMAC',await sessionKey(env),encoder.encode('arbora-gerencial:'+linkHash+':'+ip)))).slice(0,12):null;
+ const label=network?'Link · rede '+network:'Link · rede indisponível';
+ const now=Date.now(),stamp=new Date(now).toISOString();
+ const inserted=await db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_admin_settings WHERE id=? AND value=?)')
+  .bind(label,stamp,now+GERENCIAL_TTL*1000,hash,GERENCIAL_LINK_ID,linkHash).run();
+ if(!inserted.meta?.changes)throw sharedError('Link gerencial inválido ou revogado.',401);
+ const response=json({ok:true});
+ response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,GERENCIAL_TTL));
+ return response;
 }
 async function gerencialAudit(request,env,admin){
  if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
@@ -1814,15 +1944,21 @@ async function gerencialData(env){
   const name=gerencialName(account.name);
   byName.set(name,byName.has(name)?null:byId.get(account.id));
  }
- const field=data.records.filter(gerencialActiveField).flatMap(r=>{
+ const scoped=data.records.filter(gerencialActiveField).flatMap(r=>{
   const name=gerencialName(r.collectionInspector||r.inspector);
   const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(name);
   if(!operator)return [];
-  return [{
+  return [{r,operator}];
+ });
+ const checked=await spanCheckRecords(env,scoped.map(row=>row.r),source.routes);
+ const field=scoped.map(({r,operator})=>{
+  const check=checked.get(r.id);
+  return {
    inspector:operators.get(operator.id).id,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
    poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
-   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0
-  }];
+   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0,
+   spanChecked:Boolean(check),...(check?.metres>CampoSpanQuality.threshold?{spanAlert:check}:{})
+  };
  });
  const routes=gerencialCampaigns(source,byId).map(parts=>{
   const route=parts[0],id=route.campaign?.id||route.id,spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
@@ -1896,24 +2032,24 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
   if(path==='/api/admin/gerencial/equipes')return await gerencialManageTeams(request,env,admin);
   if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
-  const settings=gerencialSettings(env);
-  if(path==='/api/gerencial/entrar'&&request.method==='GET')return await gerencialLogin(request,env,settings);
-  const viewer=await gerencialSession(request,env,settings);
+  if(path==='/api/admin/gerencial/link')return await gerencialManageLink(request,env,admin);
+  const db=authDB(env);
+  if(path==='/api/gerencial/entrar'&&request.method==='POST')return await gerencialLogin(request,env,db);
+  const viewer=await gerencialSession(request,db);
   if(path==='/api/gerencial/sair'&&request.method==='POST'){
-   if(viewer)await authDB(env).prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
+   if(viewer)await db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
    const response=json({ok:true});
    response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,'',0));
    return response;
   }
-  if(request.method!=='GET')return json({error:'Método não permitido.'},405);
-  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),email:viewer?.email||null,available:Boolean(settings)});
-  if(!viewer&&!admin)throw sharedError('Entre com seu e-mail corporativo.',401);
+  if(request.method!=='GET')throw sharedError('Método não permitido.',405);
+  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),admin:Boolean(admin),viewer:Boolean(viewer)});
+  if(!viewer&&!admin)throw sharedError('Abra o link compartilhado pela administração.',401);
   if(path==='/api/gerencial/dados')return await gerencialData(env);
   if(path==='/api/gerencial/arvores')return await gerencialTreePositions(env);
   if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
   return json({error:'Consulta não encontrada.'},404);
  }catch(error){
-  if(path==='/api/gerencial/entrar')return gerencialRedirect('indisponivel');
   return json({error:error.status?error.message:'Consulta gerencial temporariamente indisponível.'},error.status||503);
  }
 }

@@ -1,77 +1,55 @@
-// The viewer session is independent of the inspector and administrator sessions.
+// A viewer link grants read-only access and is independent of field and admin sessions.
 const GERENCIAL_COOKIE='__Host-arbora-gerencial';
-const GERENCIAL_PAGE='/consulta-arbora.html';
 const GERENCIAL_TTL=8*3600;
-let gerencialKeys;
+const GERENCIAL_LINK_ID='gerencial_viewer_link_hash';
+const gerencialToken=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
 
-function gerencialSettings(env){
- const issuer=String(env.GERENCIAL_ACCESS_ISSUER||'');
- const audience=String(env.GERENCIAL_ACCESS_AUD||'');
- const domains=new Set(String(env.GERENCIAL_EMAIL_DOMAINS||'energisa.com.br').toLowerCase().split(',').map(domain=>domain.trim()).filter(Boolean));
- if(!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(issuer)||!audience)return null;
- return {issuer,audience,domains};
+async function gerencialLinkHash(db){
+ const setting=await db.prepare('SELECT value FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).first();
+ return setting?.value||null;
 }
-function gerencialEmail(value,settings){
- const email=String(value||'').trim().toLowerCase();
- const parts=/^[^\s@]+@([a-z0-9.-]+)$/.exec(email);
- return email.length<=254&&parts&&email.includes('energisa')&&settings?.domains.has(parts[1])?email:null;
-}
-async function gerencialAccessIdentity(assertion,settings){
- if(!assertion||assertion.length>8192)return null;
- let header,payload,signature,signed;
- try{
-  const parts=assertion.split('.');
-  if(parts.length!==3||parts.some(part=>!(/^[A-Za-z0-9_-]+$/).test(part)))return null;
-  const decoder=new TextDecoder();
-  header=JSON.parse(decoder.decode(unb64(parts[0])));
-  payload=JSON.parse(decoder.decode(unb64(parts[1])));
-  signature=unb64(parts[2]);
-  signed=encoder.encode(parts[0]+'.'+parts[1]);
- }catch{return null;}
- const now=Date.now()/1000;
- if(header?.alg!=='RS256'||typeof header.kid!=='string'||payload?.iss!==settings.issuer||payload.type!=='app'
-  ||!Array.isArray(payload.aud)||!payload.aud.includes(settings.audience)||!Number.isFinite(payload.exp)||payload.exp<=now
-  ||(payload.nbf!==undefined&&(!Number.isFinite(payload.nbf)||payload.nbf>now)))return null;
- const email=gerencialEmail(payload.email,settings);
- if(!email)return null;
- const cache=gerencialKeys;
- if(cache?.issuer!==settings.issuer||cache.until<=Date.now()||(!cache.keys.has(header.kid)&&cache.fetchedAt+30000<=Date.now())){
-  const response=await fetch(settings.issuer+'/cdn-cgi/access/certs',{redirect:'error',signal:AbortSignal.timeout(5000)});
-  if(!response.ok)throw sharedError('A verificação de e-mail está temporariamente indisponível.',503);
-  const {keys}=await response.json();
-  gerencialKeys={issuer:settings.issuer,fetchedAt:Date.now(),until:Date.now()+300000,keys:new Map(keys.map(key=>[key.kid,key]))};
+async function gerencialManageLink(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=authDB(env);
+ if(request.method==='GET')return json({enabled:Boolean(await gerencialLinkHash(db))});
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const {action}=await sharedBody(request,256);
+ if(action==='revoke'){
+  await db.prepare('DELETE FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).run();
+  return json({enabled:false});
  }
- const jwk=gerencialKeys.keys.get(header.kid);
- if(!jwk)return null;
- const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
- if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,signature,signed))return null;
- return {email,expiresAt:payload.exp*1000};
+ if(action!=='rotate')throw sharedError('Ação de link inválida.');
+ const token=authRandom(),hash=await authHash(token);
+ await db.prepare('INSERT INTO campo_admin_settings(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
+  .bind(GERENCIAL_LINK_ID,hash,new Date().toISOString()).run();
+ return json({enabled:true,fragment:'acesso='+token});
 }
-async function gerencialSession(request,env,settings){
+async function gerencialSession(request,db){
  const token=authCookie(request,GERENCIAL_COOKIE);
- if(!settings||!(/^[A-Za-z0-9_-]{43}$/).test(token))return null;
- const hash=await authHash(token);
- const row=await authDB(env).prepare('SELECT email,expira_em FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
- return gerencialEmail(row?.email,settings)?{email:row.email,hash}:null;
+ if(!gerencialToken(token))return null;
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash)return null;
+ const hash=await authHash(linkHash+':'+token);
+ const row=await db.prepare('SELECT id FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
+ return row?{hash}:null;
 }
-function gerencialRedirect(error,token,seconds){
- const headers=new Headers({Location:GERENCIAL_PAGE+(error?'?acesso='+error:''),'Cache-Control':'no-store'});
- if(token)headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,seconds));
- return new Response(null,{status:303,headers});
-}
-async function gerencialLogin(request,env,settings){
- if(!settings)return gerencialRedirect('indisponivel');
- const verified=await gerencialAccessIdentity(request.headers.get('Cf-Access-Jwt-Assertion'),settings);
- if(!verified)return gerencialRedirect('email');
- const current=await gerencialSession(request,env,settings);
- if(current?.email===verified.email)return gerencialRedirect();
- const now=Date.now(),seconds=Math.min(GERENCIAL_TTL,Math.floor((verified.expiresAt-now)/1000));
- if(seconds<1)return gerencialRedirect('email');
- const db=authDB(env),token=authRandom(),hash=await authHash(token),stamp=new Date(now).toISOString();
- const queries=[db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) VALUES(?,?,?,?)').bind(verified.email,stamp,now+seconds*1000,hash)];
- if(current)queries.push(db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(stamp,current.hash));
- await db.batch(queries);
- return gerencialRedirect(null,token,seconds);
+async function gerencialLogin(request,env,db){
+ const {token:link}=await sharedBody(request,256);
+ if(!gerencialToken(link))throw sharedError('Link gerencial inválido ou revogado.',401);
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash||!await equalSecret(await authHash(link),linkHash))throw sharedError('Link gerencial inválido ou revogado.',401);
+ if(await gerencialSession(request,db))return json({ok:true});
+ const token=authRandom(),hash=await authHash(linkHash+':'+token);
+ const ip=request.headers.get('CF-Connecting-IP');
+ const network=ip&&env.ADMIN_SESSION_SECRET?b64(new Uint8Array(await crypto.subtle.sign('HMAC',await sessionKey(env),encoder.encode('arbora-gerencial:'+linkHash+':'+ip)))).slice(0,12):null;
+ const label=network?'Link · rede '+network:'Link · rede indisponível';
+ const now=Date.now(),stamp=new Date(now).toISOString();
+ const inserted=await db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_admin_settings WHERE id=? AND value=?)')
+  .bind(label,stamp,now+GERENCIAL_TTL*1000,hash,GERENCIAL_LINK_ID,linkHash).run();
+ if(!inserted.meta?.changes)throw sharedError('Link gerencial inválido ou revogado.',401);
+ const response=json({ok:true});
+ response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,GERENCIAL_TTL));
+ return response;
 }
 async function gerencialAudit(request,env,admin){
  if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
@@ -203,15 +181,21 @@ async function gerencialData(env){
   const name=gerencialName(account.name);
   byName.set(name,byName.has(name)?null:byId.get(account.id));
  }
- const field=data.records.filter(gerencialActiveField).flatMap(r=>{
+ const scoped=data.records.filter(gerencialActiveField).flatMap(r=>{
   const name=gerencialName(r.collectionInspector||r.inspector);
   const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(name);
   if(!operator)return [];
-  return [{
+  return [{r,operator}];
+ });
+ const checked=await spanCheckRecords(env,scoped.map(row=>row.r),source.routes);
+ const field=scoped.map(({r,operator})=>{
+  const check=checked.get(r.id);
+  return {
    inspector:operators.get(operator.id).id,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
    poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
-   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0
-  }];
+   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0,
+   spanChecked:Boolean(check),...(check?.metres>CampoSpanQuality.threshold?{spanAlert:check}:{})
+  };
  });
  const routes=gerencialCampaigns(source,byId).map(parts=>{
   const route=parts[0],id=route.campaign?.id||route.id,spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
@@ -285,24 +269,24 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
   if(path==='/api/admin/gerencial/equipes')return await gerencialManageTeams(request,env,admin);
   if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
-  const settings=gerencialSettings(env);
-  if(path==='/api/gerencial/entrar'&&request.method==='GET')return await gerencialLogin(request,env,settings);
-  const viewer=await gerencialSession(request,env,settings);
+  if(path==='/api/admin/gerencial/link')return await gerencialManageLink(request,env,admin);
+  const db=authDB(env);
+  if(path==='/api/gerencial/entrar'&&request.method==='POST')return await gerencialLogin(request,env,db);
+  const viewer=await gerencialSession(request,db);
   if(path==='/api/gerencial/sair'&&request.method==='POST'){
-   if(viewer)await authDB(env).prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
+   if(viewer)await db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
    const response=json({ok:true});
    response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,'',0));
    return response;
   }
-  if(request.method!=='GET')return json({error:'Método não permitido.'},405);
-  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),email:viewer?.email||null,available:Boolean(settings)});
-  if(!viewer&&!admin)throw sharedError('Entre com seu e-mail corporativo.',401);
+  if(request.method!=='GET')throw sharedError('Método não permitido.',405);
+  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),admin:Boolean(admin),viewer:Boolean(viewer)});
+  if(!viewer&&!admin)throw sharedError('Abra o link compartilhado pela administração.',401);
   if(path==='/api/gerencial/dados')return await gerencialData(env);
   if(path==='/api/gerencial/arvores')return await gerencialTreePositions(env);
   if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
   return json({error:'Consulta não encontrada.'},404);
  }catch(error){
-  if(path==='/api/gerencial/entrar')return gerencialRedirect('indisponivel');
   return json({error:error.status?error.message:'Consulta gerencial temporariamente indisponível.'},error.status||503);
  }
 }

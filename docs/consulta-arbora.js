@@ -11,7 +11,8 @@
  const pct=value=>value.toLocaleString('pt-BR',{style:'percent',maximumFractionDigits:1});
  const fields=$('filters').elements;
  fields.from.value=today.slice(0,7)+'-01';fields.to.value=today;
- let data,current,map,routeLayer,treeLayer,loadSerial=0,loading=false;
+ let data,map,routeLayer,treeLayer,qualityLayer,loadSerial=0,loading=false;
+ let qualityRows=[],qualityVisible=false;
  let treeController=null,treeSignature='';
  let availableRoutes=[],selectedRoutes=new Set(),shownRoutes=[],viewMode=null,mapSignature='',mapController=null;
  function filterValues(){
@@ -33,23 +34,23 @@
   const rounded=Math.round(seconds);
   return Math.floor(rounded/60)+'min '+String(rounded%60).padStart(2,'0')+'s';
  }
- function refreshForecast(){
-  if(!current)return;
-  const {summary,daily,operators,todayInPeriod}=current;
-  CampoForecast.paint({summary,daily});
-  const count=daily.find(row=>row.name===today)?.count||0,people=operators.reduce((sum,team)=>sum+team.operatorCount,0),goal=100*people,minimum=70*people;
+ function refreshForecast(summary,daily,operators,todayInPeriod){
+  const people=operators.reduce((sum,team)=>sum+team.operatorCount,0),goal=100*people,minimum=70*people;
+  const count=daily.find(row=>row.name===today)?.count||0;
+  const estimation=CampoForecast.estimate(goal,summary.mean);
+  $('forecast').textContent=estimation?.active!=null?fmt(estimation.active)+' horas ativas no total · '+CampoForecast.span(estimation.days/people):'Tempo ainda não medido';
+  $('forecastTarget').textContent=people?fmt(goal)+' cadastros de meta por dia · '+fmt(people)+(people===1?' inspetor':' inspetores')+' · Média do filtro e jornada de 8 h ativas por pessoa.':'Nenhum inspetor no recorte.';
   $('dailyGoal').textContent=todayInPeriod&&goal?fmt(count)+' hoje · '+pct(count/goal)+' da meta de '+fmt(goal)+' cadastros'+(count<minimum?' · faltam '+fmt(minimum-count)+' para o mínimo':''):'';
  }
  function productivity(rows,operators,todayInPeriod){
   const summary=F.summary(rows);
   const daily=F.group(rows,'day').filter(row=>row.name!=='Não informado').sort((a,b)=>F.compare(b.name,a.name)).slice(0,31);
-  current={summary,daily,operators,todayInPeriod};
   const max=Math.max(1,...daily.map(row=>row.count));
   $('daily').innerHTML=[...daily].reverse().map(row=>{
    const day=row.name.slice(5).split('-').reverse().join('/');
    return '<div class="daily-bar" title="'+esc(day)+' · '+row.count+' cadastros">'+row.count+'<i style="height:'+Math.max(3,Math.round(100*row.count/max))+'px"></i>'+esc(day)+'</div>';
   }).join('')||'<p>Nenhum cadastro de campo no período.</p>';
-  refreshForecast();
+  refreshForecast(summary,daily,operators,todayInPeriod);
   const metrics=[
    ['Cadastros',fmt(summary.count),fmt(summary.count-summary.grouped)+' individuais · '+fmt(summary.grouped)+' agrupados'],
    ['Tempo médio por cadastro',duration(summary.mean),fmt(summary.measured)+' cadastros com tempo medido'],
@@ -121,16 +122,60 @@
  function ensureMap(){
   if(map)return;
   map=L.map('map',{preferCanvas:true}).setView([-9.97,-67.81],11);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,maxNativeZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  const tiles=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+   maxZoom:20,maxNativeZoom:19,attribution:'Imagens © Esri, Maxar, Earthstar Geographics e comunidade GIS'
+  });
+  let failed=0;
+  tiles.on('tileerror',()=>{
+   if(++failed<3)return;
+   map.removeLayer(tiles);
+   $('basemapStatus').hidden=false;
+   $('basemapStatus').textContent='Imagem de fundo indisponível. Rotas e pontos continuam visíveis.';
+  });
+  tiles.on('tileload',()=>{failed=0;});
+  tiles.addTo(map);
   map.createPane('consultationTrees').style.zIndex='390';
   routeLayer=L.featureGroup().addTo(map);
   treeLayer=L.featureGroup().addTo(map);
+  qualityLayer=L.featureGroup().addTo(map);
  }
  function updateMapVisibility(){
-  const visible=Boolean(routeLayer?.getLayers().length||treeLayer?.getLayers().length);
+  const visible=Boolean(routeLayer?.getLayers().length||treeLayer?.getLayers().length||qualityLayer?.getLayers().length);
   const wasHidden=$('map').hidden;
   $('map').hidden=!visible;
   if(visible&&wasHidden)map.invalidateSize();
+ }
+ function drawQuality(rows,focus=false){
+  qualityLayer?.clearLayers();
+  $('qualityLegend').hidden=!rows.length;
+  if(!rows.length){updateMapVisibility();return;}
+  ensureMap();
+  for(const row of rows){
+   const {lat,lon,span,metres,nearest}=row.spanAlert;
+   const point=[lat,lon],target=[nearest[1],nearest[0]];
+   L.polyline([point,target],{color:'#ffaf39',weight:2,dashArray:'6 6',interactive:false}).addTo(qualityLayer);
+   L.circleMarker(point,{radius:7,color:'#fff',weight:2,fillColor:'#ffaf39',fillOpacity:1})
+    .bindTooltip('Vão '+esc(span)+' · '+esc(CampoSpanQuality.format(metres))+' m').addTo(qualityLayer);
+  }
+  qualityLayer.bringToFront();
+  updateMapVisibility();
+  if(focus){
+   map.fitBounds(qualityLayer.getBounds(),{padding:[26,26],maxZoom:18});
+   $('map').scrollIntoView({block:'center'});
+  }
+ }
+ function renderQuality(rows,operators){
+  const labels=new Map(operators.map(team=>[team.id,team.label]));
+  qualityRows=rows.filter(row=>row.spanAlert);
+  const checked=rows.filter(row=>row.spanChecked===true).length;
+  $('showQuality').disabled=!qualityRows.length;
+  $('showQuality').textContent=qualityVisible?'Ocultar alertas no mapa':'Ver alertas no mapa';
+  $('qualityStatus').textContent=fmt(qualityRows.length)+' com alerta · '+fmt(checked)+' avaliados · '+fmt(rows.length-checked)+' sem distância verificada';
+  $('qualityRows').innerHTML=table(['Equipe','Alimentador','Vão','Distância','Localização'],qualityRows.map((row,index)=>[
+   esc(labels.get(row.inspector)||'—'),esc(row.feeder||'—'),esc(row.spanAlert.span),CampoSpanQuality.format(row.spanAlert.metres)+' m',
+   '<button type="button" data-alert="'+index+'">Localizar</button>'
+  ]),'Nenhum alerta no recorte.');
+  drawQuality(qualityVisible?qualityRows:[]);
  }
  function hideTrees(){
   treeController?.abort();
@@ -231,13 +276,16 @@
   $('dataStatus').textContent=invalid?'A data inicial deve ser anterior ou igual à data final.':
    !data.archiveAvailable?'Arquivo do Drive indisponível. Indicadores de cadastro mostram os dados da base central.':'';
   const operators=invalid?[]:data.groups.filter(team=>!filter.inspectors.length||filter.inspectors.includes(team.id));
-  productivity(invalid?[]:F.apply(data.field,filter),operators,!invalid&&F.period(today,filter.from,filter.through));
+  const rows=invalid?[]:F.apply(data.field,filter);
+  renderQuality(rows,operators);
+  productivity(rows,operators,!invalid&&F.period(today,filter.from,filter.through));
   const active=invalid?[]:data.routes.filter(route=>operators.some(team=>team.id===route.inspector));
   routes(filter,active,operators);
   void showMap(fit);
  }
  function lock(){
-  data=current=null;loadSerial++;loading=false;
+  data=null;loadSerial++;loading=false;
+  qualityVisible=false;renderQuality([],[]);
   $('showAllTrees').checked=false;hideTrees();
   clearMap();availableRoutes=[];selectedRoutes.clear();paintRouteButtons();
   for(const id of ['metrics','daily','dailyGoal','forecast','forecastTarget','positions','inspectors','feedersKpi','routes','routeChoices'])$(id).textContent='';
@@ -268,22 +316,36 @@
   }finally{if(serial===loadSerial){loading=false;$('refresh').disabled=false;}}
  }
  async function start(){
+  const link=new URLSearchParams(location.hash.slice(1)).get('acesso');
+  if(link!==null)history.replaceState(null,'',location.pathname+location.search);
   try{
+   if(link!==null)await api('entrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:link})});
    const session=await api('sessao');
    if(!session.authenticated){
     lock();
-    $('loginLink').hidden=!session.available;
-    const reason=new URL(location.href).searchParams.get('acesso');
-    $('loginStatus').textContent=!session.available||reason==='indisponivel'?'Acesso temporariamente indisponível.':reason==='email'?'Acesso não autorizado.':'';
+    $('loginStatus').textContent='Abra o link compartilhado pela administração.';
     return;
    }
    $('login').hidden=true;
    $('workspace').hidden=$('sessionActions').hidden=false;
-   $('logout').hidden=!session.email;
-   $('sessionEmail').textContent=session.email||'Administrador';
    await load(true);
-  }catch{lock();$('loginLink').hidden=true;$('loginStatus').textContent='Não foi possível verificar o acesso.';}
+  }catch(error){
+   lock();
+   $('loginStatus').textContent=error.status===401?error.message:'Não foi possível verificar o acesso. Abra novamente o link compartilhado.';
+  }
  }
+ $('showQuality').onclick=()=>{
+  qualityVisible=!qualityVisible;
+  $('showQuality').textContent=qualityVisible?'Ocultar alertas no mapa':'Ver alertas no mapa';
+  drawQuality(qualityVisible?qualityRows:[],qualityVisible);
+ };
+ $('qualityRows').onclick=event=>{
+  const index=event.target.closest('[data-alert]')?.dataset.alert;
+  if(index===undefined)return;
+  qualityVisible=true;
+  $('showQuality').textContent='Ocultar alertas no mapa';
+  drawQuality([qualityRows[Number(index)]],true);
+ };
  $('filters').onsubmit=event=>{event.preventDefault();render();};
  $('filters').onchange=()=>render();
  $('filters').onreset=()=>setTimeout(render,0);
@@ -306,14 +368,5 @@
  $('showAllTrees').onchange=()=>{$('showAllTrees').checked?void showTrees(true):hideTrees();};
  $('routeClearMap').onclick=()=>{selectedRoutes.clear();clearMap();paintRouteChoices();};
  $('refresh').onclick=()=>void load(false);
- $('logout').onclick=async()=>{
-  try{
-   await api('sair',{method:'POST'});lock();
-   $('loginLink').hidden=false;$('loginStatus').textContent='Sessão encerrada.';
-  }catch(error){$('dataStatus').textContent=error.message;}
- };
- for(const id of ['forecastHours','forecastCount','forecastMode'])$(id).addEventListener('input',refreshForecast);
- document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('workspace').hidden)void load(false);});
- setInterval(()=>{if(!document.hidden&&!$('workspace').hidden&&navigator.onLine)void load(false);},20000);
  void start();
 })();

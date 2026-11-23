@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <meta name="referrer" content="same-origin">
+  <meta name="referrer" content="no-referrer">
   <title>ARBORA | Inspeções e cadastros</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
   <link rel="stylesheet" href="consulta-arbora.css">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="gestao-forecast.js"></script>
+  <script defer src="span-quality.js"></script>
   <script defer src="consulta-arbora-filtros.js"></script>
   <script defer src="consulta-arbora.js"></script>
 </head>
@@ -18,9 +19,7 @@
     <div class="shell header-inner">
       <div class="nameplate"><strong>ARBORA</strong><span>Gestão de vegetação</span></div>
       <div class="actions" id="sessionActions" hidden>
-        <span id="sessionEmail"></span>
         <button type="button" id="refresh">Atualizar</button>
-        <button type="button" id="logout">Sair</button>
       </div>
     </div>
   </header>
@@ -30,13 +29,11 @@
       <span id="updated"></span>
     </section>
     <section class="panel login" id="login">
-      <h2>Acesso gerencial</h2>
-      <a class="primary" id="loginLink" href="/api/gerencial/entrar" hidden>Entrar</a>
       <p id="loginStatus" role="status">Verificando acesso…</p>
     </section>
     <div id="workspace" hidden>
       <nav class="section-nav" aria-label="Seções da consulta">
-        <a href="#productivity">Produtividade</a><a href="#routesPanel">Rotas e cobertura</a>
+        <a href="#productivity">Produtividade</a><a href="#routesPanel">Rotas e cobertura</a><a href="#qualityPanel">Qualidade cadastral</a>
       </nav>
       <form class="panel" id="filters">
         <div class="panel-head"><h2>Filtros</h2><button type="reset">Limpar filtros</button></div>
@@ -55,11 +52,6 @@
         </article>
         <article class="panel">
           <h2>Projeção de levantamento</h2>
-          <div class="forecast-grid">
-            <label>Cadastros<input id="forecastCount" type="number" min="1" value="100"></label>
-            <label>Referência<select id="forecastMode"><option value="mean">Média</option><option value="median">Mediana</option></select></label>
-            <label>Horas ativas/dia<input id="forecastHours" type="number" min="0.5" max="24" step="0.5" value="8"></label>
-          </div>
           <strong id="forecast" class="estimate"></strong><p id="forecastTarget"></p>
           <p>Estimativa pelo tempo ativo medido nos cadastros filtrados. Deslocamento, pausas e sincronização ficam fora do tempo ativo.</p><h3>Posição em relação à rede</h3><div id="positions"></div>
         </article>
@@ -68,6 +60,11 @@
           <div id="inspectors" class="table-wrap"></div>
           <h3>Cadastros por alimentador</h3><div id="feedersKpi" class="table-wrap"></div>
         </article>
+      </section>
+      <section class="panel" id="qualityPanel">
+        <div class="panel-head"><h2>Árvores a mais de 60 m do vão indicado</h2><button type="button" id="showQuality" disabled>Ver alertas no mapa</button></div>
+        <p id="qualityStatus" role="status"></p>
+        <div id="qualityRows" class="table-wrap"></div>
       </section>
       <section class="panel" id="routesPanel">
         <h2>KPI de rotas por equipe</h2>
@@ -82,9 +79,11 @@
         </div>
         <div id="routeChoices" class="table-wrap"></div>
         <p id="routeMapStatus" role="status"></p>
+        <p id="basemapStatus" role="status" hidden></p>
         <p id="treeMapStatus" role="status" hidden></p>
         <div id="map" aria-label="Mapa de rotas e árvores" hidden></div>
         <div id="treeLegend" class="legend" hidden><span><i class="tree-vera"></i>Árvores VERA</span><span><i class="tree-field"></i>Árvores do campo</span></div>
+        <div id="qualityLegend" class="legend" hidden><span><i style="background:#ffaf39"></i>Possível erro de localização</span></div>
         <div id="routeMapLabels" class="legend"></div><div id="legend" class="legend" hidden><span><i style="background:#168756"></i>Vistoriado</span><span><i style="background:#ee344a"></i>Pendente</span><span><i style="background:#255fa5"></i>Saída da subestação</span></div>
       </section>
     </div>

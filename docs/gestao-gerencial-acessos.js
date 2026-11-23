@@ -95,6 +95,39 @@
   }catch(error){notice.textContent=error.message;}
   finally{submit.disabled=!window.CampoControl.authorized();}
  };
+ const linkPath='/api/admin/gerencial/link';
+ const generate=document.getElementById('gerencialLinkGenerate'),revoke=document.getElementById('gerencialLinkRevoke');
+ const output=document.getElementById('gerencialLinkOutput'),linkValue=document.getElementById('gerencialLinkValue');
+ const linkStatus=document.getElementById('gerencialLinkStatus');
+ let linkEnabled=false,linkBusy=false;
+ async function manageLink(action){
+  if(linkBusy||!window.CampoControl?.authorized())return;
+  if(action&&(action==='revoke'||linkEnabled)&&!confirm('O link atual e as sessões abertas por ele perderão acesso. Continuar?'))return;
+  linkBusy=true;
+  generate.disabled=revoke.disabled=true;
+  try{
+   const response=await window.CampoControl.api(linkPath,action?{action}:undefined);
+   if(!window.CampoControl.authorized())return;
+   linkEnabled=response.enabled;
+   if(response.fragment){
+    const url=new URL('/consulta-arbora.html',location.origin);
+    url.hash=response.fragment;
+    linkValue.value=url.href;
+    output.hidden=false;
+   }else if(!linkEnabled){linkValue.value='';output.hidden=true;}
+   linkStatus.textContent=linkEnabled?'Link ativo. A administração vê o horário e um identificador da rede de cada acesso.':'Nenhum link ativo.';
+  }catch(error){linkStatus.textContent=error.message;}
+  finally{
+   linkBusy=false;
+   if(window.CampoControl.authorized()){generate.disabled=false;revoke.disabled=!linkEnabled;}
+  }
+ }
+ generate.onclick=()=>void manageLink('rotate');
+ revoke.onclick=()=>void manageLink('revoke');
+ document.getElementById('gerencialLinkCopy').onclick=async()=>{
+  try{await navigator.clipboard.writeText(linkValue.value);linkStatus.textContent='Link copiado.';}
+  catch{linkValue.select();linkStatus.textContent='Copie o link selecionado.';}
+ };
  const list=document.getElementById('gerencialAccessRows');
  const status=document.getElementById('gerencialAccessStatus');
  const refresh=document.getElementById('gerencialAccessRefresh');
@@ -114,7 +147,7 @@
    if(!append)list.replaceChildren();
    for(const access of page.items){
     const row=list.insertRow();
-    for(const value of [access.email,format.format(new Date(access.entrou_em)),access.saiu_em?format.format(new Date(access.saiu_em)):'—'])row.insertCell().textContent=value;
+    for(const value of ['#'+access.id+' · '+access.email,format.format(new Date(access.entrou_em)),access.saiu_em?format.format(new Date(access.saiu_em)):'—'])row.insertCell().textContent=value;
    }
    next=page.next;
    more.hidden=!next;
@@ -125,13 +158,14 @@
    if(request===generation)refresh.disabled=more.disabled=false;
   }
  }
- root.addEventListener('toggle',()=>{if(root.open&&window.CampoControl?.authorized()){void load();void inspectors();}});
+ root.addEventListener('toggle',()=>{if(root.open&&window.CampoControl?.authorized()){void load();void inspectors();void manageLink();}});
  refresh.onclick=()=>void load();
  more.onclick=()=>void load(true);
  window.addEventListener('campo-control-logout',()=>{
   generation++;configGeneration++;activeAccounts=[];teamState=null;
   teamLinks.replaceChildren();teamForm.reset();showNames.checked=false;showNames.disabled=teamSubmit.disabled=true;teamStatus.textContent='';
   list.replaceChildren();
+  linkValue.value='';output.hidden=true;linkStatus.textContent='';generate.disabled=revoke.disabled=true;linkEnabled=false;
   choices.replaceChildren();submit.disabled=true;notice.textContent='';
   more.hidden=true;
   status.textContent='';
