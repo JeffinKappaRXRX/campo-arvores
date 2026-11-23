@@ -53,8 +53,10 @@ function call(path,{cookie='',jwt='',body,method=body===undefined?'GET':'POST',h
   body:body===undefined?undefined:JSON.stringify(body)
  }),env);
 }
+const treeMap='/api/gerencial/arvores';
 const login='/api/gerencial/entrar',status='/api/gerencial/sessao',dataPath='/api/gerencial/dados',audit='/api/admin/gerencial/acessos';
 assert.equal((await call(dataPath)).status,401);
+assert.equal((await call(treeMap)).status,401);
 assert.equal((await call(audit)).status,403);
 for(const jwt of ['',await assertion({aud:['other']}),await assertion({exp:1}),await assertion({email:'energisa@external.example'}),await assertion({email:'gerente@energisa.com.br.external.example'})]){
  const denied=await call(login,{jwt,headers:{'Cf-Access-Authenticated-User-Email':'gerente@energisa.com.br'}});
@@ -145,6 +147,39 @@ assert.equal((await call('/api/gerencial/foto?source=campo&id=tree-alpha',viewer
 await call(selection,{cookie:admin,body:{ids:[accounts.Lucivaldo]}});
 assert.deepEqual((await getData()).groups.map(group=>group.label),['BV-MT01']);
 await call(selection,{cookie:admin,body:{ids:[accounts.Herlen,accounts.Lucivaldo]}});
+assert.equal((await call(treeMap,{method:'POST',...viewer})).status,405);
+const currentVera='vera-fixture';
+sql.prepare("INSERT INTO vera_meta(key,value) VALUES('generation',?)").run(currentVera);
+const insertVera=sql.prepare('INSERT INTO vera_trees(generation,id,data) VALUES(?,?,?)');
+for(const [generation,id,lat,lon] of [
+ [currentVera,'41',-9.91,-67.81],[currentVera,'42','-9.92','-67.82'],[currentVera,'43',-9.93,-67.83],
+ [currentVera,'44',null,-67.84],['old-fixture','45',-9.95,-67.85]
+]){
+ insertVera.run(generation,id,JSON.stringify({lat,lon,observacao:'internal note'}));
+}
+const archiveUrl='https://archive.example/fixtures';
+env.GOOGLE_SCRIPT_URL=archiveUrl;
+env.GOOGLE_SCRIPT_TOKEN='archive-fixture';
+const checkKeyFetch=globalThis.fetch;
+globalThis.fetch=(url,options)=>{
+ if(url!==archiveUrl)return checkKeyFetch(url);
+ const payload=JSON.parse(options.body);
+ assert.equal(payload.action,'admin_list');
+ return Response.json({
+  ok:true,revision:1,records:[{id:'archived',lat:-9.98,lon:-67.88,inspector:'Outros',createdAt:'2023-01-01'}],
+  deletedIds:['vera-43'],pendingDeletes:[{id:'pending',lat:-9.99,lon:-67.89,updatedAt:createdAt}]
+ });
+};
+const coordinates=await call(treeMap+'?from=2030-01-01&inspector=unused',viewer);
+assert.equal(coordinates.status,200);
+assert.equal(coordinates.headers.get('Cache-Control'),'no-store');
+assert.deepEqual(await coordinates.json(),{
+ vera:[[-9.9,-67.8],[-9.92,-67.82]],
+ field:[[-9.9,-67.8],[-9.9,-67.8],[-9.98,-67.88]],veraAvailable:true,archiveAvailable:true
+});
+delete env.GOOGLE_SCRIPT_URL;
+delete env.GOOGLE_SCRIPT_TOKEN;
+globalThis.fetch=checkKeyFetch;
 const F=globalThis.CampoConsultaFiltros;
 const filtered=F.apply(linked.field,{from:'2026-11-23',through:'2026-11-23',inspectors:[other.id]});
 assert.equal(filtered.length,2);

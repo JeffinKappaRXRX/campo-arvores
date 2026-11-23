@@ -11,7 +11,8 @@
  const pct=value=>value.toLocaleString('pt-BR',{style:'percent',maximumFractionDigits:1});
  const fields=$('filters').elements;
  fields.from.value=today.slice(0,7)+'-01';fields.to.value=today;
- let data,current,map,routeLayer,loadSerial=0,loading=false;
+ let data,current,map,routeLayer,treeLayer,loadSerial=0,loading=false;
+ let treeController=null,treeSignature='';
  let availableRoutes=[],selectedRoutes=new Set(),shownRoutes=[],viewMode=null,mapSignature='',mapController=null;
  function filterValues(){
   return {from:fields.from.value,through:fields.to.value,inspectors:fields.inspector.value?[fields.inspector.value]:[]};
@@ -107,22 +108,83 @@
   selectedRoutes=new Set(ids);
   shownRoutes=ids;viewMode=mode;
   paintRouteChoices();
-  void showMap(true);
+  void showMap(true,true);
  }
  function hideMap(message=''){
   mapController?.abort();mapSignature='';
   routeLayer?.clearLayers();
-  $('map').hidden=$('legend').hidden=true;
+  $('legend').hidden=true;
+  updateMapVisibility();
   $('routeMapStatus').textContent=message;
   $('routeMapLabels').textContent='';
  }
- async function showMap(fit=true){
+ function ensureMap(){
+  if(map)return;
+  map=L.map('map',{preferCanvas:true}).setView([-9.97,-67.81],11);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,maxNativeZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  map.createPane('consultationTrees').style.zIndex='390';
+  routeLayer=L.featureGroup().addTo(map);
+  treeLayer=L.featureGroup().addTo(map);
+ }
+ function updateMapVisibility(){
+  const visible=Boolean(routeLayer?.getLayers().length||treeLayer?.getLayers().length);
+  const wasHidden=$('map').hidden;
+  $('map').hidden=!visible;
+  if(visible&&wasHidden)map.invalidateSize();
+ }
+ function hideTrees(){
+  treeController?.abort();
+  treeController=null;
+  treeLayer?.clearLayers();
+  treeSignature='';
+  $('treeMapStatus').hidden=$('treeLegend').hidden=true;
+  $('treeMapStatus').textContent='';
+  updateMapVisibility();
+ }
+ async function showTrees(fit=false){
+  if(!$('showAllTrees').checked||treeController)return;
+  const status=$('treeMapStatus');
+  status.hidden=false;
+  if(!treeSignature)status.textContent='Carregando árvores…';
+  const controller=new AbortController();
+  treeController=controller;
+  try{
+   const result=await api('arvores',{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(95000)])});
+   if(controller.signal.aborted)return;
+   const signature=JSON.stringify([result.vera,result.field]);
+   if(signature!==treeSignature){
+    ensureMap();
+    treeLayer.clearLayers();
+    for(const [points,color] of [[result.vera,'#b4ea91'],[result.field,'#4de1d2']]){
+     for(const point of points)L.circleMarker(point,{
+      pane:'consultationTrees',radius:4,color:'#163a35',weight:1,fillColor:color,fillOpacity:.9,interactive:false
+     }).addTo(treeLayer);
+    }
+    treeSignature=signature;
+   }
+   const bounds=treeLayer.getBounds();
+   $('treeLegend').hidden=!bounds.isValid();
+   updateMapVisibility();
+   if(fit&&!routeLayer.getLayers().length&&bounds.isValid())map.fitBounds(bounds,{padding:[26,26],maxZoom:17});
+   status.textContent=fmt(result.vera.length)+' da VERA · '+fmt(result.field.length)+' do campo, com coordenadas'+
+    (result.veraAvailable?'':' · Base VERA indisponível')+(result.archiveAvailable?'':' · Arquivo do Drive indisponível');
+  }catch(error){
+   if(!controller.signal.aborted){
+    if(error.status===401){await start();return;}
+    status.textContent=error.name==='TimeoutError'?'Tempo de carregamento das árvores excedido.':error.message;
+   }
+  }finally{
+   if(treeController===controller)treeController=null;
+  }
+ }
+ async function showMap(fit=true,focus=false){
   const routes=availableRoutes.filter(route=>viewMode==='all'||(viewMode?.team?route.inspector===viewMode.team:shownRoutes.includes(route.id)));
   if(!routes.length){hideMap();return;}
   const signature=JSON.stringify(routes.map(route=>[route.id,route.revision,route.confirmed,route.pending,routeLabel(route)]));
   if(signature===mapSignature&&!fit)return;
   const controller=new AbortController();
   mapController?.abort();mapController=controller;
+  if(focus)$('routeMapStatus').textContent='Carregando rotas…';
   try{
    const views=new Map();
    for(let start=0;start<routes.length;start+=12){
@@ -133,12 +195,8 @@
    }
    if(controller.signal.aborted)return;
    const tally=key=>routes.reduce((sum,route)=>sum+(views.has(route.id)?route[key]||0:0),0);
-   $('map').hidden=$('legend').hidden=false;
-   if(!map){
-    map=L.map('map',{preferCanvas:true}).setView([-9.97,-67.81],11);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,maxNativeZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
-    routeLayer=L.featureGroup().addTo(map);
-   }
+   ensureMap();
+   $('legend').hidden=false;
    routeLayer.clearLayers();
    const colors=['#78b8ff','#c3a5ff','#ffa361','#f0d65c','#7ee5c0','#ff99b2'];
    const labels=[];
@@ -158,8 +216,9 @@
      .bindTooltip(esc(key.code)+(key.pending?' · '+key.pending+' trecho(s) pendente(s)':' · encerrada')+' · '+label);
    }
    $('routeMapLabels').innerHTML=labels.join('');
-   map.invalidateSize();
+   updateMapVisibility();
    if(fit&&routeLayer.getBounds().isValid())map.fitBounds(routeLayer.getBounds(),{padding:[26,26],maxZoom:17});
+   if(focus&&!$('map').hidden)$('map').scrollIntoView({block:'center'});
    $('routeMapStatus').textContent=views.size+' rota(s) · '+km(tally('planned'))+' planejados · '+km(tally('confirmed'))+' vistoriados · '+km(tally('pending'))+' pendentes'+(tally('keys')?' · '+tally('closed')+'/'+tally('keys')+' chaves encerradas':'');
    mapSignature=signature;
   }catch(error){
@@ -179,6 +238,7 @@
  }
  function lock(){
   data=current=null;loadSerial++;loading=false;
+  $('showAllTrees').checked=false;hideTrees();
   clearMap();availableRoutes=[];selectedRoutes.clear();paintRouteButtons();
   for(const id of ['metrics','daily','dailyGoal','forecast','forecastTarget','positions','inspectors','feedersKpi','routes','routeChoices'])$(id).textContent='';
   fields.inspector.replaceChildren(new Option('Todos',''));
@@ -200,6 +260,7 @@
    if(data.groups.some(team=>team.id===old))select.value=old;
    $('updated').textContent='Atualizado em '+dateTime.format(new Date(data.updatedAt));
    render(fit);
+   void showTrees();
   }catch(error){
    if(serial!==loadSerial)return;
    if(error.status===401)await start();
@@ -242,6 +303,7 @@
  };
  $('routeViewSelected').onclick=()=>showRoutes(availableRoutes.filter(route=>selectedRoutes.has(route.id)).map(route=>route.id),null);
  $('routeViewAll').onclick=()=>showRoutes(availableRoutes.map(route=>route.id),'all');
+ $('showAllTrees').onchange=()=>{$('showAllTrees').checked?void showTrees(true):hideTrees();};
  $('routeClearMap').onclick=()=>{selectedRoutes.clear();clearMap();paintRouteChoices();};
  $('refresh').onclick=()=>void load(false);
  $('logout').onclick=async()=>{

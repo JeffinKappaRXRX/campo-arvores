@@ -1840,6 +1840,36 @@ async function gerencialData(env){
 function gerencialCampaigns(source,byId){
  return CampoRoutes.campaignParts(source.routes.filter(route=>byId.has(route.assignee)));
 }
+async function gerencialVeraPositions(db){
+ try{
+  return (await db.prepare(`SELECT id,json_extract(data,'$.lat') AS lat,json_extract(data,'$.lon') AS lon
+   FROM vera_trees WHERE generation=(SELECT value FROM vera_meta WHERE key='generation')`).all()).results;
+ }catch(error){
+  if(veraMissingTable(error))return null;
+  throw error;
+ }
+}
+async function gerencialTreePositions(env){
+ const db=await adminDb(env);
+ const [data,vera,merges]=await Promise.all([
+  controlUniverse(env),gerencialVeraPositions(db),db.prepare('SELECT source_id FROM shared_merges').all()
+ ]);
+ const inactive=new Set([...data.deletedIds,...merges.results.map(row=>row.source_id)]);
+ const field=new Map(data.records.filter(row=>gerencialActiveField(row)&&!inactive.has(row.id)).map(row=>[row.id,row]));
+ const coordinates=row=>sharedCoordinate(row.lat,90)&&sharedCoordinate(row.lon,180)?[Number(row.lat),Number(row.lon)]:null;
+ const baseline=(vera||[]).flatMap(row=>{
+  const id='vera-'+row.id;
+  if(inactive.has(id))return [];
+  const updated=field.get(id);
+  field.delete(id);
+  const point=(updated&&coordinates(updated))||coordinates(row);
+  return point?[point]:[];
+ });
+ return json({
+  vera:baseline,field:[...field.values()].map(coordinates).filter(Boolean),
+  veraAvailable:vera!==null,archiveAvailable:data.archive.available
+ });
+}
 async function gerencialRouteMap(request,env){
  const params=new URL(request.url).searchParams,requested=[...new Set(params.getAll('id'))];
  if(!requested.length||requested.length>12||requested.some(id=>!CampoRoutes.identifier(id)))throw sharedError('Seleção de rotas inválida.');
@@ -1879,6 +1909,7 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),email:viewer?.email||null,available:Boolean(settings)});
   if(!viewer&&!admin)throw sharedError('Entre com seu e-mail corporativo.',401);
   if(path==='/api/gerencial/dados')return await gerencialData(env);
+  if(path==='/api/gerencial/arvores')return await gerencialTreePositions(env);
   if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
   return json({error:'Consulta não encontrada.'},404);
  }catch(error){

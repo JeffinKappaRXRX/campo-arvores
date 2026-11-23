@@ -78,3 +78,8 @@ dialog::backdrop {background:#080612aa}
 
 .position {display:grid;grid-template-columns:minmax(100px,.8fr) 2fr 35px;align-items:center;gap:7px;color:var(--muted);font-size:.8rem;margin:5px 0}
 .position meter {width:100%}
+
+.map-check {display:inline-flex;align-items:center;gap:6px}
+.map-check input,#routeChoices input[type=checkbox] {width:auto;min-height:0;accent-color:var(--green)}
+.tree-vera {background:#b4ea91}
+.tree-field {background:#4de1d2}
