@@ -233,9 +233,9 @@ const GestaoTerritorial = (() => {
    status.textContent=missing.length?'Sem localização cadastrada: '+missing.map(org=>org.nome).join('; ')+'.':
     !selected.length?'Nenhum órgão corresponde aos filtros.':'';
    if(!located.length)return;
-   map.invalidateSize();
-   if(located.length===1)map.setView(located[0].point,17);
-   else map.fitBounds(L.latLngBounds(located.map(org=>org.point)),{padding:[44,46],maxZoom:17});
+   map.invalidateSize({pan:false});
+   if(located.length===1)map.setView(located[0].point,17,{animate:false});
+   else map.fitBounds(L.latLngBounds(located.map(org=>org.point)),{padding:[44,46],maxZoom:17,animate:false});
   }
   function isDue(due){return !CP.isNum(due)||due<=yearEnd;}
   function makeRows(all,today){
