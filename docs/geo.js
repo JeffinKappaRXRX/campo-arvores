@@ -9,17 +9,15 @@ let networkPaintFrame=null,networkPaintGeneration=0,viewportTimer=null;
 const FIELD_NETWORK_LIMIT=1000;
 const DEFAULT_XYZ='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';let xyzLayer=null,packageWorker=null,packageConfig=null,packageReady=false,querySerial=0,queryTimer=null,inspectionPins=null,layerVisibility={},focusSerial=0,mapFeederFilterValue="",mapFeederFilters=[];
 
-const fieldMapModeKey='arbora.field.map.light',fieldGpsMoveKey='arbora.field.gps.pending';
+const fieldMapModeKey='arbora.field.map.light.manual',fieldGpsMoveKey='arbora.field.gps.pending';
 function mapPreference(key,value){
  try{if(value===undefined)return localStorage.getItem(key);if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}catch{}
  return null;
 }
 const gpsMapInterrupted=Boolean(mapPreference(fieldGpsMoveKey));
 const preferredMapMode=mapPreference(fieldMapModeKey);
-const lowMemoryDevice=Number.isFinite(navigator.deviceMemory)&&navigator.deviceMemory<=4;
-let fieldMapLight=gpsMapInterrupted||preferredMapMode==='1'||new URLSearchParams(location.search).get('mapa')==='leve'||(preferredMapMode===null&&lowMemoryDevice);
+let fieldMapLight=preferredMapMode===null?new URLSearchParams(location.search).get('mapa')==='leve':preferredMapMode==='1';
 let gpsMapSettle;
-if(gpsMapInterrupted)mapPreference(fieldMapModeKey,'1');
 mapPreference(fieldGpsMoveKey,null);
 function trackGpsMapMove(){
  clearTimeout(gpsMapSettle);
@@ -30,7 +28,6 @@ function fieldNetworkLimit(){return fieldMapLight?420:FIELD_NETWORK_LIMIT;}
 function paintMapMode(){
  const control=$('fieldMapLightMode');
  control.checked=fieldMapLight;
- $('lightMapStatus').textContent=fieldMapLight?'Mais pontos são agrupados. Aproxime para ver os detalhes da rede e do histórico.':'';
 }
 $('fieldMapLightMode').onchange=async event=>{
  fieldMapLight=event.target.checked;
@@ -39,7 +36,7 @@ $('fieldMapLightMode').onchange=async event=>{
  if(!fieldMap)return;
  renderNetwork();renderInspectionPins();requestNetworkView();
 };
-async function initGeo(){paintMapMode();if(gpsMapInterrupted){$('basemap').value='local';gpsStatus('Mapa leve ativado após a localização anterior ser interrompida.');}
+async function initGeo(){paintMapMode();if(gpsMapInterrupted){$('basemap').value='local';gpsStatus('Mapa iniciado com a rede local após a última interrupção.');}
  fieldMap=L.map('map',{preferCanvas:!fieldMapLight,zoomAnimation:false,markerZoomAnimation:false,fadeAnimation:false,...(fieldMapLight?{}:{renderer:L.canvas({tolerance:8,padding:.15})})}).setView([-9.975,-67.81],14);window.CampoFieldRouteMap?.refresh();fieldMap.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');L.control.scale({imperial:false}).addTo(fieldMap);fieldMap.on('click',e=>{if(typeof consumeStreetViewClick==='function'&&consumeStreetViewClick(e))return;if(typeof consumeMapRulerClick==='function'&&consumeMapRulerClick(e))return;if(selectNetworkAt(e.latlng))return;setTreeLocation(e.latlng.lat,e.latlng.lng);});packageConfig=await req('meta','readonly',s=>s.get('gpkgConfig'));networkData=packageConfig?{type:'FeatureCollection',features:[]}:await req('meta','readonly',s=>s.get('network'));fieldMap.on('movestart',()=>{
  clearTimeout(viewportTimer);clearTimeout(queryTimer);querySerial++;
  if(networkPaintFrame!==null)cancelAnimationFrame(networkPaintFrame);

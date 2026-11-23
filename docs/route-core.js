@@ -124,6 +124,61 @@ const CampoRoutes=(()=>{
   }
   return result;
  }
+ // Area review only selects whole spans. Check every open interval between crossings
+ // so a line whose endpoints lie inside a concave boundary is handled correctly.
+ function spansInsideArea(spans,ring){
+  const cross=(ax,ay,bx,by)=>ax*by-ay*bx;
+  const edges=ring.map((point,i)=>[point,ring[(i+1)%ring.length]]);
+  const eps=1e-9;
+  const contains=([x,y])=>{
+   let inside=false;
+   for(const [[ax,ay],[bx,by]] of edges){
+    const dx=bx-ax,dy=by-ay;
+    if(Math.abs(cross(dx,dy,x-ax,y-ay))<=eps*Math.hypot(dx,dy)&&x>=Math.min(ax,bx)-eps&&x<=Math.max(ax,bx)+eps&&y>=Math.min(ay,by)-eps&&y<=Math.max(ay,by)+eps)return true;
+    if((ay>y)!==(by>y)&&x<ax+(y-ay)*dx/dy)inside=!inside;
+   }
+   return inside;
+  };
+  if(ring.length<3||Math.abs(edges.reduce((sum,[[ax,ay],[bx,by]])=>sum+cross(ax-ring[0][0],ay-ring[0][1],bx-ring[0][0],by-ring[0][1]),0))<eps*eps)return [];
+  const xs=ring.map(p=>p[0]),ys=ring.map(p=>p[1]);
+  const west=Math.min(...xs),east=Math.max(...xs),south=Math.min(...ys),north=Math.max(...ys);
+  return spans.filter(({line})=>{
+   if(!line.every(([x,y])=>x>=west-eps&&x<=east+eps&&y>=south-eps&&y<=north+eps&&contains([x,y])))return false;
+   for(let i=1;i<line.length;i++){
+    const [x,y]=line[i-1],dx=line[i][0]-x,dy=line[i][1]-y,cuts=[0,1];
+    for(const [[ax,ay],[bx,by]] of edges){
+     const ex=bx-ax,ey=by-ay,den=cross(dx,dy,ex,ey);
+     if(Math.abs(den)<=eps*eps)continue;
+     const t=cross(ax-x,ay-y,ex,ey)/den,u=cross(ax-x,ay-y,dx,dy)/den;
+     if(t>0&&t<1&&u>=-eps&&u<=1+eps)cuts.push(t);
+    }
+    cuts.sort((a,b)=>a-b);
+    for(let j=1;j<cuts.length;j++){
+     const mid=(cuts[j-1]+cuts[j])/2;
+     if(!contains([x+mid*dx,y+mid*dy]))return false;
+    }
+   }
+   return true;
+  });
+ }
+ function spanAtPoint(spans,point,radius){
+  const y=111195,x=y*Math.cos(point[1]*Math.PI/180);
+  let picked=null,best=Infinity,second=Infinity;
+  for(const span of spans){
+   let nearest=Infinity;
+   for(let i=1;i<span.line.length;i++){
+    const [a,b]=[span.line[i-1],span.line[i]];
+    const ax=(a[0]-point[0])*x,ay=(a[1]-point[1])*y,bx=(b[0]-point[0])*x,by=(b[1]-point[1])*y;
+    if((ax>radius&&bx>radius)||(ax< -radius&&bx< -radius)||(ay>radius&&by>radius)||(ay< -radius&&by< -radius))continue;
+    const dx=bx-ax,dy=by-ay,length=dx*dx+dy*dy;
+    const t=length?Math.max(0,Math.min(1,(-ax*dx-ay*dy)/length)):0;
+    nearest=Math.min(nearest,Math.hypot(ax+t*dx,ay+t*dy));
+   }
+   if(nearest<best){second=best;best=nearest;picked=span;}
+   else second=Math.min(second,nearest);
+  }
+  return best<=radius&&second-best>=1?picked:null;
+ }
  function matchedRanges(spans,previous,position){
   const lat=previous[1],y=111195,x=y*Math.cos(lat*Math.PI/180);
   const local=p=>[(p[0]-previous[0])*x,(p[1]-lat)*y];
@@ -388,6 +443,6 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;

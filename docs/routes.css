@@ -38,3 +38,11 @@
 .route-return-dialog form,.route-return-dialog label{display:grid;gap:.4rem}
 .route-return-dialog form{gap:.8rem}
 .route-return-dialog textarea{width:100%;resize:vertical;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:.5rem;padding:.55rem}
+
+#fieldRouteCoverage{margin:.8rem 0}
+#fieldRouteKeys{display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:.4rem;margin:.5rem 0}
+#fieldRouteKeys button{text-align:left;padding:.5rem .65rem}
+#fieldRouteKeys button small{display:block;font-weight:400}
+#fieldRouteMapSelection{scroll-margin-top:.8rem;margin:.6rem 0}
+#fieldRouteMapSelection button[aria-pressed=true]{outline:2px solid #338c69;outline-offset:-2px}
+#fieldRouteSpanGroup{max-width:26rem}

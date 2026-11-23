@@ -18,6 +18,14 @@ assert.equal(corridor.length,5);
 assert(Math.abs(M.distance(spans[0].line[1],corridor[0][4])-30)<.001);
 assert(M.matchedRanges(spans,spans[0].line[0],spans[1].line[1]).some(x=>x.spanId==='vao0'));
 assert.equal(M.matchedRanges(spans,[-67.8,-9.969],[-67.8,-9.971]).length,0);
+const at=M.spanAtPoint(spans,[-67.79985,-9.97],30);
+assert.equal(at.id,'vao0');
+assert.equal(M.spanAtPoint(spans,[-67.7997,-9.97],30),null);
+const rectangle=[[-67.8001,-9.971],[-67.79935,-9.971],[-67.79935,-9.969],[-67.8001,-9.969]];
+assert.deepEqual(M.spansInsideArea(spans,rectangle).map(span=>span.id),['vao0','vao1']);
+const concave=[[0,0],[3,0],[3,3],[2,3],[2,1],[1,1],[1,3],[0,3]];
+assert.deepEqual(M.spansInsideArea([{line:[[.5,2],[2.5,2]]}],concave),[]);
+assert.equal(M.spansInsideArea([{line:[[.5,.5],[2.5,.5]]}],concave).length,1);
 assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans[2].line[0]])).searchParams.get('waypoints'),'-9.970000,-67.799400');
 
 (async()=>{
@@ -51,6 +59,9 @@ assert.equal(new URL(M.streetDirections(spans[4].line[1],spans[0].line[0],[spans
  assert.equal(street.searchParams.get('dir_action'),'navigate');
  assert.equal(street.searchParams.get('destination'),'-9.970000,-67.800000');
  online=false;app.click('fieldRouteStart');await wait(async()=>(await read())?.session);
+ const detail=app.d.getElementById('fieldRouteItems').closest('details');
+ assert.equal(detail.open,false);assert.equal(app.d.getElementById('fieldRouteItems').childElementCount,0);
+ detail.open=true;detail.dispatchEvent(new app.w.Event('toggle'));
  app.d.querySelector('[data-route-range="0,0,10000"]').click();await wait(async()=>(await read()).session.ranges.vao0);
  app.d.querySelector('[data-route-part="1"]').click();await wait(async()=>(await read()).session.ranges.vao1);
  app.click('fieldRouteFinal');await wait(async()=>(await read()).outbox.length===1);
