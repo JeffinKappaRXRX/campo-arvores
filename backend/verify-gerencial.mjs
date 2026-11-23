@@ -40,7 +40,7 @@ function call(path,{cookie='',body,method=body===undefined?'GET':'POST',headers=
  }),env);
 }
 const treeMap='/api/gerencial/arvores';
-const login='/api/gerencial/entrar',status='/api/gerencial/sessao',dataPath='/api/gerencial/dados',audit='/api/admin/gerencial/acessos';
+const login='/api/gerencial/link-session',status='/api/gerencial/sessao',dataPath='/api/gerencial/dados',audit='/api/admin/gerencial/acessos';
 assert.equal((await call(dataPath)).status,401);
 assert.equal((await call(treeMap)).status,401);
 assert.equal((await call(audit)).status,403);

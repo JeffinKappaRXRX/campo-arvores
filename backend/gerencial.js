@@ -271,7 +271,7 @@ async function gerencialAPI(request,env,path,admin){
   if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
   if(path==='/api/admin/gerencial/link')return await gerencialManageLink(request,env,admin);
   const db=authDB(env);
-  if(path==='/api/gerencial/entrar'&&request.method==='POST')return await gerencialLogin(request,env,db);
+  if(path==='/api/gerencial/link-session'&&request.method==='POST')return await gerencialLogin(request,env,db);
   const viewer=await gerencialSession(request,db);
   if(path==='/api/gerencial/sair'&&request.method==='POST'){
    if(viewer)await db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();

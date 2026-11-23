@@ -319,7 +319,7 @@
   const link=new URLSearchParams(location.hash.slice(1)).get('acesso');
   if(link!==null)history.replaceState(null,'',location.pathname+location.search);
   try{
-   if(link!==null)await api('entrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:link})});
+   if(link!==null)await api('link-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:link})});
    const session=await api('sessao');
    if(!session.authenticated){
     lock();
