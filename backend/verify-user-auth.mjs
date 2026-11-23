@@ -47,7 +47,18 @@ console.log('PASS API: administração, atribuição, autenticação, privacidad
 
 assert((await call('/api/auth/status',undefined,{cookie})).data.authenticated);assert.deepEqual((await call('/api/network/bt-feeders',undefined,{cookie})).data,btFixture);assert.equal((await call('/api/admin/users',undefined,{cookie})).status,403);assert.equal((await call('/api/admin/access-requests',undefined,{cookie})).status,403);
 const id=crypto.randomUUID(),record={id,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),lat:-9.9,lon:-67.8,inspector:'Mallory',species:'Árvore',photos:[]};const saved=await call('/api/shared/save',{record,actor:'Impersonated',baseVersion:0,operationId:crypto.randomUUID()},{cookie});assert.equal(saved.status,200);assert.equal(saved.data.tree.inspector,'Alice');assert.equal(saved.data.tree.lastEditorUserId,alice.id);
-assert.equal((await call('/api/team/presence/ping',{name:'Fake',active:true,shareLocation:false},{cookie})).status,200);assert.equal((await call('/api/admin/presence',undefined,root)).data.sessions[0].email,'alice@example.com');
+const reducedAgent={cookie,headers:{'User-Agent':'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/150.0.0.0 Mobile Safari/537.36'}};
+const pingDevice=device=>call('/api/team/presence/ping',{name:'Fake',active:true,shareLocation:false,device},reducedAgent);
+const alicePresence=async()=>(await call('/api/admin/presence',undefined,root)).data.sessions[0];
+assert.equal((await pingDevice(null)).status,200);
+assert.equal((await alicePresence()).email,'alice@example.com');
+assert.deepEqual((await alicePresence()).device,{model:null,system:'Android',version:null});
+assert.equal((await pingDevice({platform:'Android',model:'SM-S938B',version:'16.0.0'})).status,200);
+assert.deepEqual((await alicePresence()).device,{model:'SM-S938B',system:'Android',version:'16'});
+await pingDevice({platform:'Android',model:'<script>',version:'x'});
+assert.deepEqual((await alicePresence()).device,{model:'SM-S938B',system:'Android',version:'16'});
+assert.equal((await call('/api/admin/presence',undefined,{cookie})).status,403);
+
 assert.equal((await call('/api/admin/users',{...alice,blocked:true},root)).status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie})).status,401);ip=crypto.randomUUID();assert.equal((await call('/api/auth/login',{username:'alice',password})).status,401);alice=(await call('/api/admin/users',undefined,root)).data.users.find(u=>u.id===alice.id);assert.equal((await call('/api/admin/users',{...alice,blocked:false},root)).status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie})).status,401,'unblocking does not resurrect sessions');
 const resetCookie=await login('alice');alice=(await call('/api/admin/users',undefined,root)).data.users.find(u=>u.id===alice.id);const resetPassword='Outra frase longa 2026';assert.equal((await call('/api/admin/users',{...alice,password:resetPassword},root)).status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie:resetCookie})).status,401);ip=crypto.randomUUID();assert.equal((await call('/api/auth/login',{username:'alice',password})).status,401);const changedCookie=await login('alice',resetPassword);
 assert.equal((await call('/api/auth/password',{currentPassword:'wrong',newPassword:password},{cookie:changedCookie})).status,400);const ownChanged=await call('/api/auth/password',{currentPassword:resetPassword,newPassword:password},{cookie:changedCookie});assert.equal(ownChanged.status,200);assert.equal((await call('/api/shared/changes',undefined,{cookie:changedCookie})).status,401);const ownCookie=ownChanged.r.headers.getSetCookie()[0].split(';')[0];assert((await call('/api/auth/status',undefined,{cookie:ownCookie})).data.authenticated);

@@ -205,6 +205,8 @@ const F=globalThis.CampoConsultaFiltros;
 const filtered=F.apply(linked.field,{from:'2026-11-23',through:'2026-11-23',inspectors:[other.id]});
 assert.equal(filtered.length,2);
 assert.equal(F.summary(filtered).mean,180);
+assert.deepEqual(F.group(filtered,'feeder').map(row=>[row.name,row.count]),[['TAQ-01C1',2]]);
+assert.deepEqual(F.group(F.apply(linked.field,{from:'2026-11-23',through:'2026-11-23',inspectors:[team.id]}),'feeder').map(row=>[row.name,row.count]),[['TAN-01C9',1]]);
 
 const root=[-67.81,-9.97],junction=[-67.809,-9.97],tip=[-67.807,-9.97],branch=[-67.809,-9.969],branchTip=[-67.809,-9.968];
 const span=(id,line,metres,section='1')=>({id,line,metres,locality:'RIO BRANCO',feeder:'TAN-01I9',zone:'URBANO',section,block:'RBR554'});

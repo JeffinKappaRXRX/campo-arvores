@@ -20,3 +20,9 @@ WITH versions AS (
  FROM versions
 )
 SELECT *,CASE WHEN kind='edit' AND lower(trim(actor))<>lower(trim(COALESCE(previous_editor,actor))) THEN 1 ELSE 0 END cross_user FROM events;
+CREATE TABLE IF NOT EXISTS campo_presence_devices (
+ session_id TEXT PRIMARY KEY REFERENCES campo_presence(session_id) ON DELETE CASCADE,
+ model TEXT,
+ system TEXT NOT NULL,
+ version TEXT
+);
