@@ -80,10 +80,6 @@
   const previous=new Map(draft.map(span=>[span.id,span]));
   const spans=[...new Map([...chosenBlocks.values()].flat().map(span=>[span.id,span])).values()];
   draft=M.order(spans.map(span=>previous.get(span.id)||span),[...chosenBlocks.keys()]);
-  if(outlet&&!M.keySections(draft,outlet).length){
-   outlet=null;
-   $('routeOutletStatus').textContent='Saída ainda não vinculada';
-  }
   draftId=null;filteredDraft=false;paintDraft();
  }
  async function selectBlock(code,wanted){
@@ -235,6 +231,9 @@
   if(add&&candidate)addCandidates([candidate.span]);
  };
  function paintDraft(){
+  if(outlet&&!job&&!draft.some(span=>span.section==='1'&&[M.first(span),M.last(span)].some(point=>M.distance(point,outlet)<.01))){
+   outlet=null;$('routeOutletStatus').textContent='Saída ainda não vinculada';
+  }
   $('routePlanned').textContent=draft.length?km(M.metres(draft))+' de rede a vistoriar · '+draft.length+' vão(s) · início '+draft[0].id+' · fim '+draft.at(-1).id:'Adicione pelo menos um vão.';
   $('routeDraftList').innerHTML=draft.slice(0,250).map((s,i)=>`<li><b>${esc(s.id)}</b> · ${km(s.metres)}${s.estimated?' (geometria)':''} · ${esc([s.block,s.feeder,s.section?'T'+s.section:''].filter(Boolean).join(' · '))} <button type="button" data-up="${i}" ${i===0?'disabled':''}>Subir</button> <button type="button" data-reverse="${i}">Inverter sentido</button> <button type="button" data-remove="${i}">Remover</button></li>`).join('');
   let missing=false;
@@ -259,7 +258,7 @@
    $('routeRoadTrip').textContent='Google Maps · trajeto por ruas'+(stops.length>5?' · 1ª etapa de '+Math.ceil((stops.length-1)/4):'');
   }
   paintCandidates();
-  window.CampoControlMap?.routeOverlay?.(draft,null,false,M.bufferMetres(form.elements.buffer.value));
+  window.CampoControlMap?.routeOverlay?.(draft,null,false,M.bufferMetres(form.elements.buffer.value),outlet);
  }
  function selectedPlan(){return M.routePlan({start:form.elements.planStart.value,metresPerDay:Number(form.elements.planCapacity.value)*1000,source:historyCapacity?'history':'manual'});}
  function paintDeadline(){
@@ -313,15 +312,29 @@
   draftId=null;filteredDraft=false;paintDraft();
  };
  panel.addEventListener('input',e=>{if(e.target.form===form&&e.target.name)draftId=null;if(e.target===form.elements.buffer)paintDraft();});
+ function outletEndpoint(spans,point,feature){
+  let clicked;
+  try{clicked=feature?.properties?._plannedSpan||(feature&&M.feature(feature));}catch{}
+  const main=spans.filter(span=>span.section==='1');
+  const exact=clicked&&main.find(span=>span.id===clicked.id);
+  const options=[...new Map((exact?[exact]:main).flatMap(span=>[M.first(span),M.last(span)].map(end=>[end.join(','),{end,span,distance:M.distance(end,point)}]))).values()]
+   .filter(item=>item.distance<=35).sort((a,b)=>a.distance-b.distance);
+  if(!options.length||options[1]&&options[1].distance-options[0].distance<1)return null;
+  return options[0];
+ }
  $('routeOutlet').onclick=()=>{
-  if(!draft.length){status.textContent='Inclua no plano o alimentador desde a saída da subestação até as pontas.';return;}
-  status.textContent='Clique no ponto de saída da subestação no mapa.';
-  window.CampoControlMap?.pickOutlet?.(point=>{
-   const keys=M.keySections(draft,point);
-   if(!keys.length){status.textContent='Saída sem conexão inequívoca a uma ponta T1 do recorte. Confira a saída e a continuidade da rede.';return;}
-   outlet=point;draftId=null;draft=M.outletOrder(draft,outlet);paintDraft();
-   $('routeOutletStatus').textContent='Saída vinculada · '+keys.length+' chave(s)';
-   status.textContent='Saída vinculada à primeira ponta T1.';
+  if(!draft.length){status.textContent='Inclua no plano o vão T1 que sai da subestação.';return;}
+  status.textContent='Clique perto da extremidade do vão T1 que sai da subestação.';
+  window.CampoControlMap?.pickOutlet?.((point,feature)=>{
+   const anchor=outletEndpoint(draft,point,feature);
+   if(!anchor){
+    status.textContent='Aproxime o mapa e clique na extremidade de um vão T1 incluído nesta rota. A seleção continua ativa.';
+    return false;
+   }
+   outlet=anchor.end;draftId=null;draft=M.outletOrder(draft,outlet);paintDraft();
+   $('routeOutletStatus').textContent='Saída vinculada · vão '+anchor.span.id;
+   status.textContent='Saída vinculada à extremidade do vão T1 '+anchor.span.id+'.';
+   return true;
   });
  };
  form.onsubmit=async e=>{
@@ -330,9 +343,6 @@
   if(!draft.length&&!job){status.textContent='Selecione pelo menos um vão.';return;}
   if(!job){
    const keyGroups=M.keySections(draft,outlet);
-   if(!blockMode.checked&&draft.some(span=>span.block)&&!keyGroups.length){
-    status.textContent='Marque a saída da subestação com a rede T1 conectada para habilitar a vistoria por chave.';return;
-   }
    const known=new Set(keyGroups.flatMap(key=>key.segments.flatMap(segment=>segment.ids)));
    const plan=selectedPlan();
    if(!plan){status.textContent='Informe a data inicial e a capacidade diária em km para atribuir a rota.';return;}
@@ -340,7 +350,7 @@
    const gaps=ordered.slice(1).filter((s,i)=>M.distance(M.last(ordered[i]),M.first(s))>25);
    const parts=M.routeParts(ordered);
    const notices=[];
-   if(blockMode.checked&&!keyGroups.length)notices.push('Sem saída T1 vinculada, o inspetor acompanha esta rota por GPS e vão.');
+   if(!outlet)notices.push('A rota será publicada sem marcar a saída da subestação.');
    if(keyGroups.length&&draft.some(span=>span.block&&!known.has(span.id)))notices.push('Parte da rede não tem continuidade comprovada com a saída escolhida e ficará disponível para GPS/vão.');
    if(parts.length>160){status.textContent='O recorte excedeu o tamanho de uma rota. Refine os filtros e tente novamente.';return;}
    if(parts.length>1)notices.push('O inspetor verá a rota inteira no mapa e poderá seguir '+parts.length+' partes numeradas.');
@@ -589,12 +599,13 @@
    const layer=String(f.properties?._layer||'').normalize('NFD').toUpperCase().replace(/[^A-Z0-9]/g,'');
    if(!f.geometry?.type?.endsWith('LineString')||(f.properties?._class&&f.properties._class!=='MT'&&!/VAO.*(?:MT|PRIMARIA)|REDE.*(?:MT|PRIMARIA)/.test(layer)))return false;
    const candidate=candidates.find(x=>x.feature.id===f.id);
+   const planned=f.properties?._plannedSpan;
    if(blockMode.checked){
     const toggle=span=>{
      if(!span.block){blockStatus.textContent='Vão sem chave cadastrada.';return;}
      void selectBlock(span.block,!chosenBlocks.has(span.block)&&!pendingBlocks.has(span.block));
     };
-    if(candidate){toggle(candidate.span);return true;}
+    if(planned||candidate){toggle(planned||candidate.span);return true;}
     try{const span=M.feature(f);if(span.block||!f.id){toggle(span);return true;}}catch{}
     const serial=filterRequest;
     void window.CampoControlMap.routeNetwork({featureId:f.id}).then(result=>{
@@ -604,13 +615,18 @@
     }).catch(error=>{if(selecting&&blockMode.checked&&serial===filterRequest)blockStatus.textContent=error.message;});
     return true;
    }
-   if(candidate){add([candidate.span]);return true;}
-   if(!f.id){try{add([M.feature(f)]);}catch(e){status.textContent=e.message;}return true;}
+   const toggleSpan=span=>{
+    if(!draft.some(current=>current.id===span.id)){add([span]);return;}
+    draft=draft.filter(current=>current.id!==span.id);
+    draftId=null;filteredDraft=false;paintDraft();status.textContent='Vão '+span.id+' removido da rota.';
+   };
+   if(planned||candidate){toggleSpan(planned||candidate.span);return true;}
+   if(!f.id){try{toggleSpan(M.feature(f));}catch(e){status.textContent=e.message;}return true;}
    const serial=filterRequest;
    void window.CampoControlMap.routeNetwork({featureId:f.id}).then(result=>{
     if(!selecting||serial!==filterRequest||job)return;
     if(!result.features.length)throw Error('Vão MT indisponível na base instalada.');
-    add([M.feature(result.features[0])]);
+    toggleSpan(M.feature(result.features[0]));
    }).catch(e=>{status.textContent=e.message;});
    return true;
   },
