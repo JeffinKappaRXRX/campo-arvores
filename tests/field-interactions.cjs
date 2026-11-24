@@ -11,7 +11,7 @@ ctx.CampoBtFeeder.hydrate({meta:{mapped:1},byBlock:{RBR322:'SFR-01C9'},byId:{}})
 run(fs.readFileSync(path.join(root,'map-ruler.js'),'utf8'));
 run('setMapRulerActive(true)');assert.equal(panes.rulerPane.style.pointerEvents,'none');assert.equal(panes.rulerPane.style.display,'');run('setMapRulerActive(false)');assert.equal(panes.rulerPane.style.display,'none','leftover ruler canvas cannot mask network');
 const geo=fs.readFileSync(path.join(root,'geo.js'),'utf8');run(geo.split('\n').find(line=>line.startsWith('function featureValue(')));
-const start=geo.indexOf('function showFeature('),end=geo.indexOf('\n}',start)+2;run(geo.slice(start,end));
+const start=geo.indexOf('function fieldSwitchCode('),end=geo.indexOf('\nfunction refreshFeeders',start);run(geo.slice(start,end));
 $('feeder').value='MANUAL-ERRADO';ctx.feature={properties:{_class:'MT',Alimentador:' FLO-01C3 ',Id:'123'},geometry:{type:'LineString',coordinates:[]}};run('showFeature(feature)');assert($('featureinfo').innerHTML.includes('Usar vão e alimentador'));$('useFeature').onclick();assert.equal($('span').value,'123');assert.equal($('feeder').value,'FLO-01C3');
 ctx.feature.properties={_class:'MT',cod_alimentador:'TAN-01I1',Id:'456'};run('showFeature(feature)');$('useFeature').onclick();assert.equal($('span').value,'456');assert.equal($('feeder').value,'TAN-01I1');
 ctx.feature.properties={_class:'POSTE',Id:'789'};run('showFeature(feature)');$('useFeature').onclick();assert.equal($('pole').value,'789');assert.equal($('feeder').value,'TAN-01I1');

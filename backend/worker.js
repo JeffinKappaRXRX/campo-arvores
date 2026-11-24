@@ -12,6 +12,7 @@ const CampoRoutes=(()=>{
  const FULL=10000;
  const text=(value,max=100)=>String(value??'').trim().slice(0,max);
  const key=value=>text(value,100).toUpperCase();
+ const blockCode=value=>{const code=key(value);return /^(?:0|-+|SEM (?:CHAVE|BLOCO)|NULL|N[/]?A)$/.test(code)?'':code;};
  const codes=value=>[...new Set(String(value??'').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
  const sections=values=>[...new Set(values.map(v=>key(v).replace(/^T\s*/, '').replace(/\.0+$/, '')).filter(v=>['1','2','3'].includes(v)))].sort();
  const sectionLabel=route=>(route.sections||[route.section]).map(s=>'T'+s).join(' + ');
@@ -188,6 +189,55 @@ const CampoRoutes=(()=>{
   }
   return best<=radius&&second-best>=1?picked:null;
  }
+ // Treat the tapped spans as the first and last whole edges. A branch outside
+ // the connecting path never adds coverage, and a loop with two paths requires review.
+ function networkTrail(spans,startId,endId){
+  const start=spans.find(s=>s.id===startId),end=spans.find(s=>s.id===endId);
+  if(!start||!end||start.feeder!==end.feeder)return null;
+  if(start===end)return {spans:[start],junctions:new Set()};
+  const nodes=new Map(),starts=new Map();
+  const endpoint=p=>p.map(n=>n.toFixed(5)).join(',');
+  const add=(a,b,span)=>{
+   if(!nodes.has(a))nodes.set(a,[]);
+   if(!nodes.has(b))nodes.set(b,[]);
+   nodes.get(a).push({to:b,span});nodes.get(b).push({to:a,span});
+  };
+  for(const span of spans){
+   if(span.feeder!==start.feeder)continue;
+   const a=endpoint(span.line[0]),b=endpoint(span.line.at(-1));
+   if(span===start||span===end){
+    const middle='span:'+span.id;
+    starts.set(span.id,middle);add(a,middle,span);add(middle,b,span);
+   }else if(a!==b)add(a,b,span);
+  }
+  const from=starts.get(startId),to=starts.get(endId),queue=[from],prev=new Map([[from,null]]);
+  for(let i=0;i<queue.length&&!prev.has(to);i++)for(const link of nodes.get(queue[i])||[]){
+   if(!prev.has(link.to)){prev.set(link.to,{node:queue[i],span:link.span});queue.push(link.to);}
+  }
+  if(!prev.has(to))return null;
+  const vertices=[to],path=[];
+  for(let n=to;n!==from;){
+   const link=prev.get(n);
+   path.push({span:link.span,from:link.node});vertices.push(link.node);n=link.node;
+  }
+  const pathIndex=new Map(vertices.map((v,i)=>[v,i])),seen=new Set();
+  for(const [vertex,i] of pathIndex)for(const link of nodes.get(vertex)){
+   const j=pathIndex.get(link.to),neighbor=prev.get(vertex)?.node===link.to?prev.get(vertex):prev.get(link.to)?.node===vertex?prev.get(link.to):null;
+   if(j!==undefined){
+    if(Math.abs(i-j)!==1||neighbor?.span!==link.span)return null;
+    continue;
+   }
+   if(seen.has(link.to))continue;
+   const branch=[link.to];seen.add(link.to);
+   for(let at=0;at<branch.length;at++)for(const next of nodes.get(branch[at])){
+    if(pathIndex.has(next.to)){
+     if(next.to!==vertex)return null;
+    }else if(!seen.has(next.to)){seen.add(next.to);branch.push(next.to);}
+   }
+  }
+  path.reverse();
+  return {spans:path.map(step=>step.span),junctions:new Set(path.filter(step=>nodes.get(step.from).length>2).map(step=>step.span.id))};
+ }
  function matchedRanges(spans,previous,position){
   const lat=previous[1],y=111195,x=y*Math.cos(lat*Math.PI/180);
   const local=p=>[(p[0]-previous[0])*x,(p[1]-lat)*y];
@@ -302,6 +352,21 @@ const CampoRoutes=(()=>{
    if(n.children.length)n.depth=n.children[0].edge.span.metres+n.children[0].to.depth;
   }
   return {root,feeder};
+ }
+ function lateralKeySpans(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return null;
+  const pending=[{node:network.root,lateral:false,block:'',keyed:false}],held=new Set();
+  for(let at=0;at<pending.length;at++){
+   const parent=pending[at];
+   for(const [i,{edge,to}] of parent.node.children.entries()){
+    const span=edge.span,block=blockCode(span.block),lateral=parent.lateral||i>0;
+    const keyed=lateral&&Boolean(block)&&(parent.keyed||block!==parent.block);
+    if(keyed)held.add(span.id);
+    pending.push({node:to,lateral,block,keyed});
+   }
+  }
+  return held;
  }
  function outletOrder(spans,outlet){
   const network=directedRoute(spans,outlet);
@@ -452,7 +517,7 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,networkTrail,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,blockCode,outletOrder,lateralKeySpans,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
@@ -1021,23 +1086,49 @@ async function sharedRequestDelete(db,body){
  if(!sharedId(body.id)||!sharedId(body.treeId)||!Number.isSafeInteger(body.baseVersion))throw sharedError('Pedido inválido.');
  const existing=await db.prepare('SELECT id,tree_id,status FROM shared_deletions WHERE id=?').bind(body.id).first();if(existing){if(existing.tree_id!==body.treeId)throw sharedError('Identificador de solicitação já utilizado.',409);return {id:existing.id,status:existing.status};}
  if(typeof adminRecordLocked==='function'&&await adminRecordLocked(db,body.treeId))throw sharedError('Exclusão administrativa em andamento.',409);
- const tree=await sharedRead(db,body.treeId);if(!tree||tree.deleted)throw sharedError('Árvore não disponível.',410);if(tree.version!==body.baseVersion)throw sharedError('A árvore mudou. Atualize o mapa antes de solicitar exclusão.',409);if(tree.pending)throw sharedError('Esta árvore já tem solicitação pendente.',409);
+ const tree=await sharedRead(db,body.treeId);
+ if(tree?.deleted)throw sharedError('Árvore não disponível.',410);
+ const original=!tree&&body.treeId.startsWith('vera-')&&typeof historyBaseline==='function'?await historyBaseline(db,body.treeId):null;
+ if(!tree&&!original)throw sharedError('Árvore não disponível.',410);
+ if((tree?.version??0)!==body.baseVersion||!tree&&(!original.generation||body.baselineToken!==original.generation))throw sharedError('A árvore mudou. Atualize o mapa antes de solicitar exclusão.',409);
+ if(tree?.pending)throw sharedError('Esta árvore já tem solicitação pendente.',409);
+ const data=JSON.parse((tree||original).data);
+ if(!sharedCoordinate(data.lat,90)||!sharedCoordinate(data.lon,180))throw sharedError('A árvore não tem coordenadas válidas.',409);
  const e=body.evidence,actor=String(body.actor||'').trim().slice(0,120),reason=String(body.reason||'').trim().slice(0,2000);
  if(!actor||!reason||!e||!sharedCoordinate(e.lat,90)||!sharedCoordinate(e.lon,180)||!Number.isFinite(e.accuracy)||e.accuracy<0||!Number.isFinite(Date.parse(e.capturedAt)))throw sharedError('Foto, motivo, inspetor e GPS da evidência são obrigatórios.');
  if(!Number.isFinite(Date.parse(e.gpsTimestamp))||Math.abs(Date.parse(e.capturedAt)-Date.parse(e.gpsTimestamp))>120000)throw sharedError('Capture o GPS junto com a foto.');
  await sharedPhoto({assetId:body.id,image:e.original,sha256:e.sha256});if(typeof e.annotated!=='string'||e.annotated.length>650000||!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/=]+$/.test(e.annotated))throw sharedError('Foto georreferenciada obrigatória.');
- const now=new Date().toISOString(),evidence={original:e.original,annotated:e.annotated,sha256:e.sha256,lat:Number(e.lat),lon:Number(e.lon),accuracy:e.accuracy,capturedAt:e.capturedAt,gpsTimestamp:e.gpsTimestamp,address:String(e.address||'').slice(0,1000),addressPending:!e.address,treeLat:JSON.parse(tree.data).lat,treeLon:JSON.parse(tree.data).lon,receivedAt:now};
- const result=await db.batch([
- db.prepare('UPDATE shared_trees SET pending=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=shared_trees.id AND expires_at>unixepoch()*1000)').bind(body.id,now,body.id,actor,tree.id,body.baseVersion),
- db.prepare("INSERT INTO shared_deletions(id,tree_id,tree_version,status,reason,actor,created_at,evidence) SELECT ?,?,?,'pending',?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND last_op=?)").bind(body.id,tree.id,tree.version+1,reason,actor,now,JSON.stringify(evidence),tree.id,body.id)]);
- if(!result[0].meta.changes)throw sharedError('Árvore alterada; atualize o mapa.',409);return {id:body.id,status:'pending',tree:sharedView(await sharedRead(db,tree.id))};
+ const now=new Date().toISOString(),id=body.treeId,version=body.baseVersion+1;
+ const evidence={original:e.original,annotated:e.annotated,sha256:e.sha256,lat:Number(e.lat),lon:Number(e.lon),accuracy:e.accuracy,capturedAt:e.capturedAt,gpsTimestamp:e.gpsTimestamp,address:String(e.address||'').slice(0,1000),addressPending:!e.address,treeLat:data.lat,treeLon:data.lon,receivedAt:now};
+ const unlocked='NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)';
+ let statements;
+ if(tree){
+  statements=[db.prepare('UPDATE shared_trees SET pending=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND '+unlocked).bind(body.id,now,body.id,actor,id,body.baseVersion,id)];
+ }else{
+  const guard=historyCondition({row:null,record:{id},baseline:original},'v');
+  statements=[db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,pending,updated_at,last_op,actor) SELECT ?,?,?,?,?,?,? WHERE '+guard.sql+' AND '+unlocked).bind(id,original.data,version,body.id,now,body.id,actor,...guard.args,id),
+   ...historyBaselineStatements(db,original,body.id,id)];
+ }
+ statements.push(db.prepare("INSERT INTO shared_deletions(id,tree_id,tree_version,status,reason,actor,created_at,evidence) SELECT ?,?,?,'pending',?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND pending=? AND last_op=?)").bind(body.id,id,version,reason,actor,now,JSON.stringify(evidence),id,body.id,body.id));
+ const result=await db.batch(statements);
+ if(!result[0].meta.changes){
+  const retry=await db.prepare('SELECT id,tree_id,status FROM shared_deletions WHERE id=?').bind(body.id).first();
+  if(retry?.tree_id===id)return {id:retry.id,status:retry.status,tree:sharedView(await sharedRead(db,id))};
+  throw sharedError('Árvore alterada; atualize o mapa.',409);
+ }
+ return {id:body.id,status:'pending',tree:sharedView(await sharedRead(db,id))};
 }
 async function sharedArchiveCleanup(db,id,env){
  const row=await db.prepare('SELECT * FROM shared_deletions WHERE id=?').bind(id).first();if(!row||row.status!=='approved')throw sharedError('Aprovação necessária.',409);
  if(row.archive_status==='removed')return row.archive_status;
+ const tree=await sharedRead(db,row.tree_id),record=tree?JSON.parse(tree.data):{};
+ if(row.tree_id.startsWith('vera-')&&record.baseline===true){
+  await db.prepare("UPDATE shared_deletions SET archive_status='not_requested' WHERE id=?").bind(id).run();
+  return 'not_requested';
+ }
  let status='pending';try{
   if(!env.GOOGLE_SCRIPT_URL||!env.GOOGLE_SCRIPT_TOKEN)throw Error('Receiver unavailable');
-  const tree=await sharedRead(db,row.tree_id),version=JSON.parse(tree.data).updatedAt;
+  const version=record.updatedAt;
   if(!Number.isFinite(Date.parse(version)))throw Error('Archive version missing');
   // The receiver rejects a newer archived version. Never delete unreviewed work.
   const r=await fetch(env.GOOGLE_SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'admin_delete',records:[{id:row.tree_id,version}],token:env.GOOGLE_SCRIPT_TOKEN}),signal:AbortSignal.timeout(25000)});const data=await r.json();if(!r.ok||!data.ok||!data.deletedIds?.includes(row.tree_id))throw Error('Deletion not confirmed');status='removed';
@@ -1099,7 +1190,7 @@ async function historyFamily(db,id){
 }
 function historyBaseData(t,id){
  const present=v=>v!==null&&v!==undefined&&v!=='',network=v=>present(v)&&Number(v)>=0,dap=Number(t.dap)>0?t.dap:'';
- const data={id,externalId:t.id,lat:Number(t.lat),lon:Number(t.lon),species:t.especieConf?'':t.especies||'',suggestedSpecies:t.especieConf?t.especies:'',speciesConfidence:t.especieConf||'',height:t.altura??'',dap,circ:dap?(Number(dap)*Math.PI).toFixed(1):'',pole:t.poste||'',span:t.vao||'',feeder:t.alimentador||'',note:t.observacao||'',poda:/^s/i.test(t.poda||'')?'sim':/^n/i.test(t.poda||'')?'nao':'',position:t.projecao==='SIM'?'Projeção':'',projection:t.projecao==='SIM'?'sim':t.projecao==='NÃO'?'nao':'',address:t.logradouro||'',photos:[],sourceLabel:t.fonte||'Levantamento VERA',sourceYear:t.ano||'',sourceDate:t.data||'',inspector:t.inspetor||'Levantamento original',updatedAt:null,createdAt:null,baseline:true};
+ const data={id,externalId:t.id,lat:Number(t.lat),lon:Number(t.lon),species:t.especieConf?'':t.especies||'',suggestedSpecies:t.especieConf?t.especies:'',speciesConfidence:t.especieConf||'',height:t.altura??'',dap,circ:dap?(Number(dap)*Math.PI).toFixed(1):'',pole:t.poste||'',span:t.vao||'',feeder:t.alimentador||'',note:t.observacao||'',poda:/^s/i.test(t.poda||'')?'sim':/^n/i.test(t.poda||'')?'nao':'',position:t.projecao==='SIM'?'Projeção':'',projection:t.projecao==='SIM'?'sim':t.projecao==='NÃO'?'nao':'',address:t.logradouro||'',photos:[],sourceLabel:t.fonte||'Levantamento VERA',sourceYear:t.ano||'',classe:t.classe||'',sourceDate:t.data||'',inspector:t.inspetor||'Levantamento original',updatedAt:null,createdAt:null,baseline:true};
  for(const k of ['mt','bt','at']){const v=t['dist'+k.toUpperCase()];data[k]=network(v);data[k+'Distance']=network(v)?v:'';}
  return data;
 }
@@ -1440,7 +1531,7 @@ async function veraAPI(request,env){try{
  const generation=meta.generation||null;
  if(u.pathname==='/api/vera/meta'){const reviews=await veraReviews(db);return json({generation,updatedAt:meta.updatedAt||null,total:Number(meta.total||0),reviews:reviews.length+':'+reviews.reduce((m,r)=>r.updated_at>m?r.updated_at:m,'')});}
  if(u.pathname==='/api/vera/trees'){if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,updatedAt:meta.updatedAt||null,total:results.length,trees:results.map(r=>JSON.parse(r.data)),referencia:meta.referencia?JSON.parse(meta.referencia):null});}
- if(u.pathname==='/api/vera/live'){const data=await controlLiveUniverse(env),reviews=new Map((await veraReviews(db)).map(r=>[r.tree_id,r]));const links=await db.prepare('SELECT source_id,target_id FROM shared_merges').all();return json({merged:links.results.map(r=>({sourceId:r.source_id,targetId:r.target_id})),generatedAt:data.generatedAt,records:data.records.filter(r=>!r.archiveCleanupPending&&r.adminClassification!=='homologacao').map(r=>veraLiveRecord(r,reviews.get(r.id)))});}
+ if(u.pathname==='/api/vera/live'){const data=await controlLiveUniverse(env),reviews=new Map((await veraReviews(db)).map(r=>[r.tree_id,r]));const links=await db.prepare('SELECT source_id,target_id FROM shared_merges').all();return json({merged:links.results.map(r=>({sourceId:r.source_id,targetId:r.target_id})),deleted:data.deletedIds.filter(id=>id.startsWith('vera-')),generatedAt:data.generatedAt,records:data.records.filter(r=>!r.baseline&&!r.archiveCleanupPending&&r.adminClassification!=='homologacao').map(r=>veraLiveRecord(r,reviews.get(r.id)))});}
  if(u.pathname==='/api/vera/photo'){const id=u.searchParams.get('id')||'';if(!VERA_ID.test(id))throw sharedError('ID inválido.');const row=await db.prepare('SELECT image FROM vera_thumbs WHERE id=?').bind(veraPhotoId(id)).first();if(!row)throw sharedError('Miniatura indisponível.',404);return json({image:row.image});}
  throw sharedError('Consulta não encontrada.',404);
 }catch(e){return json({error:e.status?e.message:'Base VERA temporariamente indisponível.'},e.status||503);}}

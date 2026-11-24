@@ -3,6 +3,7 @@ const CampoRoutes=(()=>{
  const FULL=10000;
  const text=(value,max=100)=>String(value??'').trim().slice(0,max);
  const key=value=>text(value,100).toUpperCase();
+ const blockCode=value=>{const code=key(value);return /^(?:0|-+|SEM (?:CHAVE|BLOCO)|NULL|N[/]?A)$/.test(code)?'':code;};
  const codes=value=>[...new Set(String(value??'').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
  const sections=values=>[...new Set(values.map(v=>key(v).replace(/^T\s*/, '').replace(/\.0+$/, '')).filter(v=>['1','2','3'].includes(v)))].sort();
  const sectionLabel=route=>(route.sections||[route.section]).map(s=>'T'+s).join(' + ');
@@ -179,6 +180,55 @@ const CampoRoutes=(()=>{
   }
   return best<=radius&&second-best>=1?picked:null;
  }
+ // Treat the tapped spans as the first and last whole edges. A branch outside
+ // the connecting path never adds coverage, and a loop with two paths requires review.
+ function networkTrail(spans,startId,endId){
+  const start=spans.find(s=>s.id===startId),end=spans.find(s=>s.id===endId);
+  if(!start||!end||start.feeder!==end.feeder)return null;
+  if(start===end)return {spans:[start],junctions:new Set()};
+  const nodes=new Map(),starts=new Map();
+  const endpoint=p=>p.map(n=>n.toFixed(5)).join(',');
+  const add=(a,b,span)=>{
+   if(!nodes.has(a))nodes.set(a,[]);
+   if(!nodes.has(b))nodes.set(b,[]);
+   nodes.get(a).push({to:b,span});nodes.get(b).push({to:a,span});
+  };
+  for(const span of spans){
+   if(span.feeder!==start.feeder)continue;
+   const a=endpoint(span.line[0]),b=endpoint(span.line.at(-1));
+   if(span===start||span===end){
+    const middle='span:'+span.id;
+    starts.set(span.id,middle);add(a,middle,span);add(middle,b,span);
+   }else if(a!==b)add(a,b,span);
+  }
+  const from=starts.get(startId),to=starts.get(endId),queue=[from],prev=new Map([[from,null]]);
+  for(let i=0;i<queue.length&&!prev.has(to);i++)for(const link of nodes.get(queue[i])||[]){
+   if(!prev.has(link.to)){prev.set(link.to,{node:queue[i],span:link.span});queue.push(link.to);}
+  }
+  if(!prev.has(to))return null;
+  const vertices=[to],path=[];
+  for(let n=to;n!==from;){
+   const link=prev.get(n);
+   path.push({span:link.span,from:link.node});vertices.push(link.node);n=link.node;
+  }
+  const pathIndex=new Map(vertices.map((v,i)=>[v,i])),seen=new Set();
+  for(const [vertex,i] of pathIndex)for(const link of nodes.get(vertex)){
+   const j=pathIndex.get(link.to),neighbor=prev.get(vertex)?.node===link.to?prev.get(vertex):prev.get(link.to)?.node===vertex?prev.get(link.to):null;
+   if(j!==undefined){
+    if(Math.abs(i-j)!==1||neighbor?.span!==link.span)return null;
+    continue;
+   }
+   if(seen.has(link.to))continue;
+   const branch=[link.to];seen.add(link.to);
+   for(let at=0;at<branch.length;at++)for(const next of nodes.get(branch[at])){
+    if(pathIndex.has(next.to)){
+     if(next.to!==vertex)return null;
+    }else if(!seen.has(next.to)){seen.add(next.to);branch.push(next.to);}
+   }
+  }
+  path.reverse();
+  return {spans:path.map(step=>step.span),junctions:new Set(path.filter(step=>nodes.get(step.from).length>2).map(step=>step.span.id))};
+ }
  function matchedRanges(spans,previous,position){
   const lat=previous[1],y=111195,x=y*Math.cos(lat*Math.PI/180);
   const local=p=>[(p[0]-previous[0])*x,(p[1]-lat)*y];
@@ -293,6 +343,21 @@ const CampoRoutes=(()=>{
    if(n.children.length)n.depth=n.children[0].edge.span.metres+n.children[0].to.depth;
   }
   return {root,feeder};
+ }
+ function lateralKeySpans(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return null;
+  const pending=[{node:network.root,lateral:false,block:'',keyed:false}],held=new Set();
+  for(let at=0;at<pending.length;at++){
+   const parent=pending[at];
+   for(const [i,{edge,to}] of parent.node.children.entries()){
+    const span=edge.span,block=blockCode(span.block),lateral=parent.lateral||i>0;
+    const keyed=lateral&&Boolean(block)&&(parent.keyed||block!==parent.block);
+    if(keyed)held.add(span.id);
+    pending.push({node:to,lateral,block,keyed});
+   }
+  }
+  return held;
  }
  function outletOrder(spans,outlet){
   const network=directedRoute(spans,outlet);
@@ -443,6 +508,6 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,networkTrail,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,blockCode,outletOrder,lateralKeySpans,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;

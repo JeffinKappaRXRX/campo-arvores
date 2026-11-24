@@ -25,12 +25,16 @@
  mapTools.hidden=true;
  mapTools.innerHTML='<div class="route-buttons"><button type="button" id="fieldRouteTapMode" aria-pressed="true">Tocar no vão</button><button type="button" id="fieldRoutePolygonMode" aria-pressed="false">Desenhar polígono</button><button type="button" id="fieldRouteUndoVertex" hidden>Desfazer ponto</button><button type="button" id="fieldRoutePolygonApply" hidden>Selecionar pelo polígono</button><button type="button" id="fieldRouteSelectionBack">Cancelar</button><button type="button" id="fieldRouteSelectionDone" class="primary">Marcar como feito</button></div><p id="fieldRouteSelectionStatus" role="status"></p>';
  $('fieldRouteMap').before(mapTools);
+ const routeTools=document.createElement('section');
+ routeTools.id='fieldRouteOnMap';routeTools.hidden=true;
+ routeTools.innerHTML='<div class="route-buttons"><button type="button" id="mapRouteStart">Iniciar vistoria</button><button type="button" id="mapTrailStart">Marcar início</button><button type="button" id="mapTrailEnd">Marcar fim</button><button type="button" id="mapRouteExclude">Retirar vãos</button><button type="button" id="mapRouteFinish">Salvar saída</button><button type="button" id="mapTrailCancel" hidden>Cancelar seleção</button></div><p id="mapRouteStatus" role="status"></p>';
+ document.querySelector('.map-canvas')?.append(routeTools);
 
  const keyDialog=document.createElement('dialog');
  keyDialog.className='route-return-dialog';
  keyDialog.innerHTML='<form id="fieldRouteKeyForm"><div class="sectionhead"><h2 id="fieldRouteKeyTitle"></h2><button id="fieldRouteKeyClose" type="button" class="secondary">Voltar</button></div><p id="fieldRouteKeyReview"></p><button type="button" id="fieldRouteKeyExceptions">Deixar vãos pendentes no mapa</button><p id="fieldRouteKeyFeedback" role="status"></p><button type="submit" class="primary" id="fieldRouteKeyDone">Concluir chave</button></form>';
  document.body.append(keyDialog);
- let keyReview=null,selection=null,selectionLayer=null,spanPage=0,catalogCache={},spanPanelState=null;
+ let keyReview=null,selection=null,selectionLayer=null,fieldSelectionLayer=null,googleSelectionLayers=[],anchorMode=null,spanPage=0,catalogCache={},spanPanelState=null;
  const spanPageSize=35;
  function routeCatalog(r){
   const group=groupOf(r),scope=group[0];
@@ -38,7 +42,7 @@
   const items=[],byId=new Map(),byBlock=new Map();
   for(const part of group)for(const span of part.spans){
    if(byId.has(span.id))continue;
-   const raw=M.key(span.block),block=/^(?:0|-+|SEM (?:CHAVE|BLOCO)|NULL|N[/]?A)$/.test(raw)?'':raw;
+   const block=M.blockCode(span.block);
    const item={span,routeId:part.id,block,index:items.length};
    items.push(item);byId.set(span.id,item);
    if(!byBlock.has(block))byBlock.set(block,[]);
@@ -57,12 +61,12 @@
  function closeKeyReview(){
   if(typeof keyDialog.close==='function')keyDialog.close();else keyDialog.removeAttribute('open');
  }
- function showKeyReview(code,excluded=new Set()){
+ function showKeyReview(code,excluded=new Set(),onField=false){
   const r=route(),active=session();
   if(!r||!active||!code)return;
   const pending=pendingItems(r,code),count=pending.filter(item=>!excluded.has(item.span.id)).length;
   const held=pending.length-count;
-  keyReview={code,excluded,sessionId:active.id};
+  keyReview={code,excluded,onField,sessionId:active.id};
   $('fieldRouteKeyTitle').textContent='Chave '+code;
   $('fieldRouteKeyReview').textContent=count+' vão(s) serão marcados nesta saída.'+(held?' '+held+' ficarão pendentes.':' Confirme se percorreu todos, inclusive as derivações.');
   $('fieldRouteKeyFeedback').textContent='';
@@ -100,7 +104,7 @@
   const saved=await stageSpans(ids,review.sessionId);
   if(saved){
    closeKeyReview();
-   status.textContent='Chave '+review.code+' · '+ids.length+' vão(s) marcado(s) nesta saída.';
+   routeMessage('Chave '+review.code+' · '+ids.length+' vão(s) marcado(s) nesta saída.');
   }else{
    $('fieldRouteKeyFeedback').textContent=status.textContent;
    button.disabled=false;
@@ -110,41 +114,74 @@
   const review=keyReview;
   if(!review)return;
   closeKeyReview();
-  startMapSelection(review);
+  startMapSelection(review,review.onField);
  };
  $('fieldRouteArea').onclick=()=>startMapSelection();
- function startMapSelection(review=null){
-  const r=route(),active=session();
-  if(!r||!active||!map)return;
-  const candidates=pendingItems(r,review?.code??null);
-  if(!candidates.length){status.textContent='Nenhum vão pendente nesta seleção.';return;}
-  selection={sessionId:active.id,review,ids:new Set(review?.excluded),candidates,eligible:new Set(candidates.map(item=>item.span.id)),mode:'tap',vertices:[]};
+ function routeMessage(message){
+  status.textContent=message;$('mapRouteStatus').textContent=message;
+ }
+ function showSelection(next){
+  selection=next;
+  if(next.onField)routeTools.append(mapTools);else $('fieldRouteMap').before(mapTools);
   paintMapSelection();
-  mapTools.scrollIntoView?.({block:'start'});
+  if(!next.onField)mapTools.scrollIntoView?.({block:'start'});
+ }
+ function startMapSelection(review=null,onField=false,remove=false){
+  const r=route(),active=session();
+  if(!r||!active||(!onField&&!map))return;
+  const candidates=remove?routeCatalog(r).items.filter(({span})=>active.ranges[span.id]?.length):pendingItems(r,review?.code??null);
+  if(!candidates.length){routeMessage(remove?'Nenhum vão marcado nesta saída.':'Nenhum vão pendente nesta seleção.');return;}
+  showSelection({sessionId:active.id,review,onField,remove,ids:new Set(review?.excluded),candidates,eligible:new Set(candidates.map(item=>item.span.id)),mode:'tap',vertices:[]});
+ }
+ function clearSelectionLayers(){
+  selectionLayer?.remove();selectionLayer=null;fieldSelectionLayer?.remove();fieldSelectionLayer=null;
+  for(const item of googleSelectionLayers)item.setMap(null);
+  googleSelectionLayers=[];
  }
  function clearMapSelection(){
-  selection=null;selectionLayer?.remove();selectionLayer=null;mapTools.hidden=true;
+  selection=null;clearSelectionLayers();mapTools.hidden=true;paintRouteTools();
  }
  function paintMapSelection(message=''){
   if(!selection)return;
-  const {mode,ids,candidates,vertices,review}=selection,polygon=mode==='polygon';
-  mapTools.hidden=false;
+  const {mode,ids,candidates,vertices,review,remove,trail,onField}=selection,polygon=mode==='polygon';
+  mapTools.hidden=false;paintRouteTools();
   $('fieldRouteTapMode').setAttribute('aria-pressed',String(!polygon));
   $('fieldRoutePolygonMode').setAttribute('aria-pressed',String(polygon));
   $('fieldRouteUndoVertex').hidden=!polygon||!vertices.length;
   $('fieldRoutePolygonApply').hidden=!polygon;
   $('fieldRoutePolygonApply').disabled=vertices.length<3;
-  $('fieldRouteSelectionDone').textContent=review?'Revisar chave':'Marcar como feito';
-  $('fieldRouteSelectionDone').disabled=!review&&!ids.size;
-  $('fieldRouteSelectionStatus').textContent=message||ids.size+(review?' vão(s) para deixar pendente(s). ':' vão(s) selecionado(s). ')+(polygon?'Toque para contornar a área e depois confirme o polígono.':'Toque em um vão ou na faixa azul próxima a ele.');
-  selectionLayer?.remove();
-  selectionLayer=L.featureGroup().addTo(map);
-  const leaflet=([x,y])=>[y,x],color=review?'#a35b13':'#245fcc';
-  const paths=candidates.filter(({span})=>ids.has(span.id)).map(({span})=>span.line.map(leaflet));
-  if(paths.length)L.polyline(paths,{color,weight:8,opacity:.9,interactive:false}).addTo(selectionLayer);
-  if(vertices.length>=3)L.polygon(vertices.map(leaflet),{color,weight:2,dashArray:'6 4',fillOpacity:.15,interactive:false}).addTo(selectionLayer);
-  else if(vertices.length===2)L.polyline(vertices.map(leaflet),{color,weight:2,interactive:false}).addTo(selectionLayer);
-  if(vertices.length)L.circleMarker(leaflet(vertices.at(-1)),{radius:4,color,interactive:false}).addTo(selectionLayer);
+  $('fieldRouteSelectionDone').textContent=review?'Revisar chave':remove?'Confirmar retirada':trail?'Confirmar trecho':'Marcar como feito';
+  const count=trail?candidates.length-ids.size:ids.size;
+  $('fieldRouteSelectionDone').disabled=!review&&!count||polygon&&vertices.length>0;
+  const guide=polygon?'Toque para contornar a área e aplique o polígono.':trail?'Toque nos vãos que devem ficar pendentes.':remove||review?'Toque nos vãos para retirar.':'Toque nos vãos para marcar.';
+  const detail=trail?count+' vão(s) no trecho · '+ids.size+' retirado(s). '+(selection.protectedCount?selection.protectedCount+' de ramais com chave mantidos pendentes. ':''):ids.size+' vão(s) selecionado(s). ';
+  $('fieldRouteSelectionStatus').textContent=message||detail+guide;
+  const color=review||remove?'#ff9c36':'#5b47db',leave='#ff9c36';
+  const selectedPaths=[],excludedPaths=[];
+  for(const {span} of candidates){
+   if(trail)(ids.has(span.id)?excludedPaths:selectedPaths).push(span.line);
+   else if(ids.has(span.id))selectedPaths.push(span.line);
+  }
+  clearSelectionLayers();
+  const leaflet=([x,y])=>[y,x],target=onField?fieldMap:map;
+  if(target){
+   const group=L.featureGroup().addTo(target),style={interactive:false,pane:onField?'myInspectionRoute':'overlayPane'};
+   if(onField)fieldSelectionLayer=group;else selectionLayer=group;
+   for(const [paths,stroke]of [[selectedPaths,color],[excludedPaths,leave]])if(paths.length)L.polyline(paths.map(line=>line.map(leaflet)),{...style,color:stroke,weight:8,opacity:.95}).addTo(group);
+   if(vertices.length>=3)L.polygon(vertices.map(leaflet),{...style,color:leave,weight:2,dashArray:'6 4',fillOpacity:.15}).addTo(group);
+   else if(vertices.length===2)L.polyline(vertices.map(leaflet),{...style,color:leave,weight:2}).addTo(group);
+  }
+  if(onField&&typeof google!=='undefined'&&typeof googleMap!=='undefined'&&googleMap&&!$('googleMap').hidden){
+   const googlePoint=([lng,lat])=>({lat,lng});
+   for(const [paths,strokeColor]of [[selectedPaths,color],[excludedPaths,leave]])for(const line of paths)
+    googleSelectionLayers.push(new google.maps.Polyline({map:googleMap,path:line.map(googlePoint),clickable:false,strokeColor,strokeWeight:8,zIndex:12}));
+   if(vertices.length>=3)googleSelectionLayers.push(new google.maps.Polygon({map:googleMap,paths:vertices.map(googlePoint),clickable:false,strokeColor:leave,strokeWeight:2,fillOpacity:.15,zIndex:12}));
+   else if(vertices.length===2)googleSelectionLayers.push(new google.maps.Polyline({map:googleMap,path:vertices.map(googlePoint),clickable:false,strokeColor:leave,strokeWeight:2,zIndex:12}));
+  }
+ }
+ function routeSpanAt(point){
+  const r=route();
+  return r&&M.spanAtPoint(routeCatalog(r).items.map(item=>item.span),point,M.bufferMetres(r.buffer));
  }
  function selectRoutePoint(point){
   if(!selection||session()?.id!==selection.sessionId)return;
@@ -153,8 +190,8 @@
    if(selection.vertices.length&&M.distance(selection.vertices.at(-1),point)<.2)return;
    selection.vertices.push(point);paintMapSelection();return;
   }
-  const r=route(),span=M.spanAtPoint(routeCatalog(r).items.map(item=>item.span),point,M.bufferMetres(r.buffer));
-  if(!span||!selection.eligible.has(span.id)){paintMapSelection('Aproxime e toque perto do centro de um vão pendente, longe de cruzamentos.');return;}
+  const span=routeSpanAt(point);
+  if(!span||!selection.eligible.has(span.id)){paintMapSelection('Aproxime e toque perto do centro de um vão desta seleção.');return;}
   if(selection.ids.has(span.id))selection.ids.delete(span.id);else selection.ids.add(span.id);
   paintMapSelection();
  }
@@ -166,24 +203,110 @@
  $('fieldRoutePolygonApply').onclick=()=>{
   if(!selection||selection.vertices.length<3)return;
   const spans=M.spansInsideArea(selection.candidates.map(item=>item.span),selection.vertices);
-  if(!spans.length){paintMapSelection('Nenhum vão pendente ficou inteiro dentro do polígono. Amplie o contorno ou toque no vão.');return;}
+  if(!spans.length){paintMapSelection('Nenhum vão elegível ficou inteiro dentro do polígono. Amplie o contorno ou toque no vão.');return;}
   for(const span of spans)selection.ids.add(span.id);
   selection.vertices=[];selection.mode='tap';paintMapSelection();
  };
  $('fieldRouteSelectionBack').onclick=()=>{
   const review=selection?.review;
   clearMapSelection();
-  if(review)showKeyReview(review.code,review.excluded);
+  if(review)showKeyReview(review.code,review.excluded,review.onField);
  };
  $('fieldRouteSelectionDone').onclick=async()=>{
   const current=selection,button=$('fieldRouteSelectionDone');
   if(!current||button.disabled)return;
-  if(current.review){clearMapSelection();showKeyReview(current.review.code,current.ids);return;}
+  if(current.review){clearMapSelection();showKeyReview(current.review.code,current.ids,current.review.onField);return;}
+  const ids=current.trail?current.candidates.map(({span})=>span.id).filter(id=>!current.ids.has(id)):[...current.ids];
+  if(current.remove&&!confirm('Retirar '+ids.length+' vão(s) desta saída e manter pendentes?'))return;
+  if(current.trail&&!confirm('Confirmar a inspeção dos '+ids.length+' vão(s) selecionados neste trecho?'))return;
   button.disabled=true;
-  const saved=await stageSpans(current.ids,current.sessionId);
-  if(saved){clearMapSelection();status.textContent=current.ids.size+' vão(s) marcado(s) nesta saída.';}
+  const saved=current.remove?await transact(()=>{
+   const active=session();
+   if(active?.id!==current.sessionId)throw Error('A saída mudou. Abra a rota novamente.');
+   const ranges={...active.ranges};
+   for(const id of ids)delete ranges[id];
+   return {...state,session:{...active,ranges}};
+  },false):await stageSpans(ids,current.sessionId);
+  if(saved){clearMapSelection();routeMessage(ids.length+' vão(s) '+(current.remove?'retirado(s) da saída.':'marcado(s) nesta saída. Confira e salve a saída.'));}
   else if(selection===current)paintMapSelection(status.textContent);
  };
+ function startAnchor(mode){
+  if(!session())return;
+  clearMapSelection();anchorMode=mode;paintRouteTools();
+  routeMessage(mode==='start'?'Toque no centro do primeiro vão que vai vistoriar.':'Toque no centro do último vão vistoriado.');
+ }
+ function trailCandidates(r,first,last){
+  const catalog=routeCatalog(r),spans=catalog.items.map(item=>item.span);
+  const path=M.networkTrail(spans,first,last);
+  if(!path)return null;
+  const pendingIds=new Set(pendingItems(r).map(({span})=>span.id)),held=new Set();
+  const rooted=M.lateralKeySpans(catalog.oriented.filter(span=>span.feeder===path.spans[0].feeder),catalog.scope?.outlet);
+  const candidates=[];
+  let protectedBlock=null,previous=null;
+  for(const span of path.spans){
+   const item=catalog.byId.get(span.id);
+   if(protectedBlock!==item.block)protectedBlock=null;
+   if(!rooted&&path.junctions.has(span.id)&&previous&&item.block&&item.block!==previous.block)protectedBlock=item.block;
+   if(pendingIds.has(span.id)){
+    if(rooted?.has(span.id)||protectedBlock&&item.block===protectedBlock)held.add(span.id);
+    else candidates.push(item);
+   }
+   previous=item;
+  }
+  return {candidates,protectedCount:held.size};
+ }
+ async function chooseAnchor(point){
+  const active=session(),r=route(),mode=anchorMode,span=routeSpanAt(point);
+  if(!r||!active||!mode)return;
+  if(!span){routeMessage('Toque perto do centro de um vão da rota, longe de cruzamentos.');return;}
+  if(mode==='start'){
+   const saved=await transact(()=>({...state,session:{...session(),trailStart:{id:span.id,point}}}),false);
+   if(saved){anchorMode=null;paintRouteTools();paintAnchorMarker();routeMessage('Início no vão '+span.id+'. Ao terminar o trecho, marque o último vão.');}
+   else routeMessage(status.textContent);
+   return;
+  }
+  const proposal=trailCandidates(r,active.trailStart?.id,span.id);
+  if(!proposal){routeMessage('O início e o fim não têm uma ligação única. Divida o percurso em trechos menores.');return;}
+  if(!proposal.candidates.length){routeMessage('Sem vãos pendentes neste trajeto. Para ramais com chave, abra a chave no mapa ou na lista.');return;}
+  anchorMode=null;paintRouteTools();
+  showSelection({sessionId:active.id,onField:true,trail:true,ids:new Set(),mode:'tap',vertices:[],
+   ...proposal,eligible:new Set(proposal.candidates.map(item=>item.span.id))});
+ }
+ let fieldAnchorMarker=null,googleAnchorMarker=null;
+ function paintAnchorMarker(){
+  const start=session()?.trailStart,point=start?.point;
+  if(typeof fieldMap!=='undefined'&&fieldMap){
+   if(point){
+    if(fieldAnchorMarker)fieldAnchorMarker.setLatLng([point[1],point[0]]);
+    else fieldAnchorMarker=L.circleMarker([point[1],point[0]],{pane:'myInspectionRoute',radius:8,weight:2,color:'#fff',fillColor:'#285ad4',fillOpacity:1,interactive:false}).bindTooltip('Início da vistoria').addTo(fieldMap);
+   }else if(fieldAnchorMarker){fieldAnchorMarker.remove();fieldAnchorMarker=null;}
+  }
+  if(typeof google!=='undefined'&&typeof googleMap!=='undefined'&&googleMap){
+   if(point){
+    const coords={lat:point[1],lng:point[0]};
+    if(googleAnchorMarker)googleAnchorMarker.setPosition(coords);
+    else googleAnchorMarker=new google.maps.Marker({map:googleMap,position:coords,title:'Início da vistoria',clickable:false,label:'I'});
+   }else if(googleAnchorMarker){googleAnchorMarker.setMap(null);googleAnchorMarker=null;}
+  }
+ }
+ function paintRouteTools(){
+  const r=route(),active=session(),reviewing=Boolean(selection?.onField);
+  routeTools.hidden=!r;
+  $('mapRouteStart').hidden=Boolean(active);
+  $('mapRouteStart').disabled=$('fieldRouteStart').disabled;
+  $('mapTrailStart').hidden=!active||Boolean(anchorMode)||reviewing;
+  $('mapTrailStart').textContent=active?.trailStart?'Mudar início':'Marcar início';
+  $('mapTrailEnd').hidden=!active?.trailStart||Boolean(anchorMode)||reviewing;
+  $('mapRouteExclude').hidden=!active||!Object.keys(active.ranges).length||Boolean(anchorMode)||reviewing;
+  $('mapRouteFinish').hidden=!active||Boolean(anchorMode)||reviewing;
+  $('mapTrailCancel').hidden=!anchorMode;
+ }
+ $('mapTrailStart').onclick=()=>startAnchor('start');
+ $('mapTrailEnd').onclick=()=>startAnchor('end');
+ $('mapTrailCancel').onclick=()=>{anchorMode=null;paintRouteTools();routeMessage('Seleção cancelada.');};
+ $('mapRouteExclude').onclick=()=>startMapSelection(null,true,true);
+ $('mapRouteStart').onclick=async()=>{if(await beginRoute())startAnchor('start');};
+ $('mapRouteFinish').onclick=()=>void finishRoute(true);
  const identity=()=>window.CampoAccount?.current()?.id;
  const orderedRoutes=routes=>M.campaignParts(routes).flat();
  const groupOf=r=>r?M.campaignParts(state.routes).find(parts=>parts.includes(r))||[r]:[];
@@ -303,6 +426,7 @@
  function paint(fit=true){
   const r=route(),active=session();
   if(selection&&selection.sessionId!==active?.id)clearMapSelection();
+  if(!active)anchorMode=null;
   $('fieldRouteSelect').replaceChildren(new Option('Selecione uma rota',''));
   for(const item of orderedRoutes(state?.routes||[]))$('fieldRouteSelect').add(new Option(item.name+' · '+item.feeder+(item.homologation?' · Homologação':''),item.id));
   $('fieldRouteSelect').value=r?.id||'';
@@ -360,7 +484,7 @@
    coverageInput={routeKey,catalog,ranges:active?.ranges,visits:state?.visits,outbox:state?.outbox};
    routeGeometry=r?{...M.mapLines(spans,covered.bySpan,active?.ranges),buffer:scopeSame&&routeGeometry?routeGeometry.buffer:M.bufferRings(spans,buffer)}:null;
   }
-  refreshFieldOverlay();
+  refreshFieldOverlay();paintRouteTools();
   $('fieldRouteSummary').textContent=r?(r.campaign?.name||r.name)+' · '+km(total)+' planejados · '+km(covered.metres)+' confirmados'+(marked?' · '+km(marked)+' marcados nesta saída':'')+' · '+km(Math.max(0,total-covered.metres-marked))+' pendentes na rota'+(group.length>1?' · parte '+(group.indexOf(r)+1)+'/'+group.length:''):'Baixe suas rotas com internet antes de sair.';
   if(r?.plan){
    const targets=M.schedule(r.plan,total),current=M.day(Date.now()),target=targets.find(item=>item.day===current);
@@ -389,6 +513,7 @@
   return group;
  }
  function refreshFieldOverlay(){
+  if(typeof fieldMap!=='undefined'&&fieldMap&&!fieldMap.getPane('myInspectionRoute'))fieldMap.createPane('myInspectionRoute').style.zIndex='455';
   if(routeGeometry&&$('inspect').hidden){
    fieldOverlay?.group?.remove();fieldOverlay=null;
    for(const overlay of googleOverlay?.layers||[])overlay.setMap(null);
@@ -397,7 +522,6 @@
   }
   if(typeof fieldMap!=='undefined'&&fieldMap&&fieldOverlay?.geometry!==routeGeometry){
    fieldOverlay?.group?.remove();
-   if(!fieldMap.getPane('myInspectionRoute'))fieldMap.createPane('myInspectionRoute').style.zIndex='455';
    fieldOverlay={geometry:routeGeometry,group:routeGeometry?drawLeaflet(fieldMap,routeGeometry,'myInspectionRoute'):null};
   }
   if(typeof google!=='undefined'&&typeof googleMap!=='undefined'&&googleMap&&googleOverlay?.geometry!==routeGeometry){
@@ -418,8 +542,23 @@
    }
    googleOverlay={geometry:routeGeometry,layers};
   }
+  paintAnchorMarker();
  }
- window.CampoFieldRouteMap={refresh:refreshFieldOverlay};
+ window.CampoFieldRouteMap={
+  refresh:refreshFieldOverlay,
+  span:routeSpanAt,
+  consume(point){
+   if(anchorMode){void chooseAnchor(point);return true;}
+   if(selection?.onField){selectRoutePoint(point);return true;}
+   return false;
+  },
+  keyReady(code){return Boolean(session()&&code&&pendingItems(route(),code).length);},
+  openKey(code){
+   if(typeof setMapFullscreen==='function')setMapFullscreen(true);
+   showKeyReview(code,new Set(),true);
+  },
+  closeTools(){anchorMode=null;if(selection?.onField)clearMapSelection();else paintRouteTools();}
+ };
  $('fieldRouteOpenMap')?.addEventListener('click',()=>{
   if(!route()||typeof view!=='function'||typeof fieldMap==='undefined'||!fieldMap)return;
   view('inspect');
@@ -473,13 +612,16 @@
   catch(error){status.textContent=error.message;}finally{busy=false;}
   return saved;
  }
- $('fieldRouteStart').onclick=()=>void transact(()=>{
-  const r=route();if(!r||state.session)return;
-  currentGPS=null;
-  if(typeof startLiveGPS==='function')startLiveGPS();
-  status.textContent='Vistoria iniciada. Confirme os trechos efetivamente vistoriados.';
-  return {...state,session:{id:crypto.randomUUID(),routeId:r.id,startedAt:new Date().toISOString(),ranges:{},gpsMatches:{},trails:[],lastSampleAt:0}};
- });
+ function beginRoute(){
+  return transact(()=>{
+   const r=route();if(!r||state.session)return;
+   currentGPS=null;
+   if(typeof startLiveGPS==='function')startLiveGPS();
+   routeMessage('Vistoria iniciada. Marque o primeiro vão no mapa ou use a lista de chaves.');
+   return {...state,session:{id:crypto.randomUUID(),routeId:r.id,startedAt:new Date().toISOString(),ranges:{},gpsMatches:{},trails:[],lastSampleAt:0}};
+  });
+ }
+ $('fieldRouteStart').onclick=()=>void beginRoute();
  function visitBatches(r,active,ranges,reason){
   const {id,routeId,startedAt,trails}=active,endedAt=new Date().toISOString(),day=M.day(endedAt);
   const trackMetres=Math.round(M.trailMetres(trails)),byPart=new Map([[routeId,[]]]),catalog=routeCatalog(r);
@@ -500,21 +642,23 @@
   }
   return visits;
  }
- $('fieldRouteFinal').onclick=async()=>{
+ $('fieldRouteFinal').onclick=()=>finishRoute();
+ async function finishRoute(fromMap=false){
   if(!session())return;
+  if(selection||anchorMode){routeMessage('Confirme ou cancele a seleção antes de salvar a saída.');return;}
   const ranges=marks();
+  if(fromMap&&!ranges.length&&session().trailStart){startAnchor('end');return;}
   if(!confirm(ranges.length||session().keysSaved?'Salvar a saída com a cobertura marcada?':'Finalizar sem cobertura confirmada?'))return;
   const reason=$('fieldRouteReason').value.trim()||(!ranges.length&&session().keysSaved?'Vistoria por chave registrada durante a saída.':'');
-  if(!ranges.length&&!reason){status.textContent='Informe por que a saída terminou sem cobertura.';return;}
+  if(!ranges.length&&!reason){routeMessage('Informe por que a saída terminou sem cobertura em Minhas rotas.');return;}
   const saved=await transact(()=>{
    const visits=visitBatches(route(),session(),ranges,reason);
    return {...state,session:null,outbox:[...state.outbox,...visits]};
   });
-  if(saved){
-   $('fieldRouteReason').value='';
-   status.textContent='Vistoria salva no aparelho. Aguardando confirmação do painel.';
-   void loadRemote();
-  }
+  if(!saved){if(fromMap)routeMessage(status.textContent);return;}
+  $('fieldRouteReason').value='';
+  routeMessage('Vistoria salva no aparelho. Aguardando confirmação do painel.');
+  void loadRemote();
  };
   const closeReturnDialog=()=>{if(typeof returnDialog.close==='function')returnDialog.close();else returnDialog.removeAttribute('open');$('fieldRouteReturnAdminPassword').value='';};
   const showReturnDialog=()=>{if(typeof returnDialog.showModal==='function')returnDialog.showModal();else returnDialog.setAttribute('open','');};
@@ -573,7 +717,7 @@
   const active=session(),r=route();if(!active||!r)return;
   const data=e.target.dataset,raw=data.routeRange?.split(','),idx=Number(raw?.[0]??data.routePart??data.routeClear),s=routeCatalog(r).items[idx]?.span;if(!s)return;
   const ranges={...active.ranges};
-  if(data.routeClear!==undefined)delete ranges[s.id];
+  if(data.routeClear!==undefined){if(!confirm('Retirar o vão '+s.id+' desta saída?'))return;delete ranges[s.id];}
   else{
    let segment=raw?.slice(1).map(Number);
    if(!segment){

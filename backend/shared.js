@@ -60,23 +60,49 @@ async function sharedRequestDelete(db,body){
  if(!sharedId(body.id)||!sharedId(body.treeId)||!Number.isSafeInteger(body.baseVersion))throw sharedError('Pedido inválido.');
  const existing=await db.prepare('SELECT id,tree_id,status FROM shared_deletions WHERE id=?').bind(body.id).first();if(existing){if(existing.tree_id!==body.treeId)throw sharedError('Identificador de solicitação já utilizado.',409);return {id:existing.id,status:existing.status};}
  if(typeof adminRecordLocked==='function'&&await adminRecordLocked(db,body.treeId))throw sharedError('Exclusão administrativa em andamento.',409);
- const tree=await sharedRead(db,body.treeId);if(!tree||tree.deleted)throw sharedError('Árvore não disponível.',410);if(tree.version!==body.baseVersion)throw sharedError('A árvore mudou. Atualize o mapa antes de solicitar exclusão.',409);if(tree.pending)throw sharedError('Esta árvore já tem solicitação pendente.',409);
+ const tree=await sharedRead(db,body.treeId);
+ if(tree?.deleted)throw sharedError('Árvore não disponível.',410);
+ const original=!tree&&body.treeId.startsWith('vera-')&&typeof historyBaseline==='function'?await historyBaseline(db,body.treeId):null;
+ if(!tree&&!original)throw sharedError('Árvore não disponível.',410);
+ if((tree?.version??0)!==body.baseVersion||!tree&&(!original.generation||body.baselineToken!==original.generation))throw sharedError('A árvore mudou. Atualize o mapa antes de solicitar exclusão.',409);
+ if(tree?.pending)throw sharedError('Esta árvore já tem solicitação pendente.',409);
+ const data=JSON.parse((tree||original).data);
+ if(!sharedCoordinate(data.lat,90)||!sharedCoordinate(data.lon,180))throw sharedError('A árvore não tem coordenadas válidas.',409);
  const e=body.evidence,actor=String(body.actor||'').trim().slice(0,120),reason=String(body.reason||'').trim().slice(0,2000);
  if(!actor||!reason||!e||!sharedCoordinate(e.lat,90)||!sharedCoordinate(e.lon,180)||!Number.isFinite(e.accuracy)||e.accuracy<0||!Number.isFinite(Date.parse(e.capturedAt)))throw sharedError('Foto, motivo, inspetor e GPS da evidência são obrigatórios.');
  if(!Number.isFinite(Date.parse(e.gpsTimestamp))||Math.abs(Date.parse(e.capturedAt)-Date.parse(e.gpsTimestamp))>120000)throw sharedError('Capture o GPS junto com a foto.');
  await sharedPhoto({assetId:body.id,image:e.original,sha256:e.sha256});if(typeof e.annotated!=='string'||e.annotated.length>650000||!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/=]+$/.test(e.annotated))throw sharedError('Foto georreferenciada obrigatória.');
- const now=new Date().toISOString(),evidence={original:e.original,annotated:e.annotated,sha256:e.sha256,lat:Number(e.lat),lon:Number(e.lon),accuracy:e.accuracy,capturedAt:e.capturedAt,gpsTimestamp:e.gpsTimestamp,address:String(e.address||'').slice(0,1000),addressPending:!e.address,treeLat:JSON.parse(tree.data).lat,treeLon:JSON.parse(tree.data).lon,receivedAt:now};
- const result=await db.batch([
- db.prepare('UPDATE shared_trees SET pending=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=shared_trees.id AND expires_at>unixepoch()*1000)').bind(body.id,now,body.id,actor,tree.id,body.baseVersion),
- db.prepare("INSERT INTO shared_deletions(id,tree_id,tree_version,status,reason,actor,created_at,evidence) SELECT ?,?,?,'pending',?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND last_op=?)").bind(body.id,tree.id,tree.version+1,reason,actor,now,JSON.stringify(evidence),tree.id,body.id)]);
- if(!result[0].meta.changes)throw sharedError('Árvore alterada; atualize o mapa.',409);return {id:body.id,status:'pending',tree:sharedView(await sharedRead(db,tree.id))};
+ const now=new Date().toISOString(),id=body.treeId,version=body.baseVersion+1;
+ const evidence={original:e.original,annotated:e.annotated,sha256:e.sha256,lat:Number(e.lat),lon:Number(e.lon),accuracy:e.accuracy,capturedAt:e.capturedAt,gpsTimestamp:e.gpsTimestamp,address:String(e.address||'').slice(0,1000),addressPending:!e.address,treeLat:data.lat,treeLon:data.lon,receivedAt:now};
+ const unlocked='NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)';
+ let statements;
+ if(tree){
+  statements=[db.prepare('UPDATE shared_trees SET pending=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND '+unlocked).bind(body.id,now,body.id,actor,id,body.baseVersion,id)];
+ }else{
+  const guard=historyCondition({row:null,record:{id},baseline:original},'v');
+  statements=[db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,pending,updated_at,last_op,actor) SELECT ?,?,?,?,?,?,? WHERE '+guard.sql+' AND '+unlocked).bind(id,original.data,version,body.id,now,body.id,actor,...guard.args,id),
+   ...historyBaselineStatements(db,original,body.id,id)];
+ }
+ statements.push(db.prepare("INSERT INTO shared_deletions(id,tree_id,tree_version,status,reason,actor,created_at,evidence) SELECT ?,?,?,'pending',?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND pending=? AND last_op=?)").bind(body.id,id,version,reason,actor,now,JSON.stringify(evidence),id,body.id,body.id));
+ const result=await db.batch(statements);
+ if(!result[0].meta.changes){
+  const retry=await db.prepare('SELECT id,tree_id,status FROM shared_deletions WHERE id=?').bind(body.id).first();
+  if(retry?.tree_id===id)return {id:retry.id,status:retry.status,tree:sharedView(await sharedRead(db,id))};
+  throw sharedError('Árvore alterada; atualize o mapa.',409);
+ }
+ return {id:body.id,status:'pending',tree:sharedView(await sharedRead(db,id))};
 }
 async function sharedArchiveCleanup(db,id,env){
  const row=await db.prepare('SELECT * FROM shared_deletions WHERE id=?').bind(id).first();if(!row||row.status!=='approved')throw sharedError('Aprovação necessária.',409);
  if(row.archive_status==='removed')return row.archive_status;
+ const tree=await sharedRead(db,row.tree_id),record=tree?JSON.parse(tree.data):{};
+ if(row.tree_id.startsWith('vera-')&&record.baseline===true){
+  await db.prepare("UPDATE shared_deletions SET archive_status='not_requested' WHERE id=?").bind(id).run();
+  return 'not_requested';
+ }
  let status='pending';try{
   if(!env.GOOGLE_SCRIPT_URL||!env.GOOGLE_SCRIPT_TOKEN)throw Error('Receiver unavailable');
-  const tree=await sharedRead(db,row.tree_id),version=JSON.parse(tree.data).updatedAt;
+  const version=record.updatedAt;
   if(!Number.isFinite(Date.parse(version)))throw Error('Archive version missing');
   // The receiver rejects a newer archived version. Never delete unreviewed work.
   const r=await fetch(env.GOOGLE_SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'admin_delete',records:[{id:row.tree_id,version}],token:env.GOOGLE_SCRIPT_TOKEN}),signal:AbortSignal.timeout(25000)});const data=await r.json();if(!r.ok||!data.ok||!data.deletedIds?.includes(row.tree_id))throw Error('Deletion not confirmed');status='removed';

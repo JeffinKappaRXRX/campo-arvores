@@ -1,7 +1,7 @@
 /* Hit-test only features already loaded for the visible map; never scan the GPKG. */
 (function(root){'use strict';
 function segmentDistance(p,a,b){const dx=b.x-a.x,dy=b.y-a.y,den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/den)):0;return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);}
-function closest(features,tap,project){
+function closest(features,tap,project,pointRadius=18){
  const p=project(tap);if(!p||![p.x,p.y].every(Number.isFinite))return null;let best=null;
  for(const feature of features){let distance=Infinity,point=false;
   function visit(g){if(!g)return;const c=g.coordinates;
@@ -12,7 +12,7 @@ function closest(features,tap,project){
    else if(g.type==='MultiPolygon')for(const v of c||[])visit({type:'Polygon',coordinates:v});
    else if(g.type==='GeometryCollection')for(const v of g.geometries||[])visit(v);
   }visit(feature.geometry);
-  if(!Number.isFinite(distance)||distance>(point?18:12))continue;
+  if(!Number.isFinite(distance)||distance>(point?pointRadius:12))continue;
   if(!best||distance<best.distance-1||Math.abs(distance-best.distance)<=1&&point&&!best.point)best={feature,distance,point};
  }
  return best?.feature||null;

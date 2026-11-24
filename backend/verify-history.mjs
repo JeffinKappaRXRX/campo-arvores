@@ -4,7 +4,7 @@ class Query{constructor(sql,args=[]){this.sql=sql;this.args=args;}bind(...args){
 const DB={prepare:sql=>new Query(sql),withSession(){return this;},async batch(queries){sqlite.exec('BEGIN');try{const result=[];for(const q of queries)result.push(await q.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 const {default:app}=await import('data:text/javascript;base64,'+Buffer.from(await fs.readFile(new URL('worker.js',import.meta.url),'utf8')).toString('base64'));
 const env={FIELD_AUTH_REQUIRED:'false',APP_ORIGIN:'https://team.example',ADMIN_PASSWORD:'a-private-example-password',ADMIN_SESSION_SECRET:'s'.repeat(40),LOGIN_GUARD:{get:async()=>null,put:async()=>{}},SHARED_DB:DB};
-async function call(path,body){const r=await app.fetch(new Request('https://api.example/api/shared/'+path,{method:body===undefined?'GET':'POST',headers:{Origin:env.APP_ORIGIN,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)}),env);return {...await r.json(),status:r.status};}
+async function call(path,body,token){const r=await app.fetch(new Request('https://api.example/api/'+(path.startsWith('admin/login')?path:'shared/'+path),{method:body===undefined?'GET':'POST',headers:{Origin:env.APP_ORIGIN,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)}),env);return {...await r.json(),status:r.status};}
 const image='data:image/jpeg;base64,/9j/AA==',imageB='data:image/jpeg;base64,/9j/AB==';
 async function photo(assetId,image){return {assetId,image,sha256:Buffer.from(await crypto.subtle.digest('SHA-256',Buffer.from(image.split(',')[1],'base64'))).toString('hex')};}
 const p=await photo('p1',image),q=await photo('p2',imageB),base={lat:-9.998,lon:-67.827,species:'Oiti',height:24,mt:true,mtDistance:3,photos:[{id:'photo1',assetId:'p1'}],createdAt:'2026-10-01T12:00:00Z',updatedAt:'2026-10-01T12:00:00Z'};
@@ -28,5 +28,27 @@ result=await call('compare?a=vera-99&b=tree-c');assert.equal(result.a.height,18)
 result=await call('merge',{targetId:'vera-99',sourceId:'tree-c',targetVersion:0,targetBaseline:'generation-test',sourceVersion:2,operationId:'merge-base',confirm:true,values:{height:16},photos:[]});assert.equal(result.status,200);h=await call('history?id=vera-99');assert(h.snapshots.some(s=>s.kind==='baseline'&&s.record.height===18));const baseline=h.snapshots.find(s=>s.kind==='baseline'),baselinePhoto=baseline.record.photos[0];assert(baselinePhoto);sqlite.prepare('UPDATE vera_trees SET data=? WHERE id=?').run(JSON.stringify({...vera,altura:99}),'99');sqlite.prepare('UPDATE vera_thumbs SET image=? WHERE id=?').run(imageB,'99');h=await call('history?id=vera-99');assert.equal(h.snapshots.find(s=>s.kind==='baseline').record.height,18,'a later VERA import cannot overwrite the captured baseline');assert.equal((await call('history/photo?'+new URLSearchParams({id:'vera-99',tree:'vera-99',key:baseline.key,asset:baselinePhoto.assetId}))).image,image);
 assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM shared_trees WHERE deleted=0').get().n,1,'all four IDs now describe one active tree');
 assert.equal((await call('history?id=tree-a')).id,'vera-99');assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM shared_photos').get().n>0,true,'merge never deletes original photo rows');
+const baselineOnly={...vera,id:'107',lat:-9.987};
+sqlite.prepare('INSERT INTO vera_trees VALUES(?,?,?)').run('generation-test','107',JSON.stringify(baselineOnly));
+sqlite.prepare('INSERT INTO vera_thumbs VALUES(?,?)').run('107',image);
+const proof={lat:-9.99,lon:-67.827,accuracy:8,capturedAt:new Date().toISOString(),gpsTimestamp:new Date().toISOString(),original:image,annotated:image,sha256:p.sha256};
+const request={id:'delete-original',treeId:'vera-107',baseVersion:0,baselineToken:'generation-test',actor:'Inspetor',reason:'Árvore removida',evidence:proof};
+assert.equal((await call('deletion-request',{...request,baselineToken:'stale'})).status,409);
+assert.equal(sqlite.prepare('SELECT id FROM shared_trees WHERE id=?').get(request.treeId),undefined);
+result=await call('deletion-request',request);
+assert.equal(result.status,200);
+assert.equal(result.tree.deletionRequest,request.id);
+assert.equal(result.tree.baseline,true);
+assert.equal(result.tree.createdAt,null);
+assert.equal((await call('photo?id=vera-107&asset='+result.tree.photos[0].assetId)).image,image);
+assert.equal((await call('deletion-request',request)).id,request.id,'request retry keeps the original evidence');
+const pending=sqlite.prepare('SELECT * FROM shared_deletions WHERE id=?').get(request.id);
+assert.equal(JSON.parse(pending.evidence).treeLat,baselineOnly.lat);
+const admin=(await call('admin/login',{password:env.ADMIN_PASSWORD})).token;
+assert(admin);
+result=await call('admin/review',{id:request.id,decision:'approve'},admin);
+assert.equal(result.tree.sharedDeleted,true);
+assert.equal(result.archiveStatus,'not_requested');
+assert.equal((await call('save',{record:{...base,id:request.treeId},actor:'Inspetor',baseVersion:0,operationId:'stale-delete'})).status,410);
 env.FIELD_AUTH_REQUIRED='true';assert.equal((await call('history?id=vera-99')).status,401,'history is not public');assert.equal((await call('merge',merge)).status,401,'merge is not public');
 console.log('PASS history/merge: immutable versions and images, before/after phases, atomic version/lock guards, no-write compare/cancel, idempotency, aliases/chains, VERA baseline/photo preservation, offline-history import without active duplicates, authentication and stale offline replay.');

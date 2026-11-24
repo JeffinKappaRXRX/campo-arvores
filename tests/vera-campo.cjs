@@ -35,5 +35,36 @@ const html='<form id="form"><div class="sectionhead"></div><input id="lat"><inpu
  for(const file of ['docs/gestao-layers.js','docs/campo-risco.js','docs/parque-registros.js','docs/gestao-parque.js'])vm.runInContext(fs.readFileSync(file,'utf8'),painel.getInternalVMContext());
  g.CampoParque.attach({createPane:()=>({style:{}})});await g.CampoParque.load();await new Promise(r=>setTimeout(r,20));
  const lista=g.CampoParque.filtered();assert.equal(lista.length,3,'2 da base + 1 nova: a atualização não duplica');const nova=lista.find(t=>t.id==='100');assert.equal(nova.campoId,'vera-100');assert.equal(nova.altura,20);assert.equal(nova.especies,'EUCALIPTO');assert.equal(nova.clientes,5000,'mantém os clientes reais da chave');assert.equal(nova.lat,-9.91);assert.equal(nova.verificacao,'NÃO CONFERIDA','a visita resolve o revisar em campo');assert.notEqual(nova.classe,'BAIXO');assert.equal(g.CampoParque.liveVisible('vera-100'),false,'um só ícone no mapa');assert.equal(g.CampoParque.liveVisible('nova-1'),true);assert.match(g.document.getElementById('parqueCount').textContent,/2 da base VERA \+ 1 do campo/);painel.window.close();
+ const field=new JSDOM(fs.readFileSync('docs/index.html','utf8'),{url:'https://campo.test/',runScripts:'outside-only'}),f=field.window,fieldCtx=field.getInternalVMContext();
+ f.setInterval=()=>0;
+ f.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+ f.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new f.Event('close'));};
+ const photo='data:image/jpeg;base64,/9j/AA==';
+ f.fetch=async url=>{assert.match(url,/\/api\/vera\/field-photo\?id=100$/);return {ok:true,json:async()=>({image:photo})};};
+ f.__fixture=trees;
+ vm.runInContext(`const $=id=>document.getElementById(id),records=[];
+  const esc=value=>String(value??'');
+  function tell(){}function renderRecords(){}function drawPin(){}function initFieldAccess(){}
+  function renderInspectionPins(){}function req(){return Promise.resolve({});}
+  const CampoDistanceUnits={formatMetresAsCm:x=>x===''?'— cm':String(Number(x)*100)+' cm'};`,fieldCtx);
+ for(const name of ['shared-trees','tree-photos','vera-campo'])vm.runInContext(fs.readFileSync('docs/'+name+'.js','utf8'),fieldCtx);
+ const fieldRun=script=>vm.runInContext(script,fieldCtx),fieldNode=id=>f.document.getElementById(id);
+ fieldRun("veraSetRows(__fixture,'g1')");
+ await fieldRun("showSharedTree('vera-100')");
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(fieldNode('treePhotoThumbnail').src,photo);
+ fieldNode('openTreePhoto').click();
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(fieldNode('treePhotoDialog').open,true);
+ assert.equal(fieldNode('treePhotoLarge').src,photo);
+ assert.match(fieldNode('treePhotoCounter').textContent,/1 de 1/);
+ fieldNode('zoomInTreePhoto').click();
+ assert.equal(fieldNode('treePhotoZoomLevel').textContent,'150%');
+ fieldNode('closeTreePhoto').click();
+ fieldNode('requestSharedDelete').click();
+ assert.equal(fieldNode('sharedDeleteDialog').open,true);
+ assert.equal(fieldRun('sharedDeletionTarget.baselineToken'),'g1');
+ assert.equal(fieldRun('sharedDeletionTarget.baseVersion'),0);
+ field.window.close();
  console.log('Base VERA no app de campo: OK.');
 })().catch(e=>{console.error(e);process.exit(1);});
