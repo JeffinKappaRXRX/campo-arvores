@@ -569,6 +569,7 @@
   const [state,accounts,teams]=await Promise.all([api('/api/routes'),api('/api/admin/users'),api('/api/admin/gerencial/equipes').catch(()=>({}))]);
   if(!window.CampoControl?.authorized())return;
   snapshot=state;
+  window.CampoVeraDashboard?.updateRoutes(state);
   const names=new Map((teams.teams||[]).map(team=>[team.id,team.name]));
   teamByAccount=new Map((teams.members||[]).filter(member=>names.has(member.teamId)).map(member=>[member.userId,names.get(member.teamId)]));
   const users=(accounts.users||[]).filter(u=>!u.blocked&&!u.deleted_at&&u.passwordConfigured);
@@ -635,6 +636,7 @@
    $('routeFeederSuggestions').replaceChildren(...[...feedersList].sort().map(f=>new Option(f,f)));
   },
   open(){
+   void window.CampoVeraDashboard?.load();
    if(location.hash==='#routePlanner')$('routePlan').open=true;
    void window.CampoControlMap?.routeCatalogue?.()?.then(data=>window.CampoRoutePlanner.feeders(data.feeders)).catch(e=>{if(!feedersList.size)searchStatus.textContent=e.message;});
    if(!job)try{

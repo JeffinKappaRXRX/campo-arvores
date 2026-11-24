@@ -1,0 +1,18 @@
+#veraProgress{border-top:1px solid var(--line);margin-top:18px;padding-top:16px;display:grid;gap:12px}
+#veraProgress .panel-head,#veraProgress h4,#veraProgress p{margin:0}
+#veraProgress h4{margin-top:7px}
+.vera-progress-filters,.vera-progress-totals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+#veraProgress label{display:grid;gap:4px;min-width:0}
+#veraProgress label[hidden]{display:none}
+#veraProgress input,#veraProgress select{width:100%;min-width:0}
+.vera-progress-totals div{padding:9px 10px;border:1px solid var(--line);border-radius:8px}
+.vera-progress-totals strong,.vera-progress-totals span{display:block}
+.vera-progress-totals span{font-size:.75rem;margin-top:3px}
+.vera-progress-scroll{max-width:100%;overflow:auto;max-height:270px}
+.vera-progress-scroll table{width:100%;font-size:.77rem}
+.vera-progress-scroll td,.vera-progress-scroll th{padding:7px 5px}
+.vera-progress-scroll th{position:sticky;top:0}
+.vera-progress-actions{display:grid;gap:8px;justify-items:start}
+#veraProgress details{min-width:0}
+#veraProgress details>label{margin:8px 0}
+#veraProgress summary{cursor:pointer}

@@ -324,3 +324,28 @@ Fonte conciliada em 06/11/2026: 114.535 vãos BT, 95.510 com alimentador operaci
 Em **Equipe → Consulta gerencial · inspetores e acessos**, crie o código da equipe e escolha o vínculo na linha do inspetor. A escolha **Sem equipe** remove o vínculo. O vínculo atual identifica os registros históricos e as rotas desse usuário; a atribuição de campo continua na conta do inspetor. A consulta agrupa por equipe e usa a soma das metas individuais. Os nomes ficam ocultos por padrão e podem ser exibidos pelo controle administrativo.
 
 A coluna **Ver rota** abre a rota ou as rotas da equipe. A lista permite marcar várias rotas e abrir todas as rotas exibidas no filtro. Cada rota mantém sua própria cobertura no mapa. Em Administração, **Mostrar árvores no mapa** liga ou desliga simultaneamente VERA e campo e preserva o recorte atual. Execute novamente `backend/gerencial-schema.sql` antes de publicar a API para adicionar as tabelas de equipes e vínculos.
+
+### Avanço de inspeção VERA da EAC
+
+Na Gestão, ao lado do mapa, a visão diária acumula dentro do mês e a visão mensal acumula dentro do ano. O histórico de 2025 usa os vãos e as datas de levantamento. A referência de 2026 reproduz a ligação por `Name_Bloco` e a maior `DATA_TERMINO` do Painel VERA. A contagem de árvores usa os indivíduos com chave de `BASE ÁRVORES`. Em T1 + T2, o extrato original reconcilia 311,006 km em 2025, 360,300 km em 2026 e 631 árvores na planilha em 2026, incluindo as 53 registradas em dezembro.
+
+As metas no painel são 269 km em 2026 e 368,6 km em cada um dos dois anos seguintes. O realizado de 2025 continua como histórico. No ciclo 2026–2028, a mesma faixa de um vão conta uma vez, independentemente de ter sido confirmada pela planilha, SGM ou ARBORA. Para a meta de 2026 são elegíveis T1 e T2. O avanço excedente, incluindo T3, é aplicado à meta seguinte.
+
+Para extrair os arquivos, instale `lxml` no ambiente do Python usado para processar a planilha e execute:
+
+```powershell
+py -3 -m pip install lxml
+py -3 tools/vera-progress-workbook.py "Veraaaaaaaaaaa(2).xlsx" --historico historico-vera.json --catalogo catalogo-vaos.json
+```
+
+O histórico é carregado por **Gestão → Avanço de inspeção VERA → Enviar histórico VERA**. O catálogo fica no computador que lê os TXT. Os dois arquivos contêm dados internos e devem ficar fora do diretório `docs/` e do Git.
+
+O envio diário usa apenas a biblioteca padrão do Python. Por padrão, lê a pasta `wqc_spool` do caminho `K:\Onedrive\OneDrive - Energisa\Documentos\1 - BASES PARA BI`. No servidor, informe os dois caminhos UNC que a conta executora pode ler:
+
+```powershell
+py -3 tools/vera-progress-sgm.py --catalogo catalogo-vaos.json --executadas "$spool\SGM OS EXEC.txt" --pendentes "$spool\SGM OS.txt" --saida sgm-vera-previa.json
+```
+
+Para publicar a atualização ao fim da rotina de cópia já usada na Energisa, execute o mesmo comando com `--enviar` e sem `--saida`. Configure `VERA_PROGRESS_SYNC_TOKEN` como secret do Worker `campo-api` e como variável de ambiente disponível apenas à conta Windows que executa a tarefa. O token é exclusivo desta ingestão. O serviço informa a última gravação aceita e mantém a carga anterior quando a leitura ou o envio falham.
+
+O script cruza as exportações pela OS primária, seleciona as menções a VERA e usa a data de término no arquivo executado. A OS entra na relação gerencial quando menciona VERA. Para crédito de quilometragem, a OS também precisa identificar a inspeção e um vão ou uma combinação inequívoca de alimentador e chave. Quando o SGM fornece o inspetor, o painel exibe o nome. Para a mesma OS histórica o nome pode ser recuperado da planilha. Demais registros exibem a equipe de execução quando disponível.

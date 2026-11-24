@@ -133,6 +133,61 @@ const CampoRoutes=(()=>{
   }
   return result;
  }
+ // Area review only selects whole spans. Check every open interval between crossings
+ // so a line whose endpoints lie inside a concave boundary is handled correctly.
+ function spansInsideArea(spans,ring){
+  const cross=(ax,ay,bx,by)=>ax*by-ay*bx;
+  const edges=ring.map((point,i)=>[point,ring[(i+1)%ring.length]]);
+  const eps=1e-9;
+  const contains=([x,y])=>{
+   let inside=false;
+   for(const [[ax,ay],[bx,by]] of edges){
+    const dx=bx-ax,dy=by-ay;
+    if(Math.abs(cross(dx,dy,x-ax,y-ay))<=eps*Math.hypot(dx,dy)&&x>=Math.min(ax,bx)-eps&&x<=Math.max(ax,bx)+eps&&y>=Math.min(ay,by)-eps&&y<=Math.max(ay,by)+eps)return true;
+    if((ay>y)!==(by>y)&&x<ax+(y-ay)*dx/dy)inside=!inside;
+   }
+   return inside;
+  };
+  if(ring.length<3||Math.abs(edges.reduce((sum,[[ax,ay],[bx,by]])=>sum+cross(ax-ring[0][0],ay-ring[0][1],bx-ring[0][0],by-ring[0][1]),0))<eps*eps)return [];
+  const xs=ring.map(p=>p[0]),ys=ring.map(p=>p[1]);
+  const west=Math.min(...xs),east=Math.max(...xs),south=Math.min(...ys),north=Math.max(...ys);
+  return spans.filter(({line})=>{
+   if(!line.every(([x,y])=>x>=west-eps&&x<=east+eps&&y>=south-eps&&y<=north+eps&&contains([x,y])))return false;
+   for(let i=1;i<line.length;i++){
+    const [x,y]=line[i-1],dx=line[i][0]-x,dy=line[i][1]-y,cuts=[0,1];
+    for(const [[ax,ay],[bx,by]] of edges){
+     const ex=bx-ax,ey=by-ay,den=cross(dx,dy,ex,ey);
+     if(Math.abs(den)<=eps*eps)continue;
+     const t=cross(ax-x,ay-y,ex,ey)/den,u=cross(ax-x,ay-y,dx,dy)/den;
+     if(t>0&&t<1&&u>=-eps&&u<=1+eps)cuts.push(t);
+    }
+    cuts.sort((a,b)=>a-b);
+    for(let j=1;j<cuts.length;j++){
+     const mid=(cuts[j-1]+cuts[j])/2;
+     if(!contains([x+mid*dx,y+mid*dy]))return false;
+    }
+   }
+   return true;
+  });
+ }
+ function spanAtPoint(spans,point,radius){
+  const y=111195,x=y*Math.cos(point[1]*Math.PI/180);
+  let picked=null,best=Infinity,second=Infinity;
+  for(const span of spans){
+   let nearest=Infinity;
+   for(let i=1;i<span.line.length;i++){
+    const [a,b]=[span.line[i-1],span.line[i]];
+    const ax=(a[0]-point[0])*x,ay=(a[1]-point[1])*y,bx=(b[0]-point[0])*x,by=(b[1]-point[1])*y;
+    if((ax>radius&&bx>radius)||(ax< -radius&&bx< -radius)||(ay>radius&&by>radius)||(ay< -radius&&by< -radius))continue;
+    const dx=bx-ax,dy=by-ay,length=dx*dx+dy*dy;
+    const t=length?Math.max(0,Math.min(1,(-ax*dx-ay*dy)/length)):0;
+    nearest=Math.min(nearest,Math.hypot(ax+t*dx,ay+t*dy));
+   }
+   if(nearest<best){second=best;best=nearest;picked=span;}
+   else second=Math.min(second,nearest);
+  }
+  return best<=radius&&second-best>=1?picked:null;
+ }
  function matchedRanges(spans,previous,position){
   const lat=previous[1],y=111195,x=y*Math.cos(lat*Math.PI/180);
   const local=p=>[(p[0]-previous[0])*x,(p[1]-lat)*y];
@@ -397,7 +452,7 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,spansInsideArea,spanAtPoint,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
 
@@ -842,6 +897,7 @@ const internalApp={async fetch(request,env){
  const url=new URL(request.url);
  if(['/api/routes','/api/routes/visit','/api/routes/return','/api/routes/homologacao','/api/routes/saida','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
+ if(url.pathname==='/api/vera/progress')return veraProgressAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname==='/api/ciclo-poda')return cicloPodaAPI(request,env);
  if(url.pathname.startsWith('/api/central/'))return centralAPI(request,env);
@@ -1405,6 +1461,63 @@ async function veraSync(request,env){try{
  if(action==='commit'){const total=Number(body.total),found=await db.prepare('SELECT COUNT(*) n FROM vera_trees WHERE generation=?').bind(generation).first();if(!Number.isSafeInteger(total)||total<1||found.n!==total)return json({error:'Envio incompleto: '+found.n+' de '+body.total+' linhas.'},409);const set=(k,v)=>db.prepare('INSERT OR REPLACE INTO vera_meta(key,value) VALUES(?,?)').bind(k,String(v)),now=new Date().toISOString();const referencia=JSON.stringify(body.referencia&&typeof body.referencia==='object'?body.referencia:{});if(referencia.length>200000)return json({error:'Referência grande demais.'},413);await db.batch([set('generation',generation),set('updatedAt',now),set('total',total),set('referencia',referencia),db.prepare('DELETE FROM vera_trees WHERE generation<>?').bind(generation),db.prepare('DELETE FROM vera_thumbs WHERE id NOT IN (SELECT id FROM vera_trees WHERE generation=?)').bind(generation)]);return json({generation,total,updatedAt:now});}
  return json({error:'Ação desconhecida.'},400);
 }catch(e){if(veraMissingTable(e))return json({error:'Aplique backend/vera-schema.sql no D1 antes do primeiro envio.'},503);return json({error:e.status?e.message:'Envio VERA temporariamente indisponível.'},e.status||503);}}
+
+const VERA_PROGRESS_HISTORY='arbora:vera-progress:history-v1';
+const VERA_PROGRESS_SGM='arbora:vera-progress:sgm-v1';
+const VERA_PROGRESS_LIMIT=8000000;
+const progressTxt=(value,size)=>typeof value==='string'&&value.length<=size;
+const progressDay=value=>progressTxt(value,10)&&/^20\d\d-\d\d-\d\d$/.test(value)&&
+ Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
+function validVeraProgress(dataset,history){
+ if(dataset?.version!==1||!Array.isArray(dataset.coverage)||dataset.coverage.length>100000||
+  !Array.isArray(dataset.orders)||dataset.orders.length>20000)return false;
+ if(!dataset.coverage.every(row=>Array.isArray(row)&&row.length===8&&progressDay(row[0])&&
+  /^\d{1,20}$/.test(row[1])&&Number.isFinite(row[2])&&row[2]>0&&row[2]<=50000&&
+  row.slice(3).every(value=>progressTxt(value,100))))return false;
+ if(!dataset.orders.every(order=>order&&['id','number','feeder','block','team','inspector','link'].every(k=>progressTxt(order[k],100))&&
+  order.id&&['executada','pendente','cancelada'].includes(order.status)&&(!order.day||progressDay(order.day))))return false;
+ if(history)return Array.isArray(dataset.trees)&&dataset.trees.length<=100000&&dataset.trees.every(row=>
+  Array.isArray(row)&&row.length===5&&progressDay(row[0])&&row.slice(1,4).every(value=>progressTxt(value,100))&&Number.isSafeInteger(row[4])&&row[4]>0);
+ return Array.isArray(dataset.files)&&dataset.files.length===2&&dataset.files.every(file=>
+  progressTxt(file?.name,100)&&progressTxt(file?.modified,30)&&Number.isFinite(Date.parse(file.modified)))&&
+  progressTxt(dataset.catalog,100);
+}
+async function veraProgressWrite(request,env,history){
+ const raw=await sharedBody(request,VERA_PROGRESS_LIMIT);
+ if(!validVeraProgress(raw,history))throw sharedError('Formato inválido para o avanço VERA.');
+ const store=env.LOGIN_GUARD,name=history?VERA_PROGRESS_HISTORY:VERA_PROGRESS_SGM;
+ const previous=await store.getWithMetadata(name,'text');
+ const text=JSON.stringify(raw);
+ if(text===previous.value)return json({unchanged:true,updatedAt:previous.metadata?.updatedAt});
+ if(!history&&previous.value){
+  const before=JSON.parse(previous.value);
+  for(const file of raw.files){
+   const previousFile=before.files.find(old=>old.name===file.name);
+   if(previousFile&&Date.parse(file.modified)<Date.parse(previousFile.modified))throw sharedError('O arquivo '+file.name+' é anterior ao último envio aceito.',409);
+  }
+ }
+ const updatedAt=new Date().toISOString();
+ await store.put(name,text,{metadata:{updatedAt}});
+ return json({updatedAt,spans:raw.coverage.length,orders:raw.orders.length});
+}
+async function veraProgressAPI(request,env){
+ try{
+  if(!isAdministrator(request,env))throw sharedError('Acompanhamento VERA restrito ao administrador.',403);
+  if(request.method==='POST')return await veraProgressWrite(request,env,true);
+  if(request.method!=='GET')throw sharedError('Use GET ou POST.',405);
+  const [history,sgm]=await Promise.all([env.LOGIN_GUARD.getWithMetadata(VERA_PROGRESS_HISTORY,'json'),env.LOGIN_GUARD.getWithMetadata(VERA_PROGRESS_SGM,'json')]);
+  return json({history:history.value,historyUpdatedAt:history.metadata?.updatedAt||null,sgm:sgm.value,sgmUpdatedAt:sgm.metadata?.updatedAt||null});
+ }catch(e){return json({error:e.status?e.message:'Avanço VERA temporariamente indisponível.'},e.status||503);}
+}
+async function veraProgressSync(request,env){
+ try{
+  if(request.method!=='POST')throw sharedError('Use POST.',405);
+  if(!env.VERA_PROGRESS_SYNC_TOKEN||env.VERA_PROGRESS_SYNC_TOKEN.length<32)throw sharedError('Envio SGM ainda não configurado.',503);
+  const token=(request.headers.get('Authorization')||'').replace(/^Bearer /,'');
+  if(!await equalSecret(token,env.VERA_PROGRESS_SYNC_TOKEN))throw sharedError('Token de envio inválido.',401);
+  return await veraProgressWrite(request,env,false);
+ }catch(e){return json({error:e.status?e.message:'Envio SGM temporariamente indisponível.'},e.status||503);}
+}
 
 const CENTRAL_NAME=/^[a-z0-9_]{1,40}$/,CENTRAL_GENERATION=/^cen-[0-9]{8,20}$/,CENTRAL_BODY=/^[A-Za-z0-9+/]+={0,2}$/;
 function centralMissingTable(e){return /no such table/i.test(String(e?.message||e));}
@@ -2101,6 +2214,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  if(!allowed.includes(origin))return response({error:'Origem não autorizada.'},403);
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<14||!env.ADMIN_SESSION_SECRET||env.ADMIN_SESSION_SECRET.length<32||!env.LOGIN_GUARD)return response({error:'Configure administrador e LOGIN_GUARD no Worker.'},503);
+ if(path==='/api/vera/progress/sync'){const out=await veraProgressSync(request,env);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
  if(path==='/api/vera/sync'){const out=await veraSync(request,env);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
  if(path==='/api/central/sync'){const out=await centralSync(request,env);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
  // The password is retained for initial administrator provisioning and recovery.
