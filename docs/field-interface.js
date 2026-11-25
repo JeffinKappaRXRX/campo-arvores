@@ -3,7 +3,24 @@
 let adminAllowed=false;
 const selectedRecords=new Set();
 let selectionSyncBusy=false;
-async function initFieldAccess(){try{const r=await fetch('/api/access',{cache:'no-store'});if(!r.ok)throw Error('Access');const access=await r.json();adminAllowed=access.admin===true;}catch{adminAllowed=false;}$('adminNav').hidden=!adminAllowed;if(!adminAllowed&&!$('admin').hidden)view('records');if(adminAllowed)checkDrive();}
+let adminPhotoGpsAllowed=false,fieldAccessRequest=0;
+function setAdminPhotoGpsAccess(allowed){
+ if(adminPhotoGpsAllowed===allowed)return;
+ adminPhotoGpsAllowed=allowed;
+ window.dispatchEvent(new Event('campo-photo-gps-access'));
+}
+function revokeAdminPhotoGpsAccess(){fieldAccessRequest++;setAdminPhotoGpsAccess(false);}
+async function initFieldAccess(){
+ const request=++fieldAccessRequest;
+ let access;
+ try{const r=await fetch('/api/access',{cache:'no-store'});if(r.ok)access=await r.json();}catch{}
+ if(request!==fieldAccessRequest)return;
+ adminAllowed=access?.admin===true;
+ setAdminPhotoGpsAccess(access?.recoveryAdmin===true);
+ $('adminNav').hidden=!adminAllowed;
+ if(!adminAllowed&&!$('admin').hidden)view('records');
+ if(adminAllowed)checkDrive();
+}
 $('returnField').onclick=()=>view('records');
 function updateSelection(){
  for(const id of selectedRecords)if(!records.some(r=>r.id===id))selectedRecords.delete(id);

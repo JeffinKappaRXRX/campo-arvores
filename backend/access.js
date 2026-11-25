@@ -41,7 +41,7 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  else if(path==='/api/auth/request-access')authResult=await campoRequestAccess(request,env);
  else if(path==='/api/admin/access-requests')authResult=await campoManageAccessRequests(request,env,identity,bootstrapAdmin);
  else if(path==='/api/admin/users')authResult=await campoManageUsers(request,env,identity,bootstrapAdmin);
- else if(path==='/api/access')authResult=response({admin:Boolean(bootstrapAdmin||identity?.user.role==='admin'),authenticated:Boolean(identity),user:identity?.user||null,required:fieldAuthenticationRequired(env)});
+ else if(path==='/api/access')authResult=response({admin:Boolean(bootstrapAdmin||identity?.user.role==='admin'),recoveryAdmin:bootstrapAdmin,authenticated:Boolean(identity),user:identity?.user||null,required:fieldAuthenticationRequired(env)});
  }catch(e){authResult=response({error:e.status?e.message:'Não foi possível concluir a autenticação.'},e.status||503);}
  if(authResult){for(const [k,v]of Object.entries(cors))authResult.headers.set(k,v);return authResult;}
  if(fieldAuthenticationRequired(env)&&!identity&&!bootstrapAdmin)return response({error:'Entre com seu usuário e senha para acessar os dados compartilhados.',code:'AUTH_REQUIRED'},401);

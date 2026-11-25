@@ -32,7 +32,7 @@ $('externalAdminLogout').onclick=async()=>{
  try{
   const result=await fetch('/api/admin/logout',{method:'POST',signal:AbortSignal.timeout?.(15000)});
   if(!result.ok)throw Error();
-  sessionStorage.removeItem('campo-admin-session');
+  sessionStorage.removeItem('campo-admin-session');if(typeof revokeAdminPhotoGpsAccess==='function')revokeAdminPhotoGpsAccess();
   adminAllowed=false;$('adminNav').hidden=true;view('records');feedback.textContent='Sessão administrativa encerrada.';
   return true;
  }catch{

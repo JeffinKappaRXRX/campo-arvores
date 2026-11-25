@@ -142,3 +142,7 @@ article{border-radius:var(--radius);padding:22px;background:var(--surface)}h2{fo
 
 label.map-light-option{display:inline-flex;align-items:center;gap:.35rem;width:max-content;font-size:.76rem;font-weight:500;margin:.15rem 0}
 .map-light-option input[type=checkbox]{width:.9rem;min-height:0;height:.9rem;margin:0;padding:0;flex:none}
+#photoGpsControls .field-check{display:flex;align-items:center;gap:.45rem}
+#photoGpsControls .field-check input{width:auto;margin:0}
+#photoGpsStatus:empty{display:none}
+.photo-gps-pin{display:grid!important;place-items:center;background:#6043b2;color:#fff;border:2px solid #fff;border-radius:50%;font-weight:750;box-shadow:0 1px 5px #0008}
