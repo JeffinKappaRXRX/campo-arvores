@@ -8,7 +8,7 @@ window.CampoManagementEdit=(()=>{
  function disabled(value){for(const el of dialog.querySelectorAll('input,select,textarea,button'))el.disabled=value;}
  function format(r,f){const v=r[f[0]];if(v===undefined||v===null||v==='')return '';return f[2]==='distance'?String(Math.round(Number(v)*10000)/100):f[2]==='bool'?(v===true||v==='sim'?'sim':'nao'):String(v);}
  function mount(record,root){if(!window.CampoControl?.authorized()||root.querySelector('[data-management-edit]'))return;const b=document.createElement('button');b.type='button';b.dataset.managementEdit='';b.textContent='Editar árvore / anexar fotos do PC';b.onclick=()=>void open(record.id);root.append(b);}
- async function open(id){
+ async function open(id,issues=[]){
   if(busy||!window.CampoControl.authorized())return;const token=++serial;snapshot=null;uploads=[];retry=null;initial={};$('managementEditSave').textContent='Salvar alterações';$('managementEditFields').textContent='';$('managementEditPreviews').textContent='';$('managementEditPhotos').value='';$('managementEditStatus').textContent='Carregando a versão atual…';disabled(true);$('managementEditClose').disabled=false;if(!dialog.open)dialog.showModal();
   try{const result=await api('/api/control/edit?id='+encodeURIComponent(id));if(token!==serial)return;snapshot=result;
    for(const f of fields){const label=document.createElement('label');label.textContent=f[1];let input;
@@ -16,6 +16,13 @@ window.CampoManagementEdit=(()=>{
     else{input=document.createElement(f[2]==='note'?'textarea':'input');if(input.tagName==='INPUT'){input.type=['number','distance','coordinate'].includes(f[2])?'number':'text';if(input.type==='number'){input.step='any';if(f[2]!=='coordinate')input.min='0';else{input.min=f[0]==='lat'?'-90':'-180';input.max=f[0]==='lat'?'90':'180';input.required=true;}}}input.maxLength=f[2]==='note'?5000:1000;}
     input.dataset.editField=f[0];initial[f[0]]=format(result.record,f);input.value=initial[f[0]];label.append(input);$('managementEditFields').append(label);
    }
+   const highlight=issues.flatMap(key=>({coordinates:['lat','lon'],trunk:['dap','circ'],photos:[],photoReview:[]})[key]||[key]);
+   for(const key of highlight){
+    const field=dialog.querySelector('[data-edit-field="'+key+'"]');
+    field?.closest('label').classList.add('quality-focus');
+   }
+   if(issues.includes('photos')||issues.includes('photoReview'))$('managementEditPhotos').closest('label').classList.add('quality-focus');
+   else $('managementEditPhotos').closest('label').classList.remove('quality-focus');
    $('managementEditExisting').textContent=(result.record.photos?.length||0)+' foto(s) existente(s), preservadas. Consulte-as no cadastro ou no histórico.';$('managementEditStatus').textContent='Altere os campos necessários e salve.';disabled(false);
   }catch(e){if(token===serial)$('managementEditStatus').textContent=e.message;}
  }
@@ -41,7 +48,7 @@ window.CampoManagementEdit=(()=>{
    retry={id:snapshot.record.id,version:snapshot.version,baselineToken:snapshot.baselineToken,operationId:crypto.randomUUID(),values,uploads};
   }
   busy=true;disabled(true);$('managementEditStatus').textContent='Salvando e preservando o histórico…';
-  try{const result=await api('/api/control/edit',retry);if(token!==serial)return;retry=null;busy=false;dialog.close();void window.CampoControl.load();void window.CampoParque?.refresh?.();if(result.tree.id.startsWith('vera-'))void window.CampoTreeHistory?.open(result.tree.id);else void window.CampoControl.openRecord(result.tree.id);
+  try{const result=await api('/api/control/edit',retry);if(token!==serial)return;retry=null;busy=false;dialog.close();void window.CampoControl.load();void window.CampoQualityAdmin?.refresh();void window.CampoParque?.refresh?.();if(result.tree.id.startsWith('vera-'))void window.CampoTreeHistory?.open(result.tree.id);else void window.CampoControl.openRecord(result.tree.id);
   }catch(e){if(token!==serial)return;$('managementEditStatus').textContent=e.message+(e.status>=400&&e.status<500?' Os campos e anexos foram mantidos.':' Não foi possível confirmar. Clique em Tentar novamente para conferir o mesmo envio, sem duplicar.');if(e.status>=400&&e.status<500)retry=null;
   }finally{busy=false;if(token===serial){disabled(Boolean(retry));$('managementEditClose').disabled=false;$('managementEditSave').disabled=false;$('managementEditSave').textContent=retry?'Tentar novamente':'Salvar alterações';}}
  };

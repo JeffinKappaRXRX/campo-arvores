@@ -1,0 +1,11 @@
+.registration-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:.65rem; margin:.8rem 0; }
+.registration-toolbar label { min-width:min(100%, 13rem); }
+.registration-table { overflow:auto; }
+.registration-table td { vertical-align:top; }
+.registration-table td button { margin:0 .25rem .25rem 0; }
+.registration-detail { display:block; margin-top:.25rem; overflow-wrap:anywhere; opacity:.85; }
+#qualityAudit>summary { cursor:pointer; }
+.quality-focus { outline:2px solid currentColor; outline-offset:2px; }
+.field-correction { padding:.8rem 0; border-bottom:1px solid currentColor; }
+.field-correction p { margin:.3rem 0; overflow-wrap:anywhere; }
+#fieldCorrectionsPages:not([hidden]) { margin-top:1rem; }

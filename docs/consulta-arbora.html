@@ -7,11 +7,12 @@
   <meta name="referrer" content="no-referrer">
   <title>ARBORA | Inspeções e cadastros</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="consulta-arbora.css">
+  <link rel="stylesheet" href="consulta-arbora.css"><link rel="stylesheet" href="registration-quality.css">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="gestao-forecast.js"></script>
   <script defer src="span-quality.js"></script>
   <script defer src="consulta-arbora-filtros.js"></script>
+  <script defer src="registration-quality.js"></script>
   <script defer src="consulta-arbora.js"></script>
 </head>
 <body>
@@ -60,6 +61,16 @@
           <div id="inspectors" class="table-wrap"></div>
           <h3>Cadastros por alimentador</h3><div id="feedersKpi" class="table-wrap"></div>
         </article>
+      </section>
+      <section class="panel" id="registrationQuality">
+        <h2>Qualidade dos cadastros por equipe</h2>
+        <div class="registration-toolbar">
+          <label>Pendência <select id="registrationIssue"><option value="any">Qualquer pendência</option></select></label>
+        </div>
+        <p id="registrationSummary" role="status"></p>
+        <p id="registrationLeader"></p>
+        <div id="registrationRanking" class="table-wrap"></div>
+        <p class="hint">Índice sem fotos = cadastros sem foto ÷ cadastros da equipe no período. Distâncias e identificadores de rede são avaliados onde a rede foi indicada.</p>
       </section>
       <section class="panel" id="qualityPanel">
         <div class="panel-head"><h2>Árvores a mais de 60 m do vão indicado</h2><button type="button" id="showQuality" disabled>Ver alertas no mapa</button></div>

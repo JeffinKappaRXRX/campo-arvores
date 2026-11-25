@@ -270,6 +270,29 @@
    if(!controller.signal.aborted)hideMap(error.message);
   }
  }
+ if($('registrationIssue')&&window.CampoRegistrationQuality){
+  const Q=window.CampoRegistrationQuality;
+  for(const key of Q.keys)$('registrationIssue').add(new Option(Q.labels[key],key));
+  $('registrationIssue').onchange=()=>renderRegistrationQuality(F.apply(data?.field||[],filterValues()),(data?.groups||[]).filter(team=>!fields.inspector.value||team.id===fields.inspector.value));
+ }
+ function renderRegistrationQuality(rows,teams){
+  const Q=window.CampoRegistrationQuality,issue=$('registrationIssue')?.value;
+  if(!issue||!Q)return;
+  const groups=new Map();
+  for(const row of rows){
+   if(!Number.isInteger(row.audit))continue;
+   if(!groups.has(row.inspector))groups.set(row.inspector,[]);
+   groups.get(row.inspector).push(row.audit);
+  }
+  const totals=Q.summary([...groups.values()].flat());
+  const list=teams.filter(team=>groups.has(team.id)).map(team=>({name:team.teamLabel||team.label,...Q.summary(groups.get(team.id))}));
+  list.sort((a,b)=>b.rate-a.rate||b.counts.photos-a.counts.photos||F.compare(a.name,b.name));
+  const ranking=list[0],matching=issue==='any'?totals.flagged:totals.counts[issue];
+  $('registrationSummary').textContent=fmt(matching)+(issue==='any'?' com pendências':' no filtro selecionado')+' · '+fmt(totals.counts.photos)+' sem fotos · '+fmt(totals.counts.photoReview)+' fotos a confirmar · '+fmt(totals.total)+' avaliados.';
+  $('registrationLeader').textContent=ranking?.counts.photos?'Maior índice sem fotos: '+ranking.name+' · '+pct(ranking.rate)+' ('+fmt(ranking.counts.photos)+' de '+fmt(ranking.total)+').':'';
+  const columns=['Equipe','Cadastros avaliados','Sem fotos','Índice sem fotos','Fotos a confirmar',issue==='any'?'Com pendências':Q.labels[issue]];
+  $('registrationRanking').innerHTML=table(columns,list.map(row=>[esc(row.name),fmt(row.total),fmt(row.counts.photos),pct(row.rate),fmt(row.counts.photoReview),fmt(issue==='any'?row.flagged:row.counts[issue])]),'Nenhum cadastro avaliado neste recorte.');
+ }
  function render(fit=true){
   if(!data)return;
   const filter=filterValues(),invalid=filter.from&&filter.through&&filter.from>filter.through;
@@ -277,6 +300,7 @@
    !data.archiveAvailable?'Arquivo do Drive indisponível. Indicadores de cadastro mostram os dados da base central.':'';
   const operators=invalid?[]:data.groups.filter(team=>!filter.inspectors.length||filter.inspectors.includes(team.id));
   const rows=invalid?[]:F.apply(data.field,filter);
+  renderRegistrationQuality(rows,operators);
   renderQuality(rows,operators);
   productivity(rows,operators,!invalid&&F.period(today,filter.from,filter.through));
   const active=invalid?[]:data.routes.filter(route=>operators.some(team=>team.id===route.inspector));

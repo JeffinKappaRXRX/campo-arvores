@@ -146,7 +146,7 @@ function gerencialTeamGroups(enabled,{teams,members,showInspectorNames}){
  }
  for(const group of groups.values()){
   group.inspectors?.sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  if(showInspectorNames)group.label+=' · '+group.inspectors.join(', ');
+  if(showInspectorNames){group.teamLabel=group.label;group.label+=' · '+group.inspectors.join(', ');}
   delete group.inspectors;
  }
  return {groups:[...groups.values()].sort((a,b)=>a.label.localeCompare(b.label,'pt-BR',{numeric:true})),operators};
@@ -194,6 +194,7 @@ async function gerencialData(env){
    inspector:operators.get(operator.id).id,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
    poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
    identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0,
+   audit:correctionEligible(r)?CampoRegistrationQuality.mask(r):null,
    spanChecked:Boolean(check),...(check?.metres>CampoSpanQuality.threshold?{spanAlert:check}:{})
   };
  });
