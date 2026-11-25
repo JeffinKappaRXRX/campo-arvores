@@ -54,7 +54,29 @@ function updateMapPosition(){if(!fieldMap)return;const has=$('lat').value!==''&&
 $('centerGPS').onclick=()=>refreshGPS(false);
 function featureLayerConfig(f){return packageConfig?.layers.find(l=>l.table_name===f.properties?._layer);}
 function featureProfile(f){const l=featureLayerConfig(f);return l?.profile||(typeof campoNetworkProfile==='function'&&l?campoNetworkProfile(l):null);}
-function featureValue(f,key){if(f.routeSpan)return {span:f.routeSpan.id,feeder:f.routeSpan.feeder}[key];const props=f.properties||{},layer=featureLayerConfig(f),prop=(layer?.mapping||networkMapping)[key],configured=prop?props[prop]:null,isBt=String(layer?.classification||props._class||props._layer||'').toUpperCase().includes('BT'),usable=value=>value!==null&&value!==undefined&&String(value).trim()!==''&&!(key==='feeder'&&isBt&&typeof CampoBtFeeder!=='undefined'&&!CampoBtFeeder.isFeeder(value));if(usable(configured))return configured;if(key==='feeder'){const aliases=['alimentador','codigoalimentador','codalimentador','feeder'];for(const [name,value]of Object.entries(props)){const normalized=name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]/g,'').toLowerCase();if(aliases.includes(normalized)&&usable(value))return value;}const inferred=typeof CampoBtFeeder!=='undefined'?CampoBtFeeder.lookup(props):null;if(inferred)return inferred;}return usable(configured)?configured:null;}
+function featureValue(f,key){
+ if(f.routeSpan)return {span:f.routeSpan.id,feeder:f.routeSpan.feeder}[key];
+ const props=f.properties||{},layer=featureLayerConfig(f),prop=(layer?.mapping||networkMapping)[key],configured=prop?props[prop]:null;
+ const classification=String(layer?.classification||props._class||'').toUpperCase();
+ const isBt=(classification||String(props._layer||'').toUpperCase()).includes('BT');
+ const usable=value=>value!==null&&value!==undefined&&String(value).trim()!==''&&!(key==='feeder'&&isBt&&typeof CampoBtFeeder!=='undefined'&&!CampoBtFeeder.isFeeder(value));
+ if(usable(configured))return configured;
+ const isPoleId=key==='pole'&&classification==='POSTE'&&f.geometry?.type==='Point';
+ if(isPoleId||key==='feeder'){
+  const aliases=isPoleId?['idposte','iddoposte','poste','numoperativo','numerooperativo','id']:['alimentador','codigoalimentador','codalimentador','feeder'];
+  const entries=Object.entries(props).map(([name,value])=>[name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]/g,'').toLowerCase(),value]);
+  if(isPoleId){
+   for(const alias of aliases){
+    const match=entries.find(([name,value])=>name===alias&&usable(value));
+    if(match)return match[1];
+   }
+  }else{
+   const match=entries.find(([name,value])=>aliases.includes(name)&&usable(value));
+   if(match)return match[1];
+  }
+ }
+ return key==='feeder'&&typeof CampoBtFeeder!=='undefined'?CampoBtFeeder.lookup(props)||null:null;
+}
 function featureStyle(f){const p=featureProfile(f),s=p?{...p.style,...p.categories?.[String(f.properties?.[p.categoryField]??'NULL')]}:{color:color(f),weight:3,fillOpacity:.12};return {...s,radius:Math.max(2.5,Math.min(3.8,(s.radius||6)*.5)),weight:Math.max(1,Math.min(1.6,(s.weight||2.5)*.65))};}
 function featureLabel(f){const p=featureProfile(f);return p?.labels.map(k=>String(f.properties?.[k]??'')).filter(Boolean).join(' · ')||'';}
 function renderNetworkLabels(features){if(networkLabels)fieldMap.removeLayer(networkLabels);networkLabels=L.layerGroup().addTo(fieldMap);if(fieldMap.getZoom()<18)return;const occupied=new Set();let count=0;for(const f of features){const text=featureLabel(f).split(' · ')[0].slice(0,22);if(!text)continue;let c=f.geometry.coordinates;if(f.geometry.type==='MultiLineString')c=c[0];if(f.geometry.type==='LineString'||f.geometry.type==='MultiLineString')c=c[Math.floor(c.length/2)];if(!Array.isArray(c)||typeof c[0]!=='number')continue;const ll=L.latLng(c[1],c[0]),pt=fieldMap.latLngToContainerPoint(ll);const cell=Math.floor(pt.x/110)+':'+Math.floor(pt.y/28);if(occupied.has(cell)||!fieldMap.getBounds().contains(ll))continue;occupied.add(cell);const label=L.marker(ll,{interactive:true,bubblingMouseEvents:false,icon:L.divIcon({className:'network-label-anchor',html:'',iconSize:[0,0]})}).bindTooltip(esc(text),{permanent:true,interactive:true,direction:'right',className:'network-label',opacity:1}).addTo(networkLabels);const select=e=>{if(typeof consumeStreetViewClick==='function'&&consumeStreetViewClick(e))return;if(typeof consumeMapRulerClick==='function'&&consumeMapRulerClick(e))return;if(e.originalEvent)L.DomEvent.stopPropagation(e.originalEvent);if(consumeRouteFieldPoint(e.latlng||ll))return;showFeature(f);};label.on('click',select);label.getTooltip().on('click',select);if(++count>=(fieldMapLight?25:60))break;}}
@@ -209,7 +231,10 @@ function showFeature(f){
  $('closeFeature').onclick=()=>{p.hidden=true;clearNetworkSelection();};
  if(adjacent)$('showAdjacentNetwork').onclick=()=>showFeature(adjacent);
  if(routeKey)$('inspectRouteSwitch').onclick=()=>{$('closeFeature').click();window.CampoFieldRouteMap.openKey(switchCode);};
- if(isPole||isSpan)$('useFeature').onclick=()=>{if(isPole)$('pole').value=String(pole);if(isSpan){$('span').value=String(span);if(present(feeder)){$('feeder').value=String(feeder).trim();$('feeder').dispatchEvent(new Event('input',{bubbles:true}));}if(typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(f);}scheduleDraft();p.hidden=true;clearNetworkSelection();if(typeof renderCompletion==='function')renderCompletion();tell(isPole?'ID do poste confirmado no cadastro.':present(feeder)?'ID do vão confirmado · alimentador atualizado para '+String(feeder).trim()+'.':'ID do vão confirmado. Esta camada não informa alimentador; o valor anterior foi mantido.');};
+ if(isPole||isSpan)$('useFeature').onclick=()=>{if(isPole){
+  $('pole').value=String(pole).trim();
+  $('pole').dispatchEvent(new Event('input',{bubbles:true}));
+ }if(isSpan){$('span').value=String(span);if(present(feeder)){$('feeder').value=String(feeder).trim();$('feeder').dispatchEvent(new Event('input',{bubbles:true}));}if(typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(f);}scheduleDraft();p.hidden=true;clearNetworkSelection();if(typeof renderCompletion==='function')renderCompletion();tell(isPole?'ID do poste confirmado no cadastro.':present(feeder)?'ID do vão confirmado · alimentador atualizado para '+String(feeder).trim()+'.':'ID do vão confirmado. Esta camada não informa alimentador; o valor anterior foi mantido.');};
 }
 function refreshFeeders(){const fromNetwork=networkData?networkData.features.map(f=>featureValue(f,'feeder')).filter(v=>v!==null&&v!==undefined&&v!=='').map(String):[];const all=[...new Set([...(typeof DEFAULT_FEEDERS!=='undefined'?DEFAULT_FEEDERS:[]),...feederList,...(typeof sharedReady!=='undefined'&&sharedReady?[...sharedTrees.values()].filter(r=>!r.sharedDeleted).map(r=>r.feeder).filter(Boolean):[]),...fromNetwork,...(packageConfig?.feeders||[])])].sort((a,b)=>a.localeCompare(b));$('feeders').innerHTML=all.map(v=>`<option value="${esc(v)}"></option>`).join('');syncMapFeederFilter(all);$('feederstatus').textContent=all.length?`${all.length} alimentadores · digite para pesquisar e selecionar`:'Importe uma lista ou rede com campo alimentador.';$('feederImportStatus').textContent=feederList.length?`${feederList.length} alimentadores adicionais importados.`:'113 alimentadores pré-cadastrados; códigos C, I e S preservados.';}
 $('feeder').addEventListener('change',()=>{scheduleDraft();});
