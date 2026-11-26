@@ -36,4 +36,25 @@ with tempfile.TemporaryDirectory() as tmp:
         ("5", "executada", "2026-11-24", "Sem vínculo inequívoco"),
     ]
     assert [(r[7], r[1]) for r in coverage] == [("1", "1001"), ("1", "1002"), ("4", "1002")]
-print("Leitura dos dois TXT, conciliação, DATA_TERMINO e vínculos SGM verificados.")
+    assert test["source_path"](Path(tmp) / "sgm os exec.txt") == a
+    dec = Path(tmp) / "01. bd_DEC_FEC"
+    for year in ("2025", "2026"):
+        (dec / year).mkdir(parents=True)
+    samples = {
+        "2025/dez.csv": [(7, "15/12/2025", "AAL-01C9")],
+        "2026/jan.csv": [(7, "02/01/2026", "AAL-01C9"), (8, "03/01/2026", "")],
+        "2026/fev.csv": [(7, "02/01/2026", "TAN-01C5")],
+    }
+    for name, rows in samples.items():
+        with (dec / name).open("w", encoding="cp1252", newline="") as file:
+            writer = csv.writer(file, delimiter=";")
+            writer.writerow(["ID_OCORRÊNCIA", "DATA_INÍCIO", "ALIMENTADOR"])
+            writer.writerows(rows)
+    snapshot = test["occurrences"](dec, "*.csv", "", current_year=2026)
+    assert snapshot["lastDay"] == "2026-01-03"
+    assert snapshot["counts"] == [
+        ["2025-12-15", "", 1], ["2025-12-15", "AAL-01C9", 1],
+        ["2026-01-02", "", 1], ["2026-01-02", "AAL-01C9", 1], ["2026-01-02", "TAN-01C5", 1],
+        ["2026-01-03", "", 1],
+    ]
+print("Leitura e conciliação SGM, pastas anuais e deduplicação de ocorrências DEC/FEC verificadas.")

@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict');
 global.CampoRoutes=require('../docs/route-core.js');
-const {ledger,select,annual}=require('../docs/vera-progress-core.js');
+const {ledger,select,annual,parkCatalogue,parkCoverage,parkReport}=require('../docs/vera-progress-core.js');
 
 const span=(day,id,metres,section='1',source='')=>[day,id,metres,'AAL-01C9','RBR111',section,'URBANO',source];
 const db=ledger({
@@ -49,4 +49,15 @@ assert.equal(goals[0].realised,360300.48);
 assert.equal(goals[0].pending,0);
 assert.equal(goals[1].advance,368600);
 assert.ok(Math.abs(goals[2].advance-72700.48)<1e-6);
-console.log('Histórico, cobertura parcial, deduplicação, SGM e antecipação VERA verificados.');
+const catalogue=parkCatalogue({
+ ids:['1','2','3','4','5'],metres:[800,600,1200,400,100],groupIds:[0,0,1,2,3],
+ groups:[['AAL-01C9','1'],['TAN-01C5','2'],['AAL-01C9','3'],['TAN-01C5','']]
+});
+const park=parkReport(parkCoverage(db,catalogue,'2026-05-06'));
+assert.deepEqual(park.map(row=>[row.section,row.total,row.done,row.pending,row.complete,row.partial]),[
+ ['1',1400,1100,300,1,1],['2',1200,0,1200,0,0],['3',400,0,400,0,0],['',100,0,100,0,0],['total',3100,1100,2000,1,1]
+]);
+assert.equal(parkReport(parkCoverage(db,catalogue,'2026-05-09'),'AAL-01C9').at(-1).pending,400);
+assert.equal(parkReport(parkCoverage(db,catalogue,'2026-05-09'),'TAN-01C5').at(-1).progress,0);
+assert.equal(parkReport(parkCoverage(db,catalogue,'2025-12-31')).at(-1).done,800);
+console.log('Histórico, deduplicação, SGM, metas e saldo do parque por trecho verificados.');

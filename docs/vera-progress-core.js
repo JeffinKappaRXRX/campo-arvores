@@ -44,7 +44,7 @@ const CampoVeraProgress=(()=>{
   }
   events.sort((a,b)=>a.day.localeCompare(b.day)||Number(b.source==='VERA')-Number(a.source==='VERA'));
   const routesOnly=events.filter(event=>event.source==='ARBORA');
-  return {credited:credit(events,meta),routesOnly:credit(routesOnly,meta),trees:history.trees||[],orders:combineOrders(history,sgm)};
+  return {credited:credit(events,meta),routesOnly:credit(routesOnly,meta),events,trees:history.trees||[],orders:combineOrders(history,sgm)};
  }
  function credit(events,meta){
   const ranges=new Map(),credited=[];
@@ -129,6 +129,60 @@ const CampoVeraProgress=(()=>{
    return {year,target,realised,advance,pending:target-credited,carry:available,cumulativeMetres:earlier,cumulativeTarget:plan};
   });
  }
- return {ledger,select,annual,targets};
+ function parkCatalogue(catalogue){
+  const {ids,metres,groupIds,groups}=catalogue;
+  const totals=groups.map(([feeder,section])=>({feeder,section,total:0,spans:0}));
+  for(let i=0;i<ids.length;i++){
+   const group=totals[groupIds[i]];
+   group.total+=metres[i];
+   group.spans++;
+  }
+  return {ids,metres,groupIds,totals};
+ }
+ function parkCoverage(data,catalogue,asOf){
+  const {ids,metres,groupIds,totals}=catalogue;
+  const coverage=totals.map(group=>({...group,done:0,complete:0,partial:0}));
+  const ranges=new Map();
+  for(const event of data.events){
+   if(event.day>asOf)break;
+   if(!ranges.has(event.id))ranges.set(event.id,[]);
+   ranges.get(event.id).push([event.start,event.end]);
+  }
+  function spanIndex(id){
+   let low=0,high=ids.length;
+   while(low<high){
+    const mid=Math.floor((low+high)/2);
+    if(ids[mid]<id)low=mid+1;
+    else high=mid;
+   }
+   return ids[low]===id?low:-1;
+  }
+  for(const [id,visits] of ranges){
+   const index=spanIndex(id);
+   if(index===-1)continue;
+   const length=CampoRoutes.merge(visits).reduce((sum,[start,end])=>sum+end-start,0);
+   const group=coverage[groupIds[index]];
+   group.done+=metres[index]*length/FULL;
+   if(length===FULL)group.complete++;
+   else group.partial++;
+  }
+  return coverage;
+ }
+ function parkReport(coverage,feeder=''){
+  const keys=['1','2','3',''];
+  const empty=section=>({section,total:0,done:0,spans:0,complete:0,partial:0});
+  const sections=new Map(keys.map(section=>[section,empty(section)])),total=empty('total');
+  for(const group of coverage){
+   if(feeder&&group.feeder!==feeder)continue;
+   const section=sections.get(group.section);
+   for(const metric of ['total','done','spans','complete','partial']){
+    section[metric]+=group[metric];
+    total[metric]+=group[metric];
+   }
+  }
+  return [...sections.values(),total].map(group=>({...group,done:Math.min(group.done,group.total),
+   pending:Math.max(0,group.total-group.done),progress:group.total?Math.min(1,group.done/group.total):null}));
+ }
+ return {ledger,select,annual,parkCatalogue,parkCoverage,parkReport,targets};
 })();
 if(typeof module!=='undefined')module.exports=CampoVeraProgress;

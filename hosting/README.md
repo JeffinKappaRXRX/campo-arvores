@@ -335,17 +335,19 @@ Para extrair os arquivos, instale `lxml` no ambiente do Python usado para proces
 
 ```powershell
 py -3 -m pip install lxml
-py -3 tools/vera-progress-workbook.py "Veraaaaaaaaaaa(2).xlsx" --historico historico-vera.json --catalogo catalogo-vaos.json
+py -3 tools/vera-progress-workbook.py "Veraaaaaaaaaaa(2).xlsx" --historico historico-vera.json --catalogo catalogo-vaos.json --parque parque-vaos.json
 ```
 
-O histórico é carregado por **Gestão → Avanço de inspeção VERA → Enviar histórico VERA**. O catálogo fica no computador que lê os TXT. Os dois arquivos contêm dados internos e devem ficar fora do diretório `docs/` e do Git.
+O histórico é carregado por **Gestão → Avanço de inspeção VERA → Enviar histórico VERA**. No mesmo painel, **Enviar cadastro completo de vãos** recebe `parque-vaos.json`. A tabela de parque usa todos os vãos com extensão cadastrada, incluindo os sem trecho classificado, e deduplica a cobertura confirmada por vão e faixa, inclusive entre 2025 e o ciclo seguinte. O filtro de alimentador vale para o parque e o corte é o fim do período selecionado, limitado à data de hoje. O saldo da meta anual mantém seu critério próprio.
 
-O envio diário usa apenas a biblioteca padrão do Python. Por padrão, lê a pasta `wqc_spool` do caminho `K:\Onedrive\OneDrive - Energisa\Documentos\1 - BASES PARA BI`. No servidor, informe os dois caminhos UNC que a conta executora pode ler:
+Guarde os arquivos gerados fora de `docs/` e do Git. O catálogo `catalogo-vaos.json` fica no computador que lê os TXT. Nesse computador, defina `ARBORA_SGM_DIR` para a pasta corporativa **Atualizações Diárias** e `ARBORA_DEC_FEC_DIR` para **01. bd_DEC_FEC**. A primeira fornece `SGM OS EXEC.txt` e `SGM OS.txt`. A segunda é lida pelas subpastas anuais. Os caminhos também podem ser passados por `--sgm-dir` e `--dec-fec`. Confira o resultado antes do primeiro envio:
 
 ```powershell
-py -3 tools/vera-progress-sgm.py --catalogo catalogo-vaos.json --executadas "$spool\SGM OS EXEC.txt" --pendentes "$spool\SGM OS.txt" --saida sgm-vera-previa.json
+py -3 tools/vera-progress-sgm.py --catalogo catalogo-vaos.json --saida sgm-vera-previa.json --saida-dec dec-fec-previa.json
 ```
 
-Para publicar a atualização ao fim da rotina de cópia já usada na Energisa, execute o mesmo comando com `--enviar` e sem `--saida`. Configure `VERA_PROGRESS_SYNC_TOKEN` como secret do Worker `campo-api` e como variável de ambiente disponível apenas à conta Windows que executa a tarefa. O token é exclusivo desta ingestão. O serviço informa a última gravação aceita e mantém a carga anterior quando a leitura ou o envio falham.
+Se as pastas anuais contiverem outros relatórios, use `--dec-padrao` para selecionar os arquivos de ocorrências. CSV e TXT usam a biblioteca padrão. Para Excel `.xlsx` ou `.xlsm`, instale `openpyxl` e informe `--dec-aba` se o livro tiver várias abas. Quando necessário, configure os cabeçalhos com `--dec-id`, `--dec-inicio` e `--dec-alimentador`. A extração conta ocorrências únicas pelo ID e ano de início. Uma ocorrência pode figurar nos alimentadores que afetou e conta uma única vez no total EAC. O painel exibe a contagem da fonte de ocorrências.
+
+Acrescente o comando com `--enviar` no fim da rotina corporativa de atualização, usando uma conta Windows com acesso de leitura às duas pastas e à API. Configure `VERA_PROGRESS_SYNC_TOKEN` no Worker `campo-api` e no ambiente privado dessa conta. O SGM e o DEC/FEC são enviados e validados independentemente. Se uma fonte falhar, a outra ainda é processada e o painel mantém a última carga aceita da fonte com falha. Essa entrada atualiza o **Avanço de inspeção VERA**. Os demais painéis da base central dependem do publicador das tabelas consolidadas `os_abertas`, `os_exec`, `ocorr` e `dec_mes`.
 
 O script cruza as exportações pela OS primária, seleciona as menções a VERA e usa a data de término no arquivo executado. A OS entra na relação gerencial quando menciona VERA. Para crédito de quilometragem, a OS também precisa identificar a inspeção e um vão ou uma combinação inequívoca de alimentador e chave. Quando o SGM fornece o inspetor, o painel exibe o nome. Para a mesma OS histórica o nome pode ser recuperado da planilha. Demais registros exibem a equipe de execução quando disponível.

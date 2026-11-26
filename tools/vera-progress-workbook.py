@@ -6,6 +6,7 @@ import posixpath
 import runpy
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -137,11 +138,28 @@ def extract(sheets):
     return {"version": 1, "coverage": coverage, "trees": trees, "orders": orders}, spans, unknown_dates
 
 
+def park_inventory(spans, workbook):
+    groups = {}
+    ids, metres, group_ids = [], [], []
+    for span_id, length, feeder, _, section, _ in sorted(spans, key=lambda row: row[0]):
+        section = str(section).strip().upper().removeprefix("T")
+        group = (feeder, section if section in {"1", "2", "3"} else "")
+        group_ids.append(groups.setdefault(group, len(groups)))
+        ids.append(span_id)
+        metres.append(length)
+    return {
+        "version": 1, "groups": list(groups), "ids": ids, "metres": metres, "groupIds": group_ids,
+        "file": {"name": workbook.name, "modified": datetime.fromtimestamp(
+            workbook.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workbook", type=Path)
     parser.add_argument("--historico", type=Path, required=True)
     parser.add_argument("--catalogo", type=Path, required=True)
+    parser.add_argument("--parque", type=Path, help="Gera o cadastro de todos os vãos para o total e saldo no painel.")
     args = parser.parse_args()
     try:
         history, spans, unknown = extract(read_book(args.workbook))
@@ -149,6 +167,11 @@ def main():
             raise ValueError(f"Histórico incompleto: {len(unknown)} registros de vão sem data comprovada.")
         for path, value in ((args.historico, history), (args.catalogo, spans)):
             path.write_text(json.dumps(value, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+        if args.parque:
+            payload = json.dumps(park_inventory(spans, args.workbook), separators=(",", ":"), ensure_ascii=False)
+            if len(payload.encode("utf-8")) > 8_000_000:
+                raise ValueError("O cadastro completo excede o limite de 8 MB do painel.")
+            args.parque.write_text(payload, encoding="utf-8")
         print(f"{len(spans)} vãos no catálogo, {len(history['coverage'])} vínculos históricos.")
     except (KeyError, ValueError, OSError) as error:
         print(error, file=sys.stderr)
