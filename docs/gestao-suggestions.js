@@ -43,7 +43,7 @@
   $('suggestSelectPage').disabled=Boolean(job)||!data?.items.length;
   $('suggestSelectAll').disabled=Boolean(job)||!data?.total;
   $('suggestClear').disabled=Boolean(job)||!selected.length;
-  $('suggestApply').disabled=Boolean(job)||!selected.some(item=>item.canApply||item.editable&&approval(item));
+  $('suggestApply').disabled=Boolean(job)||!selected.some(item=>$('suggestFilter').value==='distances'?item.editable&&item.distanceAdjustable:item.canApply||item.editable&&approval(item));
   $('suggestPhotos').disabled=Boolean(job)||!selected.some(item=>item.hasPhoto);
   $('suggestReturn').disabled=Boolean(job)||!selected.some(item=>item.canDispatch);
   $('suggestStop').hidden=!job;
@@ -76,6 +76,10 @@
  const site=value=>({publico:'Público',privado:'Privado'})[value]||'Não informado';
  function printChange(issue){
   const change=issue.change;
+  if(issue.distance){
+   const cm=value=>value===null?'em branco':(value*100).toLocaleString('pt-BR',{maximumFractionDigits:6})+' cm';
+   return cm(change.previous)+' → '+cm(change.value)+' · fonte '+change.source;
+  }
   if(change.field==='treeSite')return site(change.value)+' · fonte '+change.source;
   return (change.field==='dap'?'DAP':'CAP')+' '+Number(change.value).toLocaleString('pt-BR')+' cm · calculado pelo '+change.source;
  }
@@ -135,6 +139,13 @@
   }catch(error){if(!request.signal.aborted)$('suggestCounts').textContent=error.message;}
  }
  function filterChanged(){page=0;void refresh();}
+ $('exportDistanceAudit')?.addEventListener('click',()=>{
+  $('suggestFilter').value='distances';
+  selection.clear();
+  selectUI();
+  if(panel.open)filterChanged();
+  else{page=0;panel.open=true;}
+ });
  async function selectAll(){
   if(job||!active())return;
   const p=filters();p.set('format','selection');
@@ -162,17 +173,18 @@
  }
  async function apply(items){
   if(job||!active())return;
-  const eligible=items.filter(item=>item.editable&&(item.canApply||approval(item)));
+  const distancesOnly=$('suggestFilter').value==='distances';
+  const eligible=items.filter(item=>item.editable&&(distancesOnly?item.distanceAdjustable:item.canApply||approval(item)));
   if(!eligible.length)return;
-  const ai=eligible.filter(approval).length;
-  if(!confirm('Aplicar ajustes a '+eligible.length+' cadastro(s)'+(ai?', incluindo '+ai+' identificação(ões) aprovadas':'')+'?'))return;
+  const ai=distancesOnly?0:eligible.filter(approval).length;
+  if(!confirm((distancesOnly?'Aplicar ajustes de distância a ':'Aplicar ajustes a ')+eligible.length+' cadastro(s)'+(ai?', incluindo '+ai+' identificação(ões) aprovadas':'')+'?'))return;
   const running=start();
   let applied=0,failures=0,unchanged=0;
   try{
    for(let i=0;i<eligible.length&&!running.stop&&active();i+=limit){
     status('Aplicando '+Math.min(i+limit,eligible.length)+' de '+eligible.length+'…');
     const batch=eligible.slice(i,i+limit).map(item=>({id:item.id,version:item.version,token:item.token,operationId:crypto.randomUUID(),species:approval(item)?.name}));
-    const result=await post(path,{items:batch});
+    const result=await post(path,{items:batch,distancesOnly});
     for(const item of result.results){
      if(item.status==='failed'){errors.set(item.id,item.message);failures++;continue;}
      errors.delete(item.id);selection.delete(item.id);approved.delete(item.id);

@@ -34,6 +34,13 @@ async function controlEditAPI(request,env,db,prepared=null){
  if(Object.hasOwn(body.values,'span')&&!Object.hasOwn(body.values,'spanNetwork'))delete data.spanNetwork;
  for(const k of ['sharedVersion','sharedDeleted','sharedUpdatedAt','sharedActor','deletionRequest','baselineToken','baseline'])delete data[k];
  data.updatedAt=stamp;data.lastInspector=actor;data.lastEditorUserId=env.CAMPO_USER?.id||null;data.lastEditorEmail=env.CAMPO_USER?.email||null;data.managementEdit={at:stamp,actor,fields:Object.keys(body.values)};
+ for(const network of ['bt','mt','at']){
+  const field=network+'Distance';
+  if(!Object.hasOwn(body.values,field))continue;
+  data.measurements={...data.measurements,networkDistances:{...data.measurements?.networkDistances,
+   [network]:{source:'manual-management',value:data[field]===''?null:Number(data[field]),unit:'m'}
+  }};
+ }
  if(Object.hasOwn(body.values,'height')&&Number(data.height)!==Number(part.record.height))data.heightMeasurement={method:'manual-management',confirmedAt:stamp,actor};
  // Original creation date, inspector, timing, measurements and other metadata stay intact.
  data.photos=[...(part.record.photos||[])];

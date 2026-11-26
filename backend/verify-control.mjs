@@ -1,10 +1,10 @@
 import fs from 'node:fs/promises';import assert from 'node:assert/strict';import {DatabaseSync}from 'node:sqlite';
-const sql=new DatabaseSync(':memory:');for(const file of ['shared-schema.sql','admin-schema.sql','homologacao-schema.sql','user-auth-schema.sql'])sql.exec(await fs.readFile(new URL(file,import.meta.url),'utf8'));
+const sql=new DatabaseSync(':memory:');for(const file of ['shared-schema.sql','admin-schema.sql','homologacao-schema.sql','user-auth-schema.sql','corrections-schema.sql'])sql.exec(await fs.readFile(new URL(file,import.meta.url),'utf8'));
 class Query{constructor(text,args=[]){this.text=text;this.args=args;}bind(...a){return new Query(this.text,a);}async first(){return sql.prepare(this.text).get(...this.args)||null;}async all(){return {results:sql.prepare(this.text).all(...this.args)};}async run(){return {meta:{changes:Number(sql.prepare(this.text).run(...this.args).changes)}};}}
 const DB={prepare:s=>new Query(s),withSession(){return this;},async batch(qs){sql.exec('BEGIN');try{const out=[];for(const q of qs)out.push(await q.run());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}};
 const source=await fs.readFile(new URL('worker.js',import.meta.url),'utf8'),{default:app}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const env={APP_ORIGIN:'https://team.example',ADMIN_PASSWORD:'private-bootstrap-password',ADMIN_SESSION_SECRET:'s'.repeat(40),LOGIN_GUARD:{get:async()=>0,put:async()=>{}},SHARED_DB:DB,GOOGLE_SCRIPT_URL:'https://script.google.com/macros/s/test/exec',GOOGLE_SCRIPT_TOKEN:'integration-test-secret',REDE_CAMPO_ID:'network-test'};
-let archiveCalls=0;const nativeFetch=globalThis.fetch,archiveRow={id:'legacy',species:'Legado',inspector:'Original',createdAt:'2026-10-31T23:00:00Z',updatedAt:'2026-10-31T23:00:00Z',lat:-9.9,lon:-67.8,photos:[{id:'old-photo'}]},manifest={fileId:'network-test',name:'Rede_Campo.gpkg',size:4,revision:'r1',chunkSize:4};
+let archiveCalls=0;const nativeFetch=globalThis.fetch,archiveRow={id:'legacy',species:'Legado',inspector:'Original',createdAt:'2026-10-31T23:00:00Z',updatedAt:'2026-10-31T23:00:00Z',lat:-9.9,lon:-67.8,pole:'000020001',bt:true,btDistance:0,mt:true,'5. Distância MT (Metros)':'1,25',photos:[{id:'old-photo'}]},manifest={fileId:'network-test',name:'Rede_Campo.gpkg',size:4,revision:'r1',chunkSize:4};
 globalThis.fetch=async(input,options)=>{assert.equal(input,env.GOOGLE_SCRIPT_URL);const b=JSON.parse(options.body);assert.equal(b.token,env.GOOGLE_SCRIPT_TOKEN);if(b.action==='admin_list'){archiveCalls++;return Response.json({ok:true,records:[archiveRow],deletedIds:[],nextOffset:null,revision:'one'});}if(b.action==='network_manifest')return Response.json({ok:true,network:manifest});if(b.action==='network_chunk')return Response.json({ok:true,offset:0,revision:'r1',base64:'AQIDBA=='});throw Error('Unexpected action '+b.action);};
 async function call(path,body,{cookie='',bearer='',origin=env.APP_ORIGIN}={}){const response=await app.fetch(new Request('https://api.test'+path,{method:body===undefined?'GET':'POST',headers:{Origin:origin,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{}),...(bearer?{Authorization:'Bearer '+bearer}:{})},body:body===undefined?undefined:JSON.stringify(body)}),env);return {response,status:response.status,data:response.headers.get('Content-Type')?.includes('json')?await response.clone().json():new Uint8Array(await response.clone().arrayBuffer())};}
 for(const path of ['/api/control/data','/api/control/revision','/api/network/manifest','/api/network/chunk?offset=0&revision=r1'])assert.equal((await call(path)).status,401);
@@ -25,5 +25,28 @@ assert.equal((await call('/api/control/tree?id=t0',undefined,auth)).data.record.
 const revision=(await call('/api/control/revision',undefined,auth)).data.revision;const updated={...JSON.parse(sql.prepare('SELECT data FROM shared_trees WHERE id=?').get('t0').data),height:12,updatedAt:'2026-11-01T13:00:00Z'};sql.prepare('UPDATE shared_trees SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(updated),'t0');assert.notEqual((await call('/api/control/revision',undefined,auth)).data.revision,revision);assert.equal((await call('/api/control/tree?id=t0',undefined,auth)).data.record.height,12,'same central row is immediately visible in desktop');
 const before=sql.prepare('SELECT COUNT(*) n FROM shared_trees').get().n;await call('/api/control/data?refresh=1',undefined,auth);assert.equal(sql.prepare('SELECT COUNT(*) n FROM shared_trees').get().n,before,'analytics is read only');assert.equal(archiveCalls,2);
 const exported=await call('/api/control/export',undefined,auth),csv=new TextDecoder().decode(exported.data);assert.equal(exported.status,200);assert(exported.response.headers.get('Content-Disposition').includes('arbora-todas-as-bases.csv'));assert.equal(csv.split('\r\n')[0].replace(/^\uFEFF/,''),'ID;ESPECIE;LONGITUDE;LATITUDE;ALTURA;DATA;POSTE;DT BT;DT MT;DT AT;FOTO;AREA;DAP;ACESSO;EQUIPE;OBSERVACAO;ALIMENTADOR');assert.equal(csv.trimEnd().split('\r\n').length,15002,'header plus every active central record');const csvFiltered=new TextDecoder().decode((await call('/api/control/export?feeder=RBR-01C1&inspector=Alice',undefined,auth)).data);assert.equal(csvFiltered.trimEnd().split('\r\n').length,7501,'current panel filters limit the export without truncating pages');const csvExtra=new TextDecoder().decode((await call('/api/control/export?extras=1&from=2026-11-01&to=2026-11-01',undefined,auth)).data);assert.match(csvExtra.split('\r\n')[0],/;ID DO VAO;CHAVE;LOGRADOURO;MUNICIPIO;PERIMETRO;LINK DA FOTO$/);
-const logout=await call('/api/admin/logout',{},auth);assert.match(logout.response.headers.getSetCookie().join(','),/Max-Age=0/);globalThis.fetch=nativeFetch;
+const logout=await call('/api/admin/logout',{},auth);assert.match(logout.response.headers.getSetCookie().join(','),/Max-Age=0/);
+for(const [idMode,unit,id,mt] of [['empty','cm','','125'],['pole','m','000020001','1.25']]){
+ const result=await call('/api/control/export?idMode='+idMode+'&distanceUnit='+unit+'&q=Legado',undefined,auth);
+ assert.equal(result.status,200);
+ assert.equal(result.response.headers.get('X-Campo-Distance-Adjustable'),'1');
+ const cells=new TextDecoder().decode(result.data).split('\r\n')[1].split(';');
+ assert.deepEqual([cells[0],...cells.slice(6,10)],[id,'000020001','0',mt,'']);
+}
+assert.equal((await call('/api/control/export?distanceUnit=km',undefined,auth)).status,400);
+const audit=await call('/api/control/suggestions?status=distances&q=Legado',undefined,auth);
+assert.equal(audit.status,200);
+const [legacySuggestion]=audit.data.items;
+assert.equal(legacySuggestion.id,'legacy');
+assert.equal(legacySuggestion.distanceAdjustable,true);
+assert.equal(legacySuggestion.issues[0].change.value,1.25);
+const batch=await call('/api/control/suggestions',{distancesOnly:true,items:[{id:'legacy',version:legacySuggestion.version,token:legacySuggestion.token,operationId:'apply-legacy-measurement',species:'Outra espécie'}]},auth);
+assert.equal(batch.status,200);
+assert.deepEqual(batch.data.results,[{id:'legacy',status:'applied'}]);
+const after=(await call('/api/control/tree?id=legacy',undefined,auth)).data.record;
+assert.equal(after.mtDistance,'1.25');
+assert.equal(after.btDistance,0);
+assert.equal(after.species,'Legado');
+assert.equal((await call('/api/control/suggestions?status=distances&q=Legado',undefined,auth)).data.total,0);
+globalThis.fetch=nativeFetch;
 console.log('PASS control: 15,001 merged records, complete template CSV export, bounded 50-row pages/600 groups, complete representation, filters, measured-time denominator, no photo payloads, shared-row live updates, Drive read coalescing, no mutation, inspector/admin/bootstrap network downloads and blocked-account rejection. In-memory fixtures only.');

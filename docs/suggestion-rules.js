@@ -37,6 +37,55 @@
  const yes=value=>value===true||normalize(value)==='sim';
  const declaredSite=value=>({'publico':'publico','publica':'publico','area publica':'publico','privado':'privado','privada':'privado','area privada':'privado'})[normalize(value)]||'';
  const round=value=>Math.round(value*10)/10;
+ const networks=['mt','bt','at'];
+ const hasValue=value=>(typeof value==='number'||typeof value==='string')&&String(value).trim()!=='';
+ function distanceNumber(value){
+  if(!hasValue(value)||!/^(?:[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:e[+-]?\d+)?)$/i.test(String(value).trim()))return null;
+  const number=Number(String(value).trim().replace(',','.'));
+  return Number.isFinite(number)&&number>=0?number:null;
+ }
+ const sameDistance=(a,b)=>Math.abs(a-b)<=Math.max(Math.abs(a),Math.abs(b))*1e-9;
+ const cm=value=>Number((value*100).toPrecision(12)).toLocaleString('pt-BR',{maximumFractionDigits:6})+' cm';
+ function networkDistance(record,network){
+  const field=network+'Distance',upper=network.toUpperCase(),raw=record[field],stored=distanceNumber(raw);
+  const measurement=record.measurements?.networkDistances?.[network];
+  const cleared=measurement?.source==='manual-management'&&!hasValue(raw)&&measurement.value===null;
+  const sources=[];
+  function add(raw,unit,source){
+   const number=distanceNumber(raw);
+   if(number!==null)sources.push({value:unit==='cm'?Number((number/100).toPrecision(12)):number,source});
+  }
+  if(!cleared&&['m','cm'].includes(measurement?.unit))add(measurement.value,measurement.unit,'metadados da medição');
+  if(!cleared&&['m','cm'].includes(measurement?.inputUnit))add(measurement.inputValue,measurement.inputUnit,'unidade de entrada registrada');
+  if(measurement?.source!=='manual-management'){
+   add(record['dist'+upper],'m','base VERA (m)');
+   add(record['Dist. '+upper+' (m)'],'m','coluna histórica em metros');
+   const historical=Object.keys(record).find(key=>normalize(key).replace(/^\d+\s*\.\s*/,'')==='distancia '+network+' (metros)');
+   if(historical)add(record[historical],'m','formulário antigo (m)');
+  }
+  const evidence=sources[0];
+  const issue=(reason,change)=>({key:field,distance:true,reason,...(change&&{change})});
+  const suggestion=reason=>issue(reason,{field,value:evidence.value,previous:stored,source:evidence.source});
+  if(evidence&&sources.some(source=>!sameDistance(source.value,evidence.value)))return {value:stored,issue:issue('As fontes da medição divergem. Confira o valor e a unidade no levantamento original.')};
+  if(stored===null){
+   if(evidence&&!yes(record.noNetwork)&&(yes(record[network])||record[network]==null||missing(record[network])))
+    return {value:evidence.value,issue:suggestion('A distância está disponível na origem com unidade identificada.')};
+   if(evidence)return {value:null,issue:issue('A origem traz '+cm(evidence.value)+', mas o cadastro indica ausência da rede. Confira em campo.')};
+   if(yes(record[network])||hasValue(raw))return {value:null,issue:issue(hasValue(raw)?'Distância inválida. Confira o valor na origem.':instructions[field])};
+   return {value:null};
+  }
+  if(evidence&&!sameDistance(stored,evidence.value)){
+   const scaled=sameDistance(stored/100,evidence.value)||sameDistance(stored*100,evidence.value);
+   return {value:stored,issue:scaled&&yes(record[network])&&!yes(record.noNetwork)?
+    suggestion('Diferença de escala de 100 vezes, confirmada pela unidade da origem.'):
+    issue('O cadastro indica '+cm(stored)+' e a origem indica '+cm(evidence.value)+'. Confira a medição.')};
+  }
+  if(measurement?.source!=='manual-management'&&(stored>20||stored>0&&stored<.05)){
+   const candidate=stored>20?stored/100:stored*100;
+   return {value:stored,issue:issue('Valor registrado de '+cm(stored)+'. Confira se a medida correta é '+cm(candidate)+' antes de ajustar a unidade.')};
+  }
+  return {value:stored};
+ }
  function inspect(record,duplicate=false){
   const Q=root.CampoRegistrationQuality;
   const issues=new Map(Q.issues(Q.mask(record)).map(key=>[key,{key,reason:instructions[key]}]));
@@ -53,7 +102,12 @@
   else if(legacySite&&legacySite!==site)mark('treeSite','A classificação de local diverge do campo Área. '+instructions.treeSite);
   if(pos(record.height)&&Number(record.height)>60)mark('height','Altura acima de 60 m. Confira a medida e a unidade.');
   if(numeric(record.lat)&&numeric(record.lon)&&Number(record.lat)===0&&Number(record.lon)===0)mark('coordinates',instructions.coordinates);
-  const networks=['mt','bt','at'],hasNetwork=networks.some(key=>yes(record[key]));
+  for(const network of networks){
+   const {issue}=networkDistance(record,network);
+   if(issue)issues.set(issue.key,issue);
+   else if(distanceNumber(record[network+'Distance'])!==null)issues.delete(network+'Distance');
+  }
+  const hasNetwork=networks.some(key=>yes(record[key]));
   const audit=root.CampoInspectionRules.poleAudit(record);
   if(networks.some(key=>!yes(record[key])&&numeric(record[key+'Distance'])&&Number(record[key+'Distance'])>=0)||
     (yes(record.noNetwork)&&hasNetwork)||
@@ -69,6 +123,6 @@
  }
  function patch(issues){return Object.fromEntries(issues.filter(issue=>issue.change).map(({change})=>[change.field,change.value]));}
  function guidance(issues){return Array.from(new Set(issues.map(issue=>instructions[issue.key]).filter(Boolean))).join(' ');}
- root.CampoSuggestionRules={labels,inspect,patch,guidance,normalize};
+ root.CampoSuggestionRules={labels,inspect,patch,guidance,normalize,networkDistance};
  if(typeof module!=='undefined')module.exports=root.CampoSuggestionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);

@@ -8,9 +8,9 @@ function suggestionDate(record){
 const suggestionCoord=record=>correctionHasCoordinates(record)&&(Number(record.lat)!==0||Number(record.lon)!==0);
 const suggestionKind=record=>record.id.startsWith('vera-')?'vera':'campo';
 const suggestionVersion=record=>Number(record.sharedVersion)||0;
-const suggestionFields=['dap','circ','treeSite','area','species','grouped'];
+const suggestionFields=['dap','circ','treeSite','area','species','grouped','btDistance','mtDistance','atDistance','bt','mt','at','noNetwork'];
 function suggestionToken(record,generation=''){
- return JSON.stringify([generation,...suggestionFields.map(key=>String(record[key]??'')),record.updatedAt||'']);
+ return JSON.stringify([generation,...suggestionFields.map(key=>String(record[key]??'')),record.updatedAt||'',...['bt','mt','at'].map(network=>CampoSuggestionRules.networkDistance(record,network))]);
 }
 async function suggestionVera(db,ids=null){
  if(ids&&!ids.length)return {records:[],available:true};
@@ -50,27 +50,29 @@ function suggestionPhotoPaths(record){
 }
 async function suggestionList(request,env,db){
  const p=new URL(request.url).searchParams,filters=controlFilters(p),S=CampoSuggestionRules,issue=p.getAll('issue'),status=p.get('status')||'any',source=p.get('source')||'',from=p.get('from')||'',to=p.get('to')||'',page=Number(p.get('page')||0);
- if(!['any','review','apply','clean','photos','returned'].includes(status)||!['','vera','campo'].includes(source)||
+ if(!['any','review','apply','clean','photos','returned','distances'].includes(status)||!['','vera','campo'].includes(source)||
   issue.some(key=>!Object.hasOwn(S.labels,key))||[from,to].some(day=>day&&!/^\d{4}-\d{2}-\d{2}$/.test(day))||
   (from&&to&&from>to)||!Number.isSafeInteger(page)||page<0)throw sharedError('Filtro de sugestões inválido.');
  const [data,tasks,operators]=await Promise.all([suggestionUniverse(env,db),correctionStatuses(db),correctionOperators(db)]);
  const responsible=correctionOperatorIndex(operators),records=data.records.filter(suggestionYes);
  const duplicates=suggestionDuplicates(records);
- const counts={review:0,apply:0,clean:0,photos:0,returned:0};
+ const counts={review:0,apply:0,clean:0,photos:0,returned:0,distances:0};
  const names=new Set(),feeders=new Set(),result=[];
  for(const record of records){
   const name=controlInspector(record),day=suggestionDate(record),origin=suggestionKind(record);
   if(name)names.add(name);
   if(record.feeder)feeders.add(record.feeder);
   if((source&&origin!==source)||(from&&day<from)||(to&&(!day||day>to))||!controlMatches(record,filters))continue;
-  const issues=S.inspect(record,duplicates.has(record.id)),photos=suggestionPhotoPaths(record),coordinates=suggestionCoord(record)?[Number(record.lat),Number(record.lon)]:null;
+  const detected=S.inspect(record,duplicates.has(record.id));
+  const issues=status==='distances'?detected.filter(a=>a.distance):detected;
+  const photos=suggestionPhotoPaths(record),coordinates=suggestionCoord(record)?[Number(record.lat),Number(record.lon)]:null;
   const task=tasks.get(record.id),pending=task?.status==='pending',editable=Boolean(coordinates&&!pending);
-  const scopes={review:issues.some(a=>!a.change),apply:editable&&issues.some(a=>a.change),clean:!issues.length,photos:photos.length>0,returned:pending};
+  const scopes={review:issues.some(a=>!a.change),apply:editable&&issues.some(a=>a.change),clean:!issues.length,photos:photos.length>0,returned:pending,distances:issues.some(a=>a.distance)};
   if(issue.length&&!issues.some(a=>issue.includes(a.key)))continue;
   for(const key of Object.keys(counts))if(scopes[key])counts[key]++;
   if(status!=='any'&&!scopes[status])continue;
   const base={id:record.id,version:suggestionVersion(record),token:suggestionToken(record,record.suggestionGeneration),assignee:responsible(record)?.id||null,
-   canDispatch:Boolean(coordinates&&!pending),editable,canApply:scopes.apply,hasPhoto:scopes.photos,hasIssues:Boolean(issues.length),species:record.species||''};
+   canDispatch:Boolean(coordinates&&!pending),editable,canApply:scopes.apply,distanceAdjustable:editable&&issues.some(issue=>issue.distance&&issue.change),hasPhoto:scopes.photos,hasIssues:Boolean(issues.length),species:record.species||''};
   result.push({base,record,day,origin,issues,photos,coordinates,task});
  }
  const total=result.length,pages=Math.max(1,Math.ceil(total/suggestionPageSize)),current=Math.min(pages-1,page);
@@ -83,8 +85,8 @@ async function suggestionList(request,env,db){
  return json({...response,items,operators:operators.map(({id,name})=>({id,name})),options:{inspectors:[...names].sort(),feeders:[...feeders].sort()}});
 }
 async function suggestionApply(request,env,db){
- const {items}=await sharedBody(request,22000);
- if(!Array.isArray(items)||!items.length||items.length>suggestionBatchSize||new Set(items.map(item=>item?.id)).size!==items.length||
+ const {items,distancesOnly=false}=await sharedBody(request,48000);
+ if(typeof distancesOnly!=='boolean'||!Array.isArray(items)||!items.length||items.length>suggestionBatchSize||new Set(items.map(item=>item?.id)).size!==items.length||
   items.some(item=>!sharedId(item?.id)||!sharedId(item.operationId)||!Number.isSafeInteger(item.version)||item.version<0||
    typeof item.token!=='string'||item.token.length>6500||item.species!==undefined&&(typeof item.species!=='string'||!item.species.trim()||item.species.length>160)))
   throw sharedError('Envie até cinco sugestões válidas por lote.');
@@ -99,8 +101,9 @@ async function suggestionApply(request,env,db){
    const generation=part.baseline&&!part.archive?part.baseline.generation:'';
    if(part.version!==item.version||suggestionToken(record,generation)!==item.token)
     throw sharedError('O cadastro ou a evidência de origem mudou. Atualize e confira a sugestão.',409);
-   const values=CampoSuggestionRules.patch(CampoSuggestionRules.inspect(record));
-   if(item.species!==undefined)values.species=item.species.trim();
+   const issues=CampoSuggestionRules.inspect(record);
+   const values=CampoSuggestionRules.patch(distancesOnly?issues.filter(issue=>issue.distance):issues);
+   if(!distancesOnly&&item.species!==undefined)values.species=item.species.trim();
    if(!Object.keys(values).length){results.push({id:item.id,status:'unchanged'});continue;}
    // The regular administrative editor still verifies version, preserves photos and writes the history.
    const body={id:item.id,operationId:item.operationId,version:part.version,baselineToken:part.baseline?.generation||null,values};

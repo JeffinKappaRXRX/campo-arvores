@@ -43,7 +43,49 @@ function controlCsvCell(value){let text=value===null||value===undefined?'':Strin
 function controlPhotoName(r){return controlPhotos(r).map(p=>p.name||p.id||p.assetId).filter(Boolean).join(' | ');}
 function controlPhotoLink(r){const value=r.folderUrl||r.photoReference||r.googleReceipt?.folderUrl||'';try{const url=new URL(value);return url.protocol==='https:'?url.href:'';}catch{return '';}}
 function controlCsvNumber(value){return value===null||value===undefined||value===''?'':Number.isFinite(Number(value))?Number(value):value;}
-function controlExportCsv(rows,extras=false){const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'],values=r=>[r.externalId||r.id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,r.pole,controlCsvNumber(r.btDistance),controlCsvNumber(r.mtDistance),controlCsvNumber(r.atDistance),controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');const all=rows.map(r=>extras?[...values(r),r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r)]:values(r));return '\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';}
+function controlExportCsv(rows,{extras=false,idMode='original',unit='m'}={}){
+ const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
+ if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
+ const counts={missing:0,review:0,adjustable:0};
+ const all=rows.map(r=>{
+  const pole=r.pole??'';
+  const id=idMode==='pole'?pole:idMode==='empty'?'':r.externalId||r.id;
+  const distances=['bt','mt','at'].map(network=>{
+   const {value,issue}=CampoSuggestionRules.networkDistance(r,network);
+   if(issue){
+    if(value===null)counts.missing++;
+    if(issue.change)counts.adjustable++;
+    else counts.review++;
+   }
+   return value===null?'':unit==='cm'?Number((value*100).toPrecision(12)):value;
+  });
+  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,pole,...distances,controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
+  if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r));
+  return values;
+ });
+ const csv='\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';
+ return {csv,counts};
+}
+async function controlExport(env,params){
+ const from=params.get('from')||'',to=params.get('to')||'',extras=params.get('extras')==='1';
+ const idMode=params.get('idMode')??'original',unit=params.get('distanceUnit')??'m',filters=controlFilters(params);
+ if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
+  throw sharedError('Período inválido.');
+ if(!['original','pole','empty'].includes(idMode)||!['m','cm'].includes(unit))throw sharedError('Opção de exportação inválida.');
+ const data=await controlUniverse(env);
+ const rows=data.records.filter(r=>{
+  if(!controlMatches(r,filters))return false;
+  const day=controlDay(r.createdAt);
+  return (!from||day>=from)&&(!to||day<=to);
+ }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
+ const {csv,counts}=controlExportCsv(rows,{extras,idMode,unit});
+ return new Response(csv,{headers:{
+  'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"',
+  'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length),
+  'X-Campo-Distance-Review':String(counts.review),'X-Campo-Distance-Adjustable':String(counts.adjustable),
+  'X-Campo-Distance-Missing':String(counts.missing),'X-Campo-Archive-Available':data.archive.available?'1':'0'
+ }});
+}
 async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
  if(new URL(request.url).pathname==='/api/control/edit')return await controlEditAPI(request,env,await adminDb(env));
@@ -55,7 +97,7 @@ async function controlAPI(request,env){try{
  if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
  if(p==='/api/control/quality')return await controlQuality(request,env,db);
  if(p==='/api/control/span-quality')return await adminSpanChecks(env,db,await controlUniverse(env),u.searchParams);
- if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
+ if(p==='/api/control/export')return await controlExport(env,u.searchParams);
  if(p==='/api/control/map'){const data=await (u.searchParams.get('archive')==='1'?controlUniverse(env):controlLiveUniverse(env)),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
  let data=p==='/api/control/tree'?await controlLiveUniverse(env):await controlUniverse(env,u.searchParams.get('refresh')==='1');

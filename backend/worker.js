@@ -177,6 +177,55 @@ const ASSETS={};
  const yes=value=>value===true||normalize(value)==='sim';
  const declaredSite=value=>({'publico':'publico','publica':'publico','area publica':'publico','privado':'privado','privada':'privado','area privada':'privado'})[normalize(value)]||'';
  const round=value=>Math.round(value*10)/10;
+ const networks=['mt','bt','at'];
+ const hasValue=value=>(typeof value==='number'||typeof value==='string')&&String(value).trim()!=='';
+ function distanceNumber(value){
+  if(!hasValue(value)||!/^(?:[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:e[+-]?\d+)?)$/i.test(String(value).trim()))return null;
+  const number=Number(String(value).trim().replace(',','.'));
+  return Number.isFinite(number)&&number>=0?number:null;
+ }
+ const sameDistance=(a,b)=>Math.abs(a-b)<=Math.max(Math.abs(a),Math.abs(b))*1e-9;
+ const cm=value=>Number((value*100).toPrecision(12)).toLocaleString('pt-BR',{maximumFractionDigits:6})+' cm';
+ function networkDistance(record,network){
+  const field=network+'Distance',upper=network.toUpperCase(),raw=record[field],stored=distanceNumber(raw);
+  const measurement=record.measurements?.networkDistances?.[network];
+  const cleared=measurement?.source==='manual-management'&&!hasValue(raw)&&measurement.value===null;
+  const sources=[];
+  function add(raw,unit,source){
+   const number=distanceNumber(raw);
+   if(number!==null)sources.push({value:unit==='cm'?Number((number/100).toPrecision(12)):number,source});
+  }
+  if(!cleared&&['m','cm'].includes(measurement?.unit))add(measurement.value,measurement.unit,'metadados da medição');
+  if(!cleared&&['m','cm'].includes(measurement?.inputUnit))add(measurement.inputValue,measurement.inputUnit,'unidade de entrada registrada');
+  if(measurement?.source!=='manual-management'){
+   add(record['dist'+upper],'m','base VERA (m)');
+   add(record['Dist. '+upper+' (m)'],'m','coluna histórica em metros');
+   const historical=Object.keys(record).find(key=>normalize(key).replace(/^\d+\s*\.\s*/,'')==='distancia '+network+' (metros)');
+   if(historical)add(record[historical],'m','formulário antigo (m)');
+  }
+  const evidence=sources[0];
+  const issue=(reason,change)=>({key:field,distance:true,reason,...(change&&{change})});
+  const suggestion=reason=>issue(reason,{field,value:evidence.value,previous:stored,source:evidence.source});
+  if(evidence&&sources.some(source=>!sameDistance(source.value,evidence.value)))return {value:stored,issue:issue('As fontes da medição divergem. Confira o valor e a unidade no levantamento original.')};
+  if(stored===null){
+   if(evidence&&!yes(record.noNetwork)&&(yes(record[network])||record[network]==null||missing(record[network])))
+    return {value:evidence.value,issue:suggestion('A distância está disponível na origem com unidade identificada.')};
+   if(evidence)return {value:null,issue:issue('A origem traz '+cm(evidence.value)+', mas o cadastro indica ausência da rede. Confira em campo.')};
+   if(yes(record[network])||hasValue(raw))return {value:null,issue:issue(hasValue(raw)?'Distância inválida. Confira o valor na origem.':instructions[field])};
+   return {value:null};
+  }
+  if(evidence&&!sameDistance(stored,evidence.value)){
+   const scaled=sameDistance(stored/100,evidence.value)||sameDistance(stored*100,evidence.value);
+   return {value:stored,issue:scaled&&yes(record[network])&&!yes(record.noNetwork)?
+    suggestion('Diferença de escala de 100 vezes, confirmada pela unidade da origem.'):
+    issue('O cadastro indica '+cm(stored)+' e a origem indica '+cm(evidence.value)+'. Confira a medição.')};
+  }
+  if(measurement?.source!=='manual-management'&&(stored>20||stored>0&&stored<.05)){
+   const candidate=stored>20?stored/100:stored*100;
+   return {value:stored,issue:issue('Valor registrado de '+cm(stored)+'. Confira se a medida correta é '+cm(candidate)+' antes de ajustar a unidade.')};
+  }
+  return {value:stored};
+ }
  function inspect(record,duplicate=false){
   const Q=root.CampoRegistrationQuality;
   const issues=new Map(Q.issues(Q.mask(record)).map(key=>[key,{key,reason:instructions[key]}]));
@@ -193,7 +242,12 @@ const ASSETS={};
   else if(legacySite&&legacySite!==site)mark('treeSite','A classificação de local diverge do campo Área. '+instructions.treeSite);
   if(pos(record.height)&&Number(record.height)>60)mark('height','Altura acima de 60 m. Confira a medida e a unidade.');
   if(numeric(record.lat)&&numeric(record.lon)&&Number(record.lat)===0&&Number(record.lon)===0)mark('coordinates',instructions.coordinates);
-  const networks=['mt','bt','at'],hasNetwork=networks.some(key=>yes(record[key]));
+  for(const network of networks){
+   const {issue}=networkDistance(record,network);
+   if(issue)issues.set(issue.key,issue);
+   else if(distanceNumber(record[network+'Distance'])!==null)issues.delete(network+'Distance');
+  }
+  const hasNetwork=networks.some(key=>yes(record[key]));
   const audit=root.CampoInspectionRules.poleAudit(record);
   if(networks.some(key=>!yes(record[key])&&numeric(record[key+'Distance'])&&Number(record[key+'Distance'])>=0)||
     (yes(record.noNetwork)&&hasNetwork)||
@@ -209,7 +263,7 @@ const ASSETS={};
  }
  function patch(issues){return Object.fromEntries(issues.filter(issue=>issue.change).map(({change})=>[change.field,change.value]));}
  function guidance(issues){return Array.from(new Set(issues.map(issue=>instructions[issue.key]).filter(Boolean))).join(' ');}
- root.CampoSuggestionRules={labels,inspect,patch,guidance,normalize};
+ root.CampoSuggestionRules={labels,inspect,patch,guidance,normalize,networkDistance};
  if(typeof module!=='undefined')module.exports=root.CampoSuggestionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
@@ -1656,7 +1710,49 @@ function controlCsvCell(value){let text=value===null||value===undefined?'':Strin
 function controlPhotoName(r){return controlPhotos(r).map(p=>p.name||p.id||p.assetId).filter(Boolean).join(' | ');}
 function controlPhotoLink(r){const value=r.folderUrl||r.photoReference||r.googleReceipt?.folderUrl||'';try{const url=new URL(value);return url.protocol==='https:'?url.href:'';}catch{return '';}}
 function controlCsvNumber(value){return value===null||value===undefined||value===''?'':Number.isFinite(Number(value))?Number(value):value;}
-function controlExportCsv(rows,extras=false){const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'],values=r=>[r.externalId||r.id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,r.pole,controlCsvNumber(r.btDistance),controlCsvNumber(r.mtDistance),controlCsvNumber(r.atDistance),controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');const all=rows.map(r=>extras?[...values(r),r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r)]:values(r));return '\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';}
+function controlExportCsv(rows,{extras=false,idMode='original',unit='m'}={}){
+ const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
+ if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
+ const counts={missing:0,review:0,adjustable:0};
+ const all=rows.map(r=>{
+  const pole=r.pole??'';
+  const id=idMode==='pole'?pole:idMode==='empty'?'':r.externalId||r.id;
+  const distances=['bt','mt','at'].map(network=>{
+   const {value,issue}=CampoSuggestionRules.networkDistance(r,network);
+   if(issue){
+    if(value===null)counts.missing++;
+    if(issue.change)counts.adjustable++;
+    else counts.review++;
+   }
+   return value===null?'':unit==='cm'?Number((value*100).toPrecision(12)):value;
+  });
+  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,pole,...distances,controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
+  if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r));
+  return values;
+ });
+ const csv='\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';
+ return {csv,counts};
+}
+async function controlExport(env,params){
+ const from=params.get('from')||'',to=params.get('to')||'',extras=params.get('extras')==='1';
+ const idMode=params.get('idMode')??'original',unit=params.get('distanceUnit')??'m',filters=controlFilters(params);
+ if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
+  throw sharedError('Período inválido.');
+ if(!['original','pole','empty'].includes(idMode)||!['m','cm'].includes(unit))throw sharedError('Opção de exportação inválida.');
+ const data=await controlUniverse(env);
+ const rows=data.records.filter(r=>{
+  if(!controlMatches(r,filters))return false;
+  const day=controlDay(r.createdAt);
+  return (!from||day>=from)&&(!to||day<=to);
+ }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
+ const {csv,counts}=controlExportCsv(rows,{extras,idMode,unit});
+ return new Response(csv,{headers:{
+  'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"',
+  'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length),
+  'X-Campo-Distance-Review':String(counts.review),'X-Campo-Distance-Adjustable':String(counts.adjustable),
+  'X-Campo-Distance-Missing':String(counts.missing),'X-Campo-Archive-Available':data.archive.available?'1':'0'
+ }});
+}
 async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
  if(new URL(request.url).pathname==='/api/control/edit')return await controlEditAPI(request,env,await adminDb(env));
@@ -1668,7 +1764,7 @@ async function controlAPI(request,env){try{
  if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
  if(p==='/api/control/quality')return await controlQuality(request,env,db);
  if(p==='/api/control/span-quality')return await adminSpanChecks(env,db,await controlUniverse(env),u.searchParams);
- if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
+ if(p==='/api/control/export')return await controlExport(env,u.searchParams);
  if(p==='/api/control/map'){const data=await (u.searchParams.get('archive')==='1'?controlUniverse(env):controlLiveUniverse(env)),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
  let data=p==='/api/control/tree'?await controlLiveUniverse(env):await controlUniverse(env,u.searchParams.get('refresh')==='1');
@@ -1719,6 +1815,13 @@ async function controlEditAPI(request,env,db,prepared=null){
  if(Object.hasOwn(body.values,'span')&&!Object.hasOwn(body.values,'spanNetwork'))delete data.spanNetwork;
  for(const k of ['sharedVersion','sharedDeleted','sharedUpdatedAt','sharedActor','deletionRequest','baselineToken','baseline'])delete data[k];
  data.updatedAt=stamp;data.lastInspector=actor;data.lastEditorUserId=env.CAMPO_USER?.id||null;data.lastEditorEmail=env.CAMPO_USER?.email||null;data.managementEdit={at:stamp,actor,fields:Object.keys(body.values)};
+ for(const network of ['bt','mt','at']){
+  const field=network+'Distance';
+  if(!Object.hasOwn(body.values,field))continue;
+  data.measurements={...data.measurements,networkDistances:{...data.measurements?.networkDistances,
+   [network]:{source:'manual-management',value:data[field]===''?null:Number(data[field]),unit:'m'}
+  }};
+ }
  if(Object.hasOwn(body.values,'height')&&Number(data.height)!==Number(part.record.height))data.heightMeasurement={method:'manual-management',confirmedAt:stamp,actor};
  // Original creation date, inspector, timing, measurements and other metadata stay intact.
  data.photos=[...(part.record.photos||[])];
@@ -1993,9 +2096,9 @@ function suggestionDate(record){
 const suggestionCoord=record=>correctionHasCoordinates(record)&&(Number(record.lat)!==0||Number(record.lon)!==0);
 const suggestionKind=record=>record.id.startsWith('vera-')?'vera':'campo';
 const suggestionVersion=record=>Number(record.sharedVersion)||0;
-const suggestionFields=['dap','circ','treeSite','area','species','grouped'];
+const suggestionFields=['dap','circ','treeSite','area','species','grouped','btDistance','mtDistance','atDistance','bt','mt','at','noNetwork'];
 function suggestionToken(record,generation=''){
- return JSON.stringify([generation,...suggestionFields.map(key=>String(record[key]??'')),record.updatedAt||'']);
+ return JSON.stringify([generation,...suggestionFields.map(key=>String(record[key]??'')),record.updatedAt||'',...['bt','mt','at'].map(network=>CampoSuggestionRules.networkDistance(record,network))]);
 }
 async function suggestionVera(db,ids=null){
  if(ids&&!ids.length)return {records:[],available:true};
@@ -2035,27 +2138,29 @@ function suggestionPhotoPaths(record){
 }
 async function suggestionList(request,env,db){
  const p=new URL(request.url).searchParams,filters=controlFilters(p),S=CampoSuggestionRules,issue=p.getAll('issue'),status=p.get('status')||'any',source=p.get('source')||'',from=p.get('from')||'',to=p.get('to')||'',page=Number(p.get('page')||0);
- if(!['any','review','apply','clean','photos','returned'].includes(status)||!['','vera','campo'].includes(source)||
+ if(!['any','review','apply','clean','photos','returned','distances'].includes(status)||!['','vera','campo'].includes(source)||
   issue.some(key=>!Object.hasOwn(S.labels,key))||[from,to].some(day=>day&&!/^\d{4}-\d{2}-\d{2}$/.test(day))||
   (from&&to&&from>to)||!Number.isSafeInteger(page)||page<0)throw sharedError('Filtro de sugestões inválido.');
  const [data,tasks,operators]=await Promise.all([suggestionUniverse(env,db),correctionStatuses(db),correctionOperators(db)]);
  const responsible=correctionOperatorIndex(operators),records=data.records.filter(suggestionYes);
  const duplicates=suggestionDuplicates(records);
- const counts={review:0,apply:0,clean:0,photos:0,returned:0};
+ const counts={review:0,apply:0,clean:0,photos:0,returned:0,distances:0};
  const names=new Set(),feeders=new Set(),result=[];
  for(const record of records){
   const name=controlInspector(record),day=suggestionDate(record),origin=suggestionKind(record);
   if(name)names.add(name);
   if(record.feeder)feeders.add(record.feeder);
   if((source&&origin!==source)||(from&&day<from)||(to&&(!day||day>to))||!controlMatches(record,filters))continue;
-  const issues=S.inspect(record,duplicates.has(record.id)),photos=suggestionPhotoPaths(record),coordinates=suggestionCoord(record)?[Number(record.lat),Number(record.lon)]:null;
+  const detected=S.inspect(record,duplicates.has(record.id));
+  const issues=status==='distances'?detected.filter(a=>a.distance):detected;
+  const photos=suggestionPhotoPaths(record),coordinates=suggestionCoord(record)?[Number(record.lat),Number(record.lon)]:null;
   const task=tasks.get(record.id),pending=task?.status==='pending',editable=Boolean(coordinates&&!pending);
-  const scopes={review:issues.some(a=>!a.change),apply:editable&&issues.some(a=>a.change),clean:!issues.length,photos:photos.length>0,returned:pending};
+  const scopes={review:issues.some(a=>!a.change),apply:editable&&issues.some(a=>a.change),clean:!issues.length,photos:photos.length>0,returned:pending,distances:issues.some(a=>a.distance)};
   if(issue.length&&!issues.some(a=>issue.includes(a.key)))continue;
   for(const key of Object.keys(counts))if(scopes[key])counts[key]++;
   if(status!=='any'&&!scopes[status])continue;
   const base={id:record.id,version:suggestionVersion(record),token:suggestionToken(record,record.suggestionGeneration),assignee:responsible(record)?.id||null,
-   canDispatch:Boolean(coordinates&&!pending),editable,canApply:scopes.apply,hasPhoto:scopes.photos,hasIssues:Boolean(issues.length),species:record.species||''};
+   canDispatch:Boolean(coordinates&&!pending),editable,canApply:scopes.apply,distanceAdjustable:editable&&issues.some(issue=>issue.distance&&issue.change),hasPhoto:scopes.photos,hasIssues:Boolean(issues.length),species:record.species||''};
   result.push({base,record,day,origin,issues,photos,coordinates,task});
  }
  const total=result.length,pages=Math.max(1,Math.ceil(total/suggestionPageSize)),current=Math.min(pages-1,page);
@@ -2068,8 +2173,8 @@ async function suggestionList(request,env,db){
  return json({...response,items,operators:operators.map(({id,name})=>({id,name})),options:{inspectors:[...names].sort(),feeders:[...feeders].sort()}});
 }
 async function suggestionApply(request,env,db){
- const {items}=await sharedBody(request,22000);
- if(!Array.isArray(items)||!items.length||items.length>suggestionBatchSize||new Set(items.map(item=>item?.id)).size!==items.length||
+ const {items,distancesOnly=false}=await sharedBody(request,48000);
+ if(typeof distancesOnly!=='boolean'||!Array.isArray(items)||!items.length||items.length>suggestionBatchSize||new Set(items.map(item=>item?.id)).size!==items.length||
   items.some(item=>!sharedId(item?.id)||!sharedId(item.operationId)||!Number.isSafeInteger(item.version)||item.version<0||
    typeof item.token!=='string'||item.token.length>6500||item.species!==undefined&&(typeof item.species!=='string'||!item.species.trim()||item.species.length>160)))
   throw sharedError('Envie até cinco sugestões válidas por lote.');
@@ -2084,8 +2189,9 @@ async function suggestionApply(request,env,db){
    const generation=part.baseline&&!part.archive?part.baseline.generation:'';
    if(part.version!==item.version||suggestionToken(record,generation)!==item.token)
     throw sharedError('O cadastro ou a evidência de origem mudou. Atualize e confira a sugestão.',409);
-   const values=CampoSuggestionRules.patch(CampoSuggestionRules.inspect(record));
-   if(item.species!==undefined)values.species=item.species.trim();
+   const issues=CampoSuggestionRules.inspect(record);
+   const values=CampoSuggestionRules.patch(distancesOnly?issues.filter(issue=>issue.distance):issues);
+   if(!distancesOnly&&item.species!==undefined)values.species=item.species.trim();
    if(!Object.keys(values).length){results.push({id:item.id,status:'unchanged'});continue;}
    // The regular administrative editor still verifies version, preserves photos and writes the history.
    const body={id:item.id,operationId:item.operationId,version:part.version,baselineToken:part.baseline?.generation||null,values};
