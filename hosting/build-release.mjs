@@ -23,6 +23,9 @@ if(assets['/gestao-cadastro.js']){
  const omitFromDesktop=['app-updates.js','user-access.js','team-presence.js','field-corrections.js','offline-auto.js','field-photo-gps.js','route-field.js'];
  let desktop=assets['/index.html'].replace('class="account-locked"','class="account-locked gestao-cadastro"')
   .replace('<script src="app.js"></script>','<script src="gestao-cadastro-app.js"></script>')
+  .replace('<div id="mapWorkspace">','<div id="mapWorkspace" hidden>')
+  .replace('<div id="map"></div><div id="googleMap" hidden=""></div>','')
+  .replace(/<p class="hint">GPS = posição do aparelho[^<]+<\/p>/, '<p id="desktopCoordinatesStatus" class="hint" role="status"></p>')
   .replace('</head>','<link rel="stylesheet" href="gestao-fotos.css"></head>')
   .replace('</body>','<script src="photo-exif-gps.js"></script><script src="gestao-cadastro.js"></script></body>');
  for(const name of omitFromDesktop)desktop=desktop.replace('<script src="'+name+'"></script>','');

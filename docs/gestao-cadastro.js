@@ -20,6 +20,37 @@
   dateHint.textContent=selected?'Data do mapeamento: '+dateFormat.format(new Date(selected.date))+' · '+selected.name:
    'Anexe uma foto com data de captura válida. Para registrar com a data de hoje, desative a opção na Gestão.';
  }
+ const coordinates=$('desktopCoordinatesStatus');
+ coordinates.after($('gpsStatus'));
+ const locationHead=$('gps').parentElement;
+ locationHead.classList.add('desktop-location');
+ const locationActions=document.createElement('div');locationActions.className='desktop-location-actions';
+ const pick=document.createElement('button');pick.type='button';pick.className='secondary';pick.textContent='Marcar no mapa';
+ locationActions.append(pick,$('gps'));locationHead.append(locationActions);
+ pick.onclick=()=>send('pick-position');
+ $('gps').textContent='Usar GPS do aparelho';
+ $('gps').onclick=async()=>{const previous=origin;await refreshGPS(true);if(origin&&origin!==previous)send('focus-position',{point:origin});};
+ updateMapPosition=function(){
+  const lat=$('lat').valueAsNumber,lon=$('lon').valueAsNumber;
+  const valid=Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180;
+  send('draft-position',{point:valid?{lat,lon}:null});
+ };
+ let reopenMeasurement=false;
+ $('distanceMapShortcut').onclick=()=>{
+  reopenMeasurement=Boolean(stream);
+  $('measurement').close();stopCamera();send('measure-on-map');
+ };
+ function returnMeasurement(data){
+  if(Number.isFinite(data.metres)&&data.metres>0){
+   $('distance').value=data.metres.toFixed(2);
+   $('distance').dispatchEvent(new Event('input',{bubbles:true}));
+   distanceMeasurement={method:'map_ruler',horizontalDistance:data.metres,points:data.points,measuredAt:new Date().toISOString(),validated:false};
+   $('distanceMethod').textContent='Distância horizontal estimada no mapa entre A e B.';calc();
+  }
+  if(!$('measurement').open)$('measurement').showModal();
+  if(reopenMeasurement)void $('startcamera').onclick();
+  reopenMeasurement=false;
+ }
  const renderExistingPhotos=renderPhotos;
  renderPhotos=function(...args){renderExistingPhotos(...args);showMappingDate();};
  const status=document.createElement('p');
@@ -99,7 +130,7 @@
    }
    if(data.point&&Number.isFinite(data.point.lat)&&Number.isFinite(data.point.lon)){
     setTreeLocation(data.point.lat,data.point.lon);
-    if(fieldMap)fieldMap.setView([data.point.lat,data.point.lon],18,{animate:false});
+    send('focus-position',{point:data.point});
    }
    photos.push(...additions);
    plantIdentification=null;
@@ -117,6 +148,15 @@
   const data=event.data;
   if(data.type==='attach')void attach(data);
   if(data.type==='photo-date'){usePhotoDate=data.enabled===true;showMappingDate();}
+  if(data.type==='management-theme')document.documentElement.dataset.theme=data.dark?'dark':'light';
+  if(data.type==='map-position'&&!formSaveBusy&&!attaching){
+   const {lat,lon}=data.point||{};
+   if(Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180){
+    setTreeLocation(lat,lon);coordinates.textContent='Coordenadas atualizadas pelo mapa.';
+   }
+  }
+  if(data.type==='map-distance')returnMeasurement(data);
+  if(data.type==='map-feedback')coordinates.textContent=data.message;
   if(data.type==='network'&&!formSaveBusy&&!attaching){
    for(const key of ['pole','span','feeder'])setField(key,data[key]);
    if(data.spanGeometry&&typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(data.spanGeometry);
@@ -138,7 +178,7 @@
   $('form').querySelector('button[type=submit]').textContent='Salvar e sincronizar';
   $('form').querySelectorAll('[data-after-save]').forEach(button=>button.hidden=true);
   document.documentElement.classList.remove('account-locked');
-  await initGeo();
+  // Spatial selection is handled by the parent management map.
   renderPlantResult();
   void checkPlantServer();
   renderCompletion();
@@ -164,6 +204,27 @@
    await checkpointDraft();
   }};
   send('ready');
+  drawPin();
+  const main=document.querySelector('main');
+  function fitFrame(){send('form-height',{height:Math.ceil(main.getBoundingClientRect().height)+8});}
+  if(typeof ResizeObserver==='function')new ResizeObserver(fitFrame).observe(main);
+  window.addEventListener('resize',fitFrame);fitFrame();
+  function fitDialog(){
+   if(!document.querySelector('dialog[open]')||!window.frameElement)return;
+   const rect=window.frameElement.getBoundingClientRect(),height=parent.innerHeight;
+   const top=Math.max(0,-rect.top),visible=Math.max(0,Math.min(rect.height-top,height-Math.max(0,rect.top)));
+   document.documentElement.style.setProperty('--desktop-dialog-top',(top+12)+'px');
+   document.documentElement.style.setProperty('--desktop-dialog-height',Math.max(220,visible-24)+'px');
+  }
+  const dialogObserver=new MutationObserver(()=>{
+   if(!document.querySelector('dialog[open]'))return;
+   window.frameElement?.scrollIntoView({block:'start',behavior:'instant'});
+   fitDialog();
+  });
+  for(const dialog of document.querySelectorAll('dialog'))dialogObserver.observe(dialog,{attributes:true,attributeFilter:['open']});
+  parent.addEventListener('scroll',fitDialog,{capture:true,passive:true});
+  parent.addEventListener('resize',fitDialog);
+  window.addEventListener('pagehide',()=>{parent.removeEventListener('scroll',fitDialog,true);parent.removeEventListener('resize',fitDialog);});
   void publish();
   archiveInBackground();
  }

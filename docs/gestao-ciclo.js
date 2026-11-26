@@ -58,7 +58,7 @@
  <label>Situação<select name="state"></select></label><label>Chave<select name="chave"></select></label><label>Buscar poste, árvore ou chave<input name="query" type="search" autocomplete="off"></label>
  <label><span><input name="scheduled" type="checkbox"> Só previstos nas janelas</span></label><button type="reset">Limpar filtros</button></form>
  <p id="cycleFilterCount" class="small" role="status"></p><div id="cycleMetrics" class="cycle-metrics"></div>`;
- const mapPanel=$('mapa');mapPanel.parentElement.classList.add('cycle-map-row');mapPanel.parentElement.before(section);
+ const mapPanel=$('mapa'),mapRow=mapPanel.closest('.overview-grid');mapRow.classList.add('cycle-map-row');mapRow.before(section);
  const tools=document.createElement('div');tools.id='cycleMapTools';tools.hidden=true;tools.innerHTML=`
  <button id="cycleFit" type="button">Enquadrar serviços</button><div class="cycle-map-legend">`+
  Object.entries(labels).map(([id,label])=>'<label><input type="checkbox" data-cycle-layer="'+id+'" checked>'+icon(id)+esc(label)+'</label>').join('')+

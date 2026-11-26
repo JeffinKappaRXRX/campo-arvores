@@ -13,6 +13,7 @@ const backgrounds=controller({},{
  }
 });
 const load=(layer,event,count)=>{for(let i=0;i<count;i++)layer.events[event]();};
+(async()=>{
 backgrounds.select();
 assert.match(layers[0].url,/google\.com/);
 load(layers[0],'tileerror',1);
@@ -22,6 +23,8 @@ assert.equal(layers.length,1,'a partial tile failure does not change the backgro
 layers[0].events.loading();
 load(layers[0],'tileerror',5);
 layers[0].events.load();
+assert.equal(layers.length,1,'tile event finishes before the active layer can be removed');
+await Promise.resolve();
 assert.equal(choice,'hybrid','fallback preserves the chosen map');
 assert.match(layers[1].url,/arcgisonline/);
 assert(!layers[0].removed,'previous tiles stay on screen during recovery');
@@ -39,3 +42,4 @@ assert.equal(status,'');
 choice='local';backgrounds.select();
 assert(layers[2].removed);
 console.log('PASS management basemap: partial failure tolerance, fallback retains map selection, reconnect restores hybrid, explicit local mode.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

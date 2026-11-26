@@ -41,7 +41,8 @@
    candidate.on('load',()=>{
     if(!watching())return;
     if(ok&&ok>=failed)accepted();
-    else if(failed)unavailable();
+    // Leaflet still accesses the candidate map after emitting load.
+    else if(failed)queueMicrotask(unavailable);
    });
    deadline=setTimeout(()=>{if(ok)accepted();else unavailable();},8500);
    candidate.addTo(map);

@@ -69,11 +69,13 @@
   button.disabled=true;
   button.onclick=()=>{
    if(!allowed()){notify('Conclua a seleção em andamento no mapa antes de usar esta ferramenta.');return;}
+   if(window.CampoGestaoCadastroMapa?.active())window.CampoGestaoCadastroMapa.cancel();
    setMode(mode===type?null:type);
    notify(!mode?'':type==='pin'?'Clique no mapa ou arraste o alfinete até o ponto.':'Arraste o boneco até a rua ou clique no local desejado.');
   };
   button.addEventListener('pointerdown',event=>{
    if(event.button!==0||!allowed())return;
+   if(window.CampoGestaoCadastroMapa?.active())window.CampoGestaoCadastroMapa.cancel();
    drag={button,type,id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
    button.setPointerCapture?.(event.pointerId);
   });
@@ -116,6 +118,6 @@
  window.addEventListener('campo-control-logout',()=>{
   setMode(null);notify('');drag=null;ghost.hidden=true;marker?.remove();viewpoint?.remove();marker=viewpoint=null;
  });
- window.CampoGestaoLocalizar={attachMap};
+ window.CampoGestaoLocalizar={attachMap,cancelPicking(){drag=null;ghost.hidden=true;setMode(null);notify('');}};
  window.CampoControlMap?.onAvailable?.(attachMap);
 })();

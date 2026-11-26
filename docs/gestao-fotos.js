@@ -11,6 +11,7 @@
  let map,layer,worker,scan=0,scanning=false,items=[],keys=new Set(),checked=new Set(),cluster=[],photo=null,page=0,bounds=null,plotted=0,processed=0;
  let previewUrl=null,frame=null,frameReady=false,queued=null,request=0,drawJob=0;
  const readyButtons=()=>{
+  $('desktopMapPick').disabled=!frameReady;
   $('desktopFitPhotos').disabled=!bounds;
   $('desktopClearPhotos').disabled=!items.length;
   $('desktopPrimaryPhoto').disabled=!$('desktopCollect').checked||!frameReady||!photo?.point||Boolean(queued);
@@ -87,7 +88,7 @@
      name.textContent=count>1?count+' fotos nesta área · '+photoName(group[0]):photoName(group[0]);
      img.className='desktop-photo-popup-image';img.alt='Prévia da foto';img.src=previewUrl;img.onerror=()=>{img.hidden=true;};
      open.type='button';open.textContent=count>1?'Ver fotos deste grupo':'Abrir foto e ações';
-     open.onclick=()=>{map.closePopup();if(!$('mapExit').hidden)$('mapExit').click();$('desktopPhotoPreview').scrollIntoView({block:'center'});};
+     open.onclick=()=>{map.closePopup();$('desktopPhotoPreview').scrollIntoView({block:'center'});};
      summary.append(name,img,open);
      L.popup({maxWidth:300}).setLatLng([point.lat,point.lon]).setContent(summary).openOn(map);
     }).addTo(layer);
@@ -166,7 +167,7 @@
   if(!frame){
    frame=document.createElement('iframe');
    frame.title='Formulário de inspeção de árvores na gestão';
-   frame.allow='camera; geolocation; fullscreen';
+   frame.allow='camera; geolocation';
    frame.src='/gestao-cadastro.html';
    $('desktopFormHost').append(frame);
    $('desktopFormStatus').textContent='Abrindo o formulário de inspeção…';
@@ -175,7 +176,7 @@
  }
  function towardForm(){if(frame)$('desktopFormPanel').scrollIntoView({block:'start'});}
  function send(data){
-  if(!allowed()||!frameReady||!$('desktopCollect').checked)return false;
+  if(!allowed()||!frameReady||!collect.checked)return false;
   frame.contentWindow.postMessage({source:'arbora-gestao-fotos',...data},location.origin);
   return true;
  }
@@ -204,27 +205,31 @@
    }
   };detail.append(button);
  }
- $('desktopPhotosOnMap').onclick=()=>{if(!$('mapExit').hidden)$('mapExit').click();root.scrollIntoView({block:'start'});};
+ $('desktopPhotosOnMap').onclick=()=>root.scrollIntoView({block:'start'});
  $('desktopFolder').onclick=()=>$('desktopFolderInput').click();
  $('desktopFiles').onclick=()=>$('desktopFilesInput').click();
  for(const id of ['desktopFolderInput','desktopFilesInput'])$(id).onchange=()=>{const input=$(id);addFiles(input.files);input.value='';};
  $('desktopFitPhotos').onclick=fit;$('desktopClearPhotos').onclick=clear;
  function mode(){
   root.hidden=!collect.checked;
+  $('managementMapWorkspace').classList.toggle('is-collecting',collect.checked);
+  window.CampoGestaoCadastroMapa?.setEnabled(collect.checked);
+  requestAnimationFrame(()=>window.CampoControlMap?.resize?.());
   mapButton.hidden=!collect.checked;
   if(!collect.checked)map?.closePopup();
   loadForm();
-  configurePhotoDate();
+  configurePhotoDate();syncTheme();
   readyButtons();
   scheduleDraw();
  }
- collect.onchange=mode;
+ collect.onchange=()=>{mode();if(collect.checked)$('mapa').scrollIntoView({block:'start'});};
+ function syncTheme(){send({type:'management-theme',dark:document.documentElement.classList.contains('dark')});}
+ new MutationObserver(syncTheme).observe(document.documentElement,{attributes:true,attributeFilter:['class']});
  function configurePhotoDate(){send({type:'photo-date',enabled:usePhotoDate.checked});}
  usePhotoDate.onchange=()=>{
   try{localStorage.setItem(datePreference,usePhotoDate.checked?'1':'0');}catch{/* Applies to this session. */}
   configurePhotoDate();
  };
- $('desktopGoToForm').onclick=towardForm;
  filter.onchange=()=>{page=0;render();};
  $('desktopPhotoPrevious').onclick=()=>{page--;render();};$('desktopPhotoNext').onclick=()=>{page++;render();};
  $('desktopLocatePhoto').onclick=()=>{if(!map||!photo?.point)return;map.setView([photo.point.lat,photo.point.lon],18);$('mapFrame').scrollIntoView({block:'center'});};
@@ -234,7 +239,11 @@
  window.addEventListener('message',event=>{
   if(!allowed()||event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='arbora-gestao-cadastro')return;
   const data=event.data;
-  if(data.type==='ready'){frameReady=true;configurePhotoDate();$('desktopFormStatus').textContent='Formulário pronto. Selecione uma foto no mapa para usar a posição e anexar.';readyButtons();}
+  if(data.type==='ready'){frameReady=true;configurePhotoDate();syncTheme();$('desktopFormStatus').textContent='';readyButtons();}
+  if(data.type==='form-height'&&Number.isFinite(data.height)&&data.height>=100){
+   frame.style.height=Math.min(data.height,20000)+'px';
+  }
+  window.CampoGestaoCadastroMapa?.fromForm(data);
   if(data.type==='status')$('desktopFormStatus').textContent=data.message;
   if(data.type==='attached'&&data.request===queued?.id){
    $('desktopFormStatus').textContent=data.error||(data.count?data.count+' foto(s) anexada(s) ao formulário.':'As fotos já estavam anexadas.');
@@ -251,7 +260,7 @@
  });
  function attachMap(instance){
   if(map===instance)return;
-  map=instance;layer=L.layerGroup().addTo(map);map.on('moveend resize',scheduleDraw);scheduleDraw();
+  map=instance;window.CampoGestaoCadastroMapa?.attachMap(map);layer=L.layerGroup().addTo(map);map.on('moveend resize',scheduleDraw);scheduleDraw();
  }
  async function prepareReload(){
   if(scanning||queued||frame&&!frameReady)throw Error('Aguarde o carregamento ou anexo das fotos.');
@@ -259,6 +268,6 @@
   if(frameReady)await frame.contentWindow.CampoDesktopDraft.prepareReload();
   return true;
  }
- window.CampoGestaoFotos={attachMap,addNetworkAction,prepareReload};
+ window.CampoGestaoFotos={attachMap,addNetworkAction,prepareReload,sendToForm:send,formReady:()=>Boolean(frameReady&&collect.checked)};
  window.CampoControlMap?.onAvailable?.(attachMap);
 })();

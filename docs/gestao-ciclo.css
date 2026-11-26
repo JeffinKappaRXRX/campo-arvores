@@ -1,10 +1,9 @@
 #cycleManagement[hidden],#cycleLedger[hidden],#cycleMapTools[hidden]{display:none}
 .cycle-on #workspace>:not(#cycleManagement):not(.cycle-map-row):not(#cycleLedger),
-.cycle-on .cycle-map-row>:not(#mapa),.cycle-on #parqueToggle,.cycle-on #parqueMenu,
+.cycle-on .cycle-map-row>:not(.management-map-column),.cycle-on #parqueToggle,.cycle-on #parqueMenu,
 .cycle-on #mapa .panel-head .eyebrow,.cycle-on #mapa #networkFeeder,.cycle-on #mapa [data-filter=networkFeeder]{display:none}
 .cycle-on .cycle-map-row{grid-template-columns:minmax(0,1fr)}
 .cycle-on #mapFrame{height:clamp(360px,65vh,790px)}
-.cycle-on #mapa.map-expanded #mapFrame{height:100%}
 #cycleManagement .panel-head h2{margin:0}
 #cycleManagement .panel-head p{margin:6px 0 0}
 #cycleManagement details{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px}
@@ -33,7 +32,7 @@
 @media(max-width:690px){.cycle-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .cycle-on #workspace>#cycleSummary{display:block}
-.cycle-on #routePlanner,.cycle-on #routeKpis{display:none}
+.cycle-on #routePlanner,.cycle-on #routeKpis,.cycle-on #mapRoutesShortcut{display:none}
 #cycleSummary[hidden]{display:none}
 #cycleSummary,#cycleLedger,#cycleMetrics,#cycleMapTools{scroll-margin-top:16px}
 #cycleLedger h3,#cycleSummary h3{margin-top:0}

@@ -49,7 +49,8 @@
  <label>Inspetor<select id="routeOperator"><option value="">Todos</option></select></label><label>Recorte<input id="routeFilter" type="search" placeholder="Localidade, alimentador ou rota"></label>
  <label><span><input id="routeShowTests" type="checkbox"> Mostrar homologação</span></label><label>OS_VERA para conciliação<input id="routeSgm" type="file" accept=".csv,.txt,text/csv"></label></div><p id="routeSgmStatus" role="status">Importe o CSV da OS_VERA para comparar por chave e data de término.</p>
  <p id="routeTotals" aria-live="polite"></p><div class="route-buttons"><button type="button" id="routeShowSelected" disabled>Ver selecionadas</button><button type="button" id="routeShowAll" disabled>Ver todas as rotas</button><button type="button" id="routeClearPublished" disabled>Limpar mapa</button></div><p id="routeHistoryStatus" role="status"></p><div id="routePublished"></div></details>`;
- $('mapFrame').before(panel);
+ ($('gestaoFotos')||$('mapFrame')).after(panel);
+ $('mapRoutesShortcut')?.addEventListener('click',()=>panel.scrollIntoView({block:'start'}));
  const withdrawDialog=document.createElement('dialog');withdrawDialog.id='routeWithdrawDialog';withdrawDialog.className='route-return-dialog';
  withdrawDialog.innerHTML=`<form id="routeWithdrawForm"><div class="sectionhead"><div><span class="eyebrow">CONTROLE DA GESTÃO</span><h2>Retirar rota do inspetor</h2></div><button type="button" id="routeWithdrawClose" class="secondary">Fechar</button></div><p id="routeWithdrawSummary"></p><p><strong>Atenção:</strong> a rota sairá da carteira do inspetor na próxima sincronização. O histórico já recebido será preservado, mas uma saída ainda não sincronizada no aparelho poderá não ser aceita.</p><label>Motivo<select id="routeWithdrawReason" required><option value="">Selecione</option><option value="gestao_reatribuicao">Reatribuição ou ajuste da equipe</option><option value="gestao_correcao">Correção da rota</option><option value="gestao_homologacao">Homologação ou teste</option><option value="gestao_solicitacao">Solicitação do inspetor</option><option value="gestao_outro">Outro</option></select></label><label>Observação<textarea id="routeWithdrawNote" maxlength="480" rows="3" placeholder="Detalhe quando necessário"></textarea></label><p id="routeWithdrawFeedback" role="status"></p><button type="submit" class="primary" id="routeWithdrawConfirm">Retirar rota do inspetor</button></form>`;
  document.body.append(withdrawDialog);
@@ -57,7 +58,7 @@
  kpis.innerHTML=`<div class="panel-head"><h3>KPI de rotas por equipe e inspetor</h3></div><div class="route-grid">
  <label>De<input id="routeKpiStart" type="date"></label><label>Até<input id="routeKpiEnd" type="date"></label><label>Inspetor<select id="routeKpiOperator"><option value="">Todos</option></select></label>
  </div><div id="routeKpiTable" class="route-kpi-scroll" aria-live="polite"></div>`;
- $('mapFrame').after(kpis);
+ panel.after(kpis);
  const form=$('routePlanForm'),search=$('routeNetworkForm'),status=$('routePlannerStatus'),searchStatus=$('routeNetworkStatus');
  let draft=[],candidates=[],filterKeys=[],previewComplete=false,extent=null,filterTimer,filterRequest=0,feedersList=new Set(),historyCapacity=false,draftId=null,filteredDraft=false,job=null,publishing=false,selecting=false,snapshot={routes:[],visits:[]},sgm=null,withdrawRoute=null,withdrawing=false;
  let teamByAccount=new Map(),publishedGroups=[],selectedPublished=new Set(),shownPublished=[];
@@ -293,7 +294,8 @@
  }
  $('routePick').onclick=()=>{
   selecting=!selecting;$('routePick').setAttribute('aria-pressed',selecting);$('routePick').textContent=selecting?'Encerrar seleção':blockMode.checked?'Selecionar chaves no mapa':'Selecionar vãos no mapa';
-  status.textContent=selecting?(blockMode.checked?'Clique em um vão da rede MT para marcar ou desmarcar a chave inteira.':'Clique nos vãos da rede MT abaixo. A ordem dos cliques define a rota.'):'Seleção encerrada.';
+  status.textContent=selecting?(blockMode.checked?'Clique em um vão da rede MT para marcar ou desmarcar a chave inteira.':'Clique nos vãos da rede MT no mapa. A ordem dos cliques define a rota.'):'Seleção encerrada.';
+  if(selecting)$('mapa')?.scrollIntoView?.({block:'start'});
  };
  $('routeImport').onchange=async e=>{
   try{const f=e.target.files[0];if(!f)return;if(f.size>3000000)throw Error('Importe somente o recorte da rota.');

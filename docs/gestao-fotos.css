@@ -8,7 +8,7 @@
 .desktop-photo-row input { width:auto; }
 #desktopPhotoImage { display:block; max-width:100%; max-height:22rem; object-fit:contain; }
 #desktopPhotoImage[hidden] { display:none; }
-#desktopFormHost iframe { width:100%; height:min(80vh,65rem); min-height:30rem; border:1px solid currentColor; border-radius:10px; background:#12261f; }
+#desktopFormHost iframe { display:block; width:100%; height:30rem; border:0; }
 .desktop-photo-popup-image { display:block; width:100%; max-height:13rem; object-fit:contain; margin:.45rem 0; }
 .desktop-photo-marker { background:#5837a1; color:white; border:2px solid white; border-radius:100%; display:grid; place-items:center; font:700 12px system-ui; box-shadow:0 1px 5px #0007; }
 html.gestao-cadastro body>header,html.gestao-cadastro main>.hero,html.gestao-cadastro main>nav,html.gestao-cadastro #accountPanel { display:none!important; }
@@ -20,3 +20,35 @@ html.gestao-cadastro #desktopPublishStatus { margin-top:.5rem; }
 #gestaoFotos[hidden], #desktopPhotosOnMap[hidden], #managementUpdate[hidden] { display:none!important; }
 .desktop-collect-toggle { margin-inline-start:auto; }
 #managementUpdate:not([hidden]) { border-color:var(--green); }
+.overview-grid:has(> .is-collecting) { grid-template-columns:minmax(0,1fr); }
+.map-heading-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.map-heading-actions .desktop-collect-toggle { margin:0; }
+.is-collecting #mapFrame { height:clamp(265px,45vh,500px); }
+.desktop-cadastro-grid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); align-items:start; gap:20px; }
+#desktopFormPanel,#desktopFormHost,.desktop-photo-library { min-width:0; }
+.desktop-photo-library > h4 { margin-top:0; }
+.desktop-photo-library .desktop-photo-grid { grid-template-columns:minmax(0,1fr); }
+.desktop-map-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.desktop-map-tools p { flex:1; margin:0; }
+#desktopMapTools[hidden],#desktopMapMeasure[hidden],#desktopMapPick[hidden],#mapExit[hidden] { display:none!important; }
+.desktop-capture-active #controlMap { cursor:crosshair; }
+.desktop-draft-marker { background:#ffc64d; color:#2d210b; border:2px solid #201a12; border-radius:50%; display:grid; place-items:center; font-weight:800; box-shadow:0 1px 5px #0009; }
+#managementMapWorkspace:fullscreen,#managementMapWorkspace.map-fullscreen { width:100%; height:100dvh; background:var(--bg); overflow:auto; display:flex; flex-direction:column; overscroll-behavior:contain; }
+#managementMapWorkspace.map-fullscreen { position:fixed; inset:0; z-index:2500; }
+html.management-fullscreen-fallback { overflow:hidden; }
+#managementMapWorkspace:is(:fullscreen,.map-fullscreen) > .map-panel { margin:0; border-radius:0; display:flex; flex-direction:column; }
+#managementMapWorkspace:is(:fullscreen,.map-fullscreen):not(.is-collecting) > .map-panel { flex:1; min-height:100%; }
+#managementMapWorkspace:is(:fullscreen,.map-fullscreen):not(.is-collecting) #mapFrame { flex:1; height:auto; min-height:240px; }
+#managementMapWorkspace:is(:fullscreen,.map-fullscreen).is-collecting #mapFrame { height:clamp(265px,50dvh,660px); }
+html.gestao-cadastro #mapWorkspace,html.gestao-cadastro #adminNav { display:none!important; }
+html.gestao-cadastro main { padding:0; }
+html.gestao-cadastro #inspect { margin:0; }
+html.gestao-cadastro #inspect .sectionhead.desktop-location { flex-wrap:wrap; gap:8px; }
+html.gestao-cadastro #inspect .sectionhead.desktop-location .desktop-location-actions { display:flex; flex-wrap:wrap; gap:6px; }
+@media(max-width:900px){.desktop-cadastro-grid { grid-template-columns:minmax(0,1fr); }}
+#desktopFormStatus:empty,html.gestao-cadastro #desktopCoordinatesStatus:empty,html.gestao-cadastro #gpsStatus:empty { display:none; }
+html.gestao-cadastro { background:transparent; }
+html.gestao-cadastro[data-theme=dark] { --surface:#221d32; --surface-soft:#302845; --line:#443955; --muted:#c3b8d3; }
+html.gestao-cadastro[data-theme=dark] .context,html.gestao-cadastro[data-theme=dark] .network,html.gestao-cadastro[data-theme=dark] #gallery figure { background:var(--surface-soft); }
+html.gestao-cadastro[data-theme=dark] input,html.gestao-cadastro[data-theme=dark] select,html.gestao-cadastro[data-theme=dark] textarea { background:#1b1728;color:#ece5f7;border-color:var(--line); }
+html.gestao-cadastro dialog[open],html.gestao-cadastro #measurement[open] { position:fixed; inset:var(--desktop-dialog-top,12px) 0 auto; margin:0 auto; max-height:var(--desktop-dialog-height,92vh); overflow:auto; }

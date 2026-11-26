@@ -131,7 +131,37 @@
  };
  $('mapLabels').onchange=()=>{if(visibleNetwork.length)drawNetwork({type:'FeatureCollection',features:visibleNetwork});};$('mapGPS').onclick=()=>{if(!navigator.geolocation){status('GPS indisponível neste navegador.');return;}navigator.geolocation.getCurrentPosition(p=>locate({lat:p.coords.latitude,lon:p.coords.longitude,species:'Minha posição · ±'+Math.round(p.coords.accuracy)+' m'}),e=>status(e.message),{enableHighAccuracy:true,timeout:20000,maximumAge:0});};
  const popovers=[['mapMenuToggle','mapMenu'],['parqueToggle','parqueMenu'],['mapSearchToggle','mapSearch']];for(const [button,panel]of popovers)$(button).onclick=()=>{const open=$(panel).hidden;for(const [b,p]of popovers){$(p).hidden=true;$(b).setAttribute('aria-expanded','false');}$(panel).hidden=!open;$(button).setAttribute('aria-expanded',String(open));if(panel==='mapSearch'&&open)$('mapQuery').focus();};$('attrLayer').onchange=attrColumns;$('networkFeeder').onchange=networkView;$('networkScale').onchange=networkView;$('attrApply').onclick=()=>{const layer=$('attrLayer').value,text=$('attrValue').value.trim();if(!layer||!text){status('Escolha a camada e o valor do filtro.');return;}attribute={layer,column:$('attrColumn').value,text};layerVisibility[layer]=true;paintLayers();networkView();};$('attrClear').onclick=()=>{attribute=null;$('attrValue').value='';networkView();};
- function expand(on){$('mapa').classList.toggle('map-expanded',on);$('mapExit').hidden=!on;$('mapExpand').textContent=on?'↙':'⛶';setTimeout(()=>map?.invalidateSize(),0);}$('mapExpand').onclick=()=>expand(!$('mapa').classList.contains('map-expanded'));$('mapExit').onclick=()=>expand(false);document.addEventListener('keydown',e=>{if(e.key==='Escape')expand(false);});
+ const workspace=$('managementMapWorkspace');
+ let fullscreenPending=false;
+ const isFullscreen=()=>document.fullscreenElement===workspace||workspace.classList.contains('map-fullscreen');
+ function paintFullscreen(){
+  const active=isFullscreen();
+  $('mapExit').hidden=!active;
+  $('mapExpand').textContent=active?'Sair da tela inteira':'⛶ Tela inteira';
+  $('mapExpand').setAttribute('aria-pressed',String(active));
+  setTimeout(()=>map?.invalidateSize(),0);
+ }
+ async function fullscreen(on){
+  if(fullscreenPending)return;
+  fullscreenPending=true;
+  try{
+   if(on){
+    if(typeof workspace.requestFullscreen==='function'){
+     try{await workspace.requestFullscreen();return;}catch{/* Use the viewport if fullscreen is blocked. */}
+    }
+    workspace.classList.add('map-fullscreen');
+    document.documentElement.classList.add('management-fullscreen-fallback');
+   }else{
+    workspace.classList.remove('map-fullscreen');
+    document.documentElement.classList.remove('management-fullscreen-fallback');
+    if(document.fullscreenElement===workspace)await document.exitFullscreen();
+   }
+  }finally{fullscreenPending=false;paintFullscreen();}
+ }
+ $('mapExpand').onclick=()=>void fullscreen(!isFullscreen());
+ $('mapExit').onclick=()=>void fullscreen(false);
+ document.addEventListener('fullscreenchange',paintFullscreen);
+ document.addEventListener('keydown',event=>{if(event.key==='Escape'&&workspace.classList.contains('map-fullscreen')&&!document.querySelector('dialog[open]')&&!window.CampoGestaoCadastroMapa?.active())void fullscreen(false);});
  $('reuseNetwork').onclick=()=>void reuse();$('downloadNetwork').onclick=()=>void download();$('networkFile').onchange=async e=>{const file=e.target.files?.[0];if(!file||!allowed()||importing)return;ensureWorker();importing=true;buttons(true);const bytes=new Uint8Array(await file.slice(0,16).arrayBuffer());if(bytes[0]===80&&bytes[1]===75){worker.postMessage({action:'zip-list',file});const prior=worker.onmessage;worker.onmessage=event=>{if(event.data.action==='zip-list'){worker.onmessage=prior;if(event.data.entries.length!==1){status('Este ZIP contém várias bases. Selecione o GPKG desejado diretamente.');release();return;}worker.postMessage({action:'open-zip',index:0});}else void prior(event);};}else worker.postMessage({action:'inspect-file',file});e.target.value='';};$('searchLayer').onchange=searchColumns;$('mapSearchForm').onsubmit=search;
  window.addEventListener('resize',()=>{if(map&&allowed())setTimeout(()=>{map.invalidateSize();networkView();},100);});
  document.addEventListener('visibilitychange',()=>{if(document.hidden&&worker&&ready){ready=false;worker.postMessage({action:'pause'});}else if(!document.hidden&&paused&&allowed())void reuse();});window.addEventListener('pagehide',release);
@@ -147,7 +177,7 @@
   if(!on)syncTreeVisibility();
   lastNetworkQuery='';centralSignature='';setTimeout(()=>{map.invalidateSize();networkView();},0);
  }
- function stop(){outletPicker=null;routeDrawnFeatures=[];routePreviewFeatures=[];if(map)map.getContainer().style.cursor='';window.CampoCycle?.stop();stopCentral();window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
+ function stop(){if(isFullscreen())void fullscreen(false);outletPicker=null;routeDrawnFeatures=[];routePreviewFeatures=[];if(map)map.getContainer().style.cursor='';window.CampoCycle?.stop();stopCentral();window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
  function unifiedNetwork(bounds,zoom,feeders){
   if(!allowed()||!ready||!worker)return Promise.reject(Error('Rede local ainda não disponível. Use a opção de instalar ou atualizar a rede.'));
   const visibleLayers=Object.keys(layerVisibility).filter(k=>layerVisibility[k]&&(!$("networkScale").checked||window.CampoGestaoLayers.inScale(k,zoom)));
@@ -273,5 +303,5 @@
  function routeOverlay(spans,covered,focus,buffer=0,outlet=null){
   routeOverlayGroups([{spans,covered,buffer,outlet}],focus);
  }
- window.CampoControlMap={onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
+ window.CampoControlMap={resize:()=>map?.invalidateSize(),onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
 })();
