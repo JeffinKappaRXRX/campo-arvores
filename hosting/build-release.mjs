@@ -28,10 +28,14 @@ if(assets['/gestao-cadastro.js']){
  for(const name of omitFromDesktop)desktop=desktop.replace('<script src="'+name+'"></script>','');
  assets['/gestao-cadastro.html']=versionLinks(desktop);
 }
+if(assets['/gestao.html']){
+ assets['/gestao-release.json']=JSON.stringify({build});
+ assets['/gestao.html']=assets['/gestao.html'].replace('name="campo-management-build" content=""','name="campo-management-build" content="'+build+'"');
+}
 for(const page of ['/gestao.html','/consulta-arbora.html'])if(assets[page])assets[page]=versionLinks(assets[page]);
 await fs.writeFile(new URL('sw.js',docs),assets['/sw.js']);
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');
-const route=" if(Object.prototype.hasOwnProperty.call(RELEASE_ASSETS,path)){const mime=path.endsWith('.css')?'text/css':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.csv')?'text/csv':path.endsWith('.txt')?'text/plain':'application/javascript';return new Response(request.method==='HEAD'?null:RELEASE_ASSETS[path],{headers:{'Content-Type':mime+'; charset=utf-8','Cache-Control':'no-cache'}});}\n const upstream=new URL(";
+const route=" if(Object.prototype.hasOwnProperty.call(RELEASE_ASSETS,path)){const mime=path.endsWith('.css')?'text/css':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.csv')?'text/csv':path.endsWith('.txt')?'text/plain':'application/javascript';return new Response(request.method==='HEAD'?null:RELEASE_ASSETS[path],{headers:{'Content-Type':mime+'; charset=utf-8','Cache-Control':path==='/gestao-release.json'?'no-store':'no-cache'}});}\n const upstream=new URL(";
 const source='// Generated release; run hosting/build-release.mjs after changing docs/.\nconst RELEASE_ASSETS='+JSON.stringify(assets)+';\n'+template.replace(' const upstream=new URL(',route);
 await fs.mkdir(new URL('dist/',import.meta.url),{recursive:true});await fs.writeFile(new URL('dist/_worker.js',import.meta.url),source);
 console.log('Release '+build+' preparado: '+files.length+' arquivos em hosting/dist/_worker.js');

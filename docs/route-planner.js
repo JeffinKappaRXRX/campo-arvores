@@ -564,28 +564,41 @@
   if(id)showPublished(M.campaignParts(snapshot.routes.filter(route=>route.assignee===id&&!route.returned&&!isTest(route))));
  };
  for(const id of ['routeKpiStart','routeKpiEnd','routeKpiOperator'])$(id).addEventListener('input',paintKpis);
- async function refresh(){
+ let refreshPromise=null,lastRouteLoad=0,lastRosterLoad=0;
+ async function readRoutes(){
   if(!window.CampoControl?.authorized())return;
-  const [state,accounts,teams]=await Promise.all([api('/api/routes'),api('/api/admin/users'),api('/api/admin/gerencial/equipes').catch(()=>({}))]);
+  const state=await api('/api/routes');
   if(!window.CampoControl?.authorized())return;
   snapshot=state;
+  lastRouteLoad=Date.now();
   window.CampoVeraDashboard?.updateRoutes(state);
-  const names=new Map((teams.teams||[]).map(team=>[team.id,team.name]));
-  teamByAccount=new Map((teams.members||[]).filter(member=>names.has(member.teamId)).map(member=>[member.userId,names.get(member.teamId)]));
-  const users=(accounts.users||[]).filter(u=>!u.blocked&&!u.deleted_at&&u.passwordConfigured);
-  for(const select of [form.elements.assignee,$('routeOperator'),$('routeKpiOperator')]){
-   const old=select.value;select.replaceChildren(new Option(select===form.elements.assignee?'Selecione':'Todos',''));
-   for(const u of users)select.add(new Option(teamLabel(u.id,u.name),u.id));select.value=old;
-  }
+  if(Date.now()-lastRosterLoad>=300000)await refreshRoster();
+  if(!window.CampoControl?.authorized())return;
   paint();
   if(shownPublished.length){
    const shown=new Set(shownPublished);
    showPublished(M.campaignParts(snapshot.routes).filter(group=>shown.has(group[0].id)),false);
   }
  }
+ async function refreshRoster(){
+  const [accounts,teams]=await Promise.all([api('/api/admin/users').catch(()=>null),api('/api/admin/gerencial/equipes').catch(()=>null)]);
+  if(!window.CampoControl?.authorized())return;
+  const names=new Map((teams?.teams||[]).map(team=>[team.id,team.name]));
+  if(teams)teamByAccount=new Map((teams.members||[]).filter(member=>names.has(member.teamId)).map(member=>[member.userId,names.get(member.teamId)]));
+  const users=(accounts?.users||[]).filter(u=>!u.blocked&&!u.deleted_at&&u.passwordConfigured);
+  if(accounts)for(const select of [form.elements.assignee,$('routeOperator'),$('routeKpiOperator')]){
+   const old=select.value;select.replaceChildren(new Option(select===form.elements.assignee?'Selecione':'Todos',''));
+   for(const u of users)select.add(new Option(teamLabel(u.id,u.name),u.id));select.value=old;
+  }
+  if(accounts&&teams)lastRosterLoad=Date.now();
+ }
+ function refresh(){
+  if(!refreshPromise)refreshPromise=readRoutes().finally(()=>{refreshPromise=null;});
+  return refreshPromise;
+ }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
- window.addEventListener('campo-gerencial-equipes',load);
- $('routeRefresh').onclick=load;for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();});
+ window.addEventListener('campo-gerencial-equipes',()=>{lastRosterLoad=0;load();});
+ $('routeRefresh').onclick=()=>{lastRosterLoad=0;load();};for(const section of panel.querySelectorAll('details'))section.addEventListener('toggle',e=>{if(e.target.open)load();});
  for(const id of ['routeDay','routeMonth','routeOperator','routeFilter','routeShowTests'])$(id).addEventListener('input',()=>{
   if(id==='routeDay'&&$(id).value)$('routeMonth').value='';
   if(id==='routeMonth'&&$(id).value)$('routeDay').value='';
@@ -594,6 +607,8 @@
  paintDraft();
  window.CampoRoutePlanner={
   refresh:load,
+  poll(){if(Date.now()-lastRouteLoad>=60000)load();},
+  updateBusy:()=>Boolean(job||selecting||draft.length),
   picking:()=>selecting&&!job,
   select(f){
    if(!$('routePlan').open||!selecting||job)return false;
@@ -645,6 +660,6 @@
    }catch{}
    load();
   },
-  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;blockMode.checked=false;resetBlocks();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
+  stop(){lastRouteLoad=lastRosterLoad=0;selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;blockMode.checked=false;resetBlocks();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();

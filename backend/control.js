@@ -2,22 +2,30 @@
 let controlArchiveState=null;
 async function controlInventory(env,force=false){
  const endpoint=env.GOOGLE_SCRIPT_URL||'',now=Date.now();
- if(!controlArchiveState||controlArchiveState.endpoint!==endpoint)controlArchiveState={endpoint,inventory:null,at:0,expires:0,promise:null,error:''};
+ if(!controlArchiveState||controlArchiveState.endpoint!==endpoint)controlArchiveState={endpoint,inventory:null,at:0,expires:0,attempt:0,error:''};
  const state=controlArchiveState;
- if(state.promise)return state.promise;
  if(!force&&state.expires>now)return state;
- state.promise=(async()=>{try{state.inventory=await adminArchiveInventory(env);state.at=Date.now();state.error='';state.expires=state.at+60000;}catch(e){state.error=e.message;state.expires=Date.now()+30000;}finally{state.promise=null;}return state;})();return state.promise;
+ // Fetch within the current Worker request. Only the resolved inventory is shared.
+ try{
+  const inventory=await adminArchiveInventory(env);
+  if(now>=state.attempt)Object.assign(state,{inventory,at:Date.now(),expires:Date.now()+60000,attempt:now,error:''});
+ }catch(error){
+  if(now>=state.attempt)Object.assign(state,{error:error.message,expires:Date.now()+30000,attempt:now});
+ }
+ return state;
 }
 function controlDay(v){if(/^\d{4}-\d{2}-\d{2}$/.test(v))return v;const date=Date.parse(v);return Number.isFinite(date)?new Date(date-5*3600000).toISOString().slice(0,10):'';}
 function controlFilters(params){
  const f=Object.fromEntries(['month','day','q'].map(k=>[k,(params.get(k)||'').trim()]));for(const k of ['inspector','feeder','classification','state'])f[k]=[...new Set(params.getAll(k).map(v=>v.trim()).filter(Boolean))];
  if(f.month&&!/^\d{4}-\d{2}$/.test(f.month)||f.day&&!/^\d{4}-\d{2}-\d{2}$/.test(f.day)||Object.values(f).flat().some(v=>v.length>200)||[f.inspector,f.feeder].some(l=>l.length>200)||f.classification.some(v=>!['producao','homologacao','unknown'].includes(v))||f.state.some(v=>!['missing','identification','poda','request'].includes(v)))throw sharedError('Filtro inválido.');return f;
 }
-function controlProblems(r){return CampoInspectionRules.missing({...r,photos:r.photos?.map(p=>({...p,original:p.original||p.assetId||p.id||'referencia'}))||[]});}
-function controlMatches(r,f){const day=controlDay(r.createdAt),name=(r.collectionInspector||r.inspector||'').trim();return !r.archiveCleanupPending&&(!f.month||day.startsWith(f.month))&&(!f.day||day===f.day)&&(!f.inspector.length||f.inspector.some(i=>name.toLocaleLowerCase('pt-BR')===i.toLocaleLowerCase('pt-BR')))&&(!f.feeder.length||f.feeder.includes(r.feeder))&&(!f.classification.length||f.classification.some(c=>c==='unknown'?!r.adminClassification:r.adminClassification===c))&&(!f.q||[r.id,r.pole,r.span,r.species,name,r.feeder,r.address,r.os,r.lat,r.lon].some(v=>String(v||'').toLocaleLowerCase('pt-BR').includes(f.q.toLocaleLowerCase('pt-BR'))))&&(!f.state.length||f.state.some(s=>s==='missing'?controlProblems(r).length:s==='identification'?CampoInspectionRules.identificationPending(r):s==='poda'?r.poda==='sim':r.deletionRequest));}
+function controlPhotos(r){return Array.isArray(r.photos)?r.photos.filter(p=>p&&typeof p==='object'):[];}
+function controlInspector(r){return String(r.collectionInspector||r.inspector||'').trim();}
+function controlProblems(r){return CampoInspectionRules.missing({...r,photos:controlPhotos(r).map(p=>({...p,original:p.original||p.assetId||p.id||'referencia'}))});}
+function controlMatches(r,f){const day=controlDay(r.createdAt),name=controlInspector(r);return !r.archiveCleanupPending&&(!f.month||day.startsWith(f.month))&&(!f.day||day===f.day)&&(!f.inspector.length||f.inspector.some(i=>name.toLocaleLowerCase('pt-BR')===i.toLocaleLowerCase('pt-BR')))&&(!f.feeder.length||f.feeder.includes(r.feeder))&&(!f.classification.length||f.classification.some(c=>c==='unknown'?!r.adminClassification:r.adminClassification===c))&&(!f.q||[r.id,r.pole,r.span,r.species,name,r.feeder,r.address,r.os,r.lat,r.lon].some(v=>String(v||'').toLocaleLowerCase('pt-BR').includes(f.q.toLocaleLowerCase('pt-BR'))))&&(!f.state.length||f.state.some(s=>s==='missing'?controlProblems(r).length:s==='identification'?CampoInspectionRules.identificationPending(r):s==='poda'?r.poda==='sim':r.deletionRequest));}
 function controlSummary(rows){
  const times=rows.map(r=>r.inspectionTiming?.collectionSeconds).filter(n=>Number.isFinite(n)&&n>0).sort((a,b)=>a-b),sum=times.reduce((a,b)=>a+b,0),count=rows.length;
- return {count,individual:rows.filter(r=>r.grouped!=='sim').length,grouped:rows.filter(r=>r.grouped==='sim').length,measured:times.length,unknown:count-times.length,mean:times.length?sum/times.length:null,median:times.length?(times[Math.floor((times.length-1)/2)]+times[Math.floor(times.length/2)])/2:null,hours:sum/3600,poda:rows.filter(r=>r.poda==='sim').length,identification:rows.filter(r=>CampoInspectionRules.identificationPending(r)).length,missing:rows.filter(r=>controlProblems(r).length).length,requests:rows.filter(r=>r.deletionRequest).length,photos:rows.reduce((n,r)=>n+(r.photos?.length||0),0)};
+ return {count,individual:rows.filter(r=>r.grouped!=='sim').length,grouped:rows.filter(r=>r.grouped==='sim').length,measured:times.length,unknown:count-times.length,mean:times.length?sum/times.length:null,median:times.length?(times[Math.floor((times.length-1)/2)]+times[Math.floor(times.length/2)])/2:null,hours:sum/3600,poda:rows.filter(r=>r.poda==='sim').length,identification:rows.filter(r=>CampoInspectionRules.identificationPending(r)).length,missing:rows.filter(r=>controlProblems(r).length).length,requests:rows.filter(r=>r.deletionRequest).length,photos:rows.reduce((n,r)=>n+controlPhotos(r).length,0)};
 }
 function controlGroup(rows,key){const groups=new Map();for(const r of rows){const name=String(key(r)||'Não informado');if(!groups.has(name))groups.set(name,[]);groups.get(name).push(r);}return [...groups].map(([name,list])=>({name,...controlSummary(list)})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));}
 function controlMap(rows,params){
@@ -27,12 +35,12 @@ function controlMap(rows,params){
  let size=64,groups;do{groups=new Map();for(const r of points){const lat=Number(r.lat),lon=Number(r.lon),s=Math.sin(Math.max(-85,Math.min(85,lat))*Math.PI/180),scale=256*2**zoom,x=(lon+180)/360*scale,y=(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale,key=Math.floor(x/size)+':'+Math.floor(y/size);let g=groups.get(key);if(!g){g={id:'group:'+key,count:0,lat:0,lon:0,bounds:[lon,lat,lon,lat]};groups.set(key,g);}g.count++;g.lat+=lat;g.lon+=lon;g.bounds=[Math.min(g.bounds[0],lon),Math.min(g.bounds[1],lat),Math.max(g.bounds[2],lon),Math.max(g.bounds[3],lat)];}if(groups.size>600)size*=2;}while(groups.size>600);
  return {count:points.length,grouped:true,points:[...groups.values()].map(g=>({...g,lat:g.lat/g.count,lon:g.lon/g.count}))};
 }
-function controlRecord(r){return {...r,photos:(r.photos||[]).map(p=>({id:p.id,assetId:p.assetId,name:p.name,receivedAt:p.receivedAt})),missingFields:controlProblems(r).map(p=>p.label)};}
+function controlRecord(r){return {...r,photos:controlPhotos(r).map(p=>({id:p.id,assetId:p.assetId,name:p.name,receivedAt:p.receivedAt})),missingFields:controlProblems(r).map(p=>p.label)};}
 async function controlUniverse(env,force=false){const archive=await controlInventory(env,force),inventory=archive.inventory||{archive:[],deleted:new Set(),revision:null,pending:[]};const data=await universalAdminRecords(env,{...inventory,deleted:new Set(inventory.deleted)});return {...data,archive:{available:Boolean(archive.inventory),at:archive.at?new Date(archive.at).toISOString():null,error:archive.error||null}};}
 async function controlLiveUniverse(env){const inventory=controlArchiveState?.endpoint===env.GOOGLE_SCRIPT_URL&&controlArchiveState.inventory||{archive:[],deleted:new Set(),revision:null,pending:[]};return universalAdminRecords(env,{...inventory,deleted:new Set(inventory.deleted)});}
 function controlBounds(rows){let bounds=null;for(const r of rows){if(!sharedCoordinate(r.lat,90)||!sharedCoordinate(r.lon,180))continue;const lon=Number(r.lon),lat=Number(r.lat);bounds=bounds?[Math.min(bounds[0],lon),Math.min(bounds[1],lat),Math.max(bounds[2],lon),Math.max(bounds[3],lat)]:[lon,lat,lon,lat];}return bounds;}
 function controlCsvCell(value){let text=value===null||value===undefined?'':String(value);if(typeof value!=='number'&&/^[=+\-@]/.test(text))text="'"+text;return /[;"\r\n]/.test(text)?'"'+text.replaceAll('"','""')+'"':text;}
-function controlPhotoName(r){return (r.photos||[]).map(p=>p.name||p.id||p.assetId).filter(Boolean).join(' | ');}
+function controlPhotoName(r){return controlPhotos(r).map(p=>p.name||p.id||p.assetId).filter(Boolean).join(' | ');}
 function controlPhotoLink(r){const value=r.folderUrl||r.photoReference||r.googleReceipt?.folderUrl||'';try{const url=new URL(value);return url.protocol==='https:'?url.href:'';}catch{return '';}}
 function controlCsvNumber(value){return value===null||value===undefined||value===''?'':Number.isFinite(Number(value))?Number(value):value;}
 function controlExportCsv(rows,extras=false){const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'],values=r=>[r.externalId||r.id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,r.pole,controlCsvNumber(r.btDistance),controlCsvNumber(r.mtDistance),controlCsvNumber(r.atDistance),controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');const all=rows.map(r=>extras?[...values(r),r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r)]:values(r));return '\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';}
@@ -53,7 +61,10 @@ async function controlAPI(request,env){try{
  if(p==='/api/control/tree'&&!data.records.some(r=>r.id===u.searchParams.get('id')))data=await controlUniverse(env);
  if(p==='/api/control/tree'){const id=u.searchParams.get('id');if(!sharedId(id))throw sharedError('ID inválido.');const record=data.records.find(r=>r.id===id&&!r.archiveCleanupPending);if(!record)throw sharedError('Cadastro não está mais na base ativa.',404);return json({record:controlRecord(record)});}
  const filters=controlFilters(u.searchParams),rows=data.records.filter(r=>controlMatches(r,filters)),page=Number(u.searchParams.get('page')||0);if(!Number.isSafeInteger(page)||page<0)throw sharedError('Página inválida.');
- const last=Math.max(0,Math.ceil(rows.length/50)-1),current=Math.min(page,last),all=data.records.filter(r=>!r.archiveCleanupPending),options={inspectors:[...new Set(all.map(r=>(r.collectionInspector||r.inspector||'').trim()).filter(Boolean))].sort(),feeders:[...new Set(all.map(r=>r.feeder).filter(Boolean))].sort()};
+ const last=Math.max(0,Math.ceil(rows.length/50)-1),current=Math.min(page,last),all=data.records.filter(r=>!r.archiveCleanupPending),options={inspectors:[...new Set(all.map(r=>controlInspector(r)).filter(Boolean))].sort(),feeders:[...new Set(all.map(r=>r.feeder).filter(Boolean))].sort()};
  const coords=rows.filter(r=>sharedCoordinate(r.lat,90)&&sharedCoordinate(r.lon,180));let bounds=null;for(const r of coords){const lon=Number(r.lon),lat=Number(r.lat);bounds=bounds?[Math.min(bounds[0],lon),Math.min(bounds[1],lat),Math.max(bounds[2],lon),Math.max(bounds[3],lat)]:[lon,lat,lon,lat];}
  return json({summary:controlSummary(rows),daily:controlGroup(rows,r=>controlDay(r.createdAt)).sort((a,b)=>b.name.localeCompare(a.name)).slice(0,31),inspectors:controlGroup(rows,r=>r.collectionInspector||r.inspector).slice(0,100),feeders:controlGroup(rows,r=>r.feeder).slice(0,30),positions:controlGroup(rows,r=>r.position),records:rows.slice(current*50,(current+1)*50).map(controlRecord),page:current,pages:last+1,total:rows.length,options,map:controlMap(rows,u.searchParams),bounds,archive:data.archive,sources:data.sources,scope:data.scope,generatedAt:data.generatedAt});
- }catch(e){return json({error:e.status?e.message:'Painel temporariamente indisponível. Tente novamente.'},e.status||503);}}
+ }catch(e){
+  if(!e.status)console.warn(JSON.stringify({event:'control_read_failed',path:new URL(request.url).pathname,error:String(e.message||e).slice(0,240)}));
+  return json({error:e.status?e.message:'Painel temporariamente indisponível. Tente novamente.'},e.status||503);
+ }}

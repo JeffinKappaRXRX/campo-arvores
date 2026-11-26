@@ -25,6 +25,19 @@ assert.deepEqual(select(db,{period:'2026-05',field:'day',section:'12'}).periods.
 ]);
 assert.equal(select(db,{period:'2026',field:'month',feeder:'TAN-01C6'}).metres,0);
 assert.equal(select(db,{period:'2025',field:'month'}).trees,5);
+const routed=ledger({coverage:[span('2026-05-01','1',800)]},{},{
+ routes:[{id:'returned',returned:{reasonCode:'outro'},spans:[{id:'1',metres:800,section:1,feeder:'AAL-01C9',parallel:[{id:'9',metres:600,feeder:'AAL-01C2',flip:true}]}]},
+  {id:'test-returned',returned:{reasonCode:'gestao_homologacao'},spans:[{id:'3',metres:3000,section:1,feeder:'AAL-01C9'}]}],
+ visits:[{routeId:'returned',day:'2026-05-07',trackMetres:7000,ranges:[{spanId:'1',start:0,end:5000}]},
+  {routeId:'returned',day:'2026-05-07',trackMetres:7000,ranges:[{spanId:'1',start:0,end:5000}]},
+  {routeId:'test-returned',day:'2026-05-07',ranges:[{spanId:'3',start:0,end:10000}]}]
+});
+const a=select(routed,{period:'2026',field:'month',feeder:'AAL-01C9',section:'12'});
+assert.deepEqual([a.metres,a.routeMetres,a.netRouteMetres],[800,400,0]);
+const b=select(routed,{period:'2026',field:'month',feeder:'AAL-01C2'});
+assert.deepEqual([b.metres,b.routeMetres,b.netRouteMetres],[300,300,300]);
+assert.equal(select(routed,{period:'2026',field:'month',feeder:'AAL-01C2',section:'12'}).metres,0);
+
 assert.deepEqual(db.orders.map(order=>[order.status,order.inspector]),[['executada','Bruno']]);
 const goals=annual({credited:[
  {day:'2025-01-01',section:'1',metres:311005},

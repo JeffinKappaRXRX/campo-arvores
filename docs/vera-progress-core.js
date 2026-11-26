@@ -16,7 +16,8 @@ const CampoVeraProgress=(()=>{
  function ledger(history={},sgm={},snapshot={}){
   const meta=new Map(),events=[];
   function add(row,source,canonical=true,start=0,end=FULL){
-   const [day,id,metres,feeder,block,section,zone,order]=row;
+   const [day,rawId,metres,feeder,block,section,zone,order]=row;
+   const id=String(rawId??'').trim();
    if(!dayPattern.test(day)||!id||!(metres>0)||!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>FULL||start>=end)return;
    if(!meta.has(id)||canonical)meta.set(id,{metres,feeder:upper(feeder),block:upper(block),section:String(section||''),zone:upper(zone)});
    events.push({day,id,source,start,end,order});
@@ -25,7 +26,8 @@ const CampoVeraProgress=(()=>{
   for(const row of sgm.coverage||[])add(row,'SGM');
   const routes=new Map((snapshot.routes||[]).filter(route=>!route.homologation&&!route.deletedAt&&
    !['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode)).map(route=>[route.id,new Map(route.spans.map(span=>[span.id,span]))]));
-  const routeSpans=new Map([...routes.values()].flatMap(spans=>[...spans]));
+  const routeSpans=new Map();
+  for(const spans of routes.values())for(const [id,span] of spans)routeSpans.set(id,span);
   for(const visit of snapshot.visits||[]){
    const spans=routes.get(visit.routeId);
    if(!spans)continue;
@@ -34,14 +36,17 @@ const CampoVeraProgress=(()=>{
     if(!span)continue;
     add([visit.day,spanId,span.metres,span.feeder,span.block,span.section,span.zone],'ARBORA',false,start,end);
     for(const peer of span.parallel||[]){
-     const related=routeSpans.get(peer.id)||meta.get(peer.id);
-     if(!related)continue;
+     const related=routeSpans.get(peer.id)||meta.get(String(peer.id))||peer;
      const a=peer.flip?FULL-end:start,b=peer.flip?FULL-start:end;
      add([visit.day,peer.id,related.metres,related.feeder,related.block,related.section,related.zone],'ARBORA',false,a,b);
     }
    }
   }
   events.sort((a,b)=>a.day.localeCompare(b.day)||Number(b.source==='VERA')-Number(a.source==='VERA'));
+  const routesOnly=events.filter(event=>event.source==='ARBORA');
+  return {credited:credit(events,meta),routesOnly:credit(routesOnly,meta),trees:history.trees||[],orders:combineOrders(history,sgm)};
+ }
+ function credit(events,meta){
   const ranges=new Map(),credited=[];
   for(const event of events){
    const scope=(event.day<'2026'?'historic':'plan')+'|'+event.id;
@@ -54,7 +59,7 @@ const CampoVeraProgress=(()=>{
    const span=meta.get(event.id);
    credited.push({...event,...span,metres:span.metres*length/FULL});
   }
-  return {credited,trees:history.trees||[],orders:combineOrders(history,sgm)};
+  return credited;
  }
  function select(data,options){
   const {period,field,feeder='',section='',zone=''}=options;
@@ -76,10 +81,19 @@ const CampoVeraProgress=(()=>{
    if(row.block)entry.keys.add(key(row.feeder,row.block));
    entry.sources.set(row.source,(entry.sources.get(row.source)||0)+row.metres);
    const label=row.feeder||'Sem alimentador';
-   if(!feeders.has(label))feeders.set(label,{feeder:label,metres:0,spans:new Set(),keys:new Set()});
+   if(!feeders.has(label))feeders.set(label,{feeder:label,metres:0,routeMetres:0,spans:new Set(),keys:new Set()});
    const item=feeders.get(label);
    item.metres+=row.metres;item.spans.add(row.id);
    if(row.block)item.keys.add(row.block);
+  }
+  let routeMetres=0,netRouteMetres=0;
+  for(const row of rows.values())netRouteMetres+=row.sources.get('ARBORA')||0;
+  for(const row of data.routesOnly){
+   if(!bucket(row.day)||!matches(row.feeder,row.section,row.zone))continue;
+   const label=row.feeder||'Sem alimentador';
+   if(!feeders.has(label))feeders.set(label,{feeder:label,metres:0,routeMetres:0,spans:new Set(),keys:new Set()});
+   feeders.get(label).routeMetres+=row.metres;
+   routeMetres+=row.metres;
   }
   for(const [day,f,s,z,count] of data.trees){
    const when=bucket(day);
@@ -91,7 +105,7 @@ const CampoVeraProgress=(()=>{
    return {...row,accumulated:metres,accumulatedTrees:trees};
   });
   const orders=data.orders.filter(order=>(!feeder||order.feeder===feeder)&&(order.status==='pendente'||bucket(order.day)));
-  return {periods,feeders:[...feeders.values()].sort((a,b)=>b.metres-a.metres),metres,trees,orders};
+  return {periods,feeders:[...feeders.values()].sort((a,b)=>b.metres-a.metres),metres,routeMetres,netRouteMetres,trees,orders};
  }
  function annual(data,asOf){
   let available=0,earlier=0,plan=0;

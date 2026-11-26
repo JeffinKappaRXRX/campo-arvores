@@ -158,6 +158,11 @@
   };
   authorized=true;
   retry.hidden=!pending().length;
+  window.CampoDesktopDraft={async prepareReload(){
+   if(formSaveBusy||attaching||publishing||archiving||plantBusy||document.querySelector('dialog[open]'))throw Error('Conclua a operação no formulário de cadastro.');
+   clearTimeout(draftTimer);
+   await checkpointDraft();
+  }};
   send('ready');
   void publish();
   archiveInBackground();

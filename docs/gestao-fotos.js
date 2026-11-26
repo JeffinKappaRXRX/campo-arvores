@@ -2,7 +2,7 @@
 (()=>{
  const $=id=>document.getElementById(id),root=$('gestaoFotos');
  if(!root)return;
- const allowed=()=>window.CampoControl?.authorized();
+ const allowed=()=>window.CampoControl?.authorized(),collect=$('desktopCollect'),mapButton=$('desktopPhotosOnMap');
  const list=$('desktopPhotoRows'),feedback=$('desktopPhotoStatus'),filter=$('desktopPhotoFilter');
  const pageSize=25,batchSize=48;
  const usePhotoDate=$('desktopUsePhotoDate'),datePreference='arbora-gestao-use-photo-date';
@@ -68,6 +68,7 @@
  function draw(){
   if(!map||!layer||!allowed())return;
   layer.clearLayers();
+  if(!collect.checked)return;
   const area=map.getBounds().pad(.08),cells=new Map();
   for(const item of items){
    const p=item.point;
@@ -161,7 +162,6 @@
   msg();render();
  }
  function loadForm(){
-  $('desktopFormPanel').hidden=!$('desktopCollect').checked;
   if(!allowed()||!$('desktopCollect').checked)return;
   if(!frame){
    frame=document.createElement('iframe');
@@ -209,7 +209,16 @@
  $('desktopFiles').onclick=()=>$('desktopFilesInput').click();
  for(const id of ['desktopFolderInput','desktopFilesInput'])$(id).onchange=()=>{const input=$(id);addFiles(input.files);input.value='';};
  $('desktopFitPhotos').onclick=fit;$('desktopClearPhotos').onclick=clear;
- $('desktopCollect').onchange=()=>{loadForm();configurePhotoDate();readyButtons();};
+ function mode(){
+  root.hidden=!collect.checked;
+  mapButton.hidden=!collect.checked;
+  if(!collect.checked)map?.closePopup();
+  loadForm();
+  configurePhotoDate();
+  readyButtons();
+  scheduleDraw();
+ }
+ collect.onchange=mode;
  function configurePhotoDate(){send({type:'photo-date',enabled:usePhotoDate.checked});}
  usePhotoDate.onchange=()=>{
   try{localStorage.setItem(datePreference,usePhotoDate.checked?'1':'0');}catch{/* Applies to this session. */}
@@ -238,12 +247,18 @@
  });
  window.addEventListener('campo-control-logout',()=>{
   clear();frame?.remove();frame=null;frameReady=false;queued=null;
-  $('desktopCollect').checked=false;$('desktopFormPanel').hidden=true;
+  collect.checked=false;mode();
  });
  function attachMap(instance){
   if(map===instance)return;
   map=instance;layer=L.layerGroup().addTo(map);map.on('moveend resize',scheduleDraw);scheduleDraw();
  }
- window.CampoGestaoFotos={attachMap,addNetworkAction};
+ async function prepareReload(){
+  if(scanning||queued||frame&&!frameReady)throw Error('Aguarde o carregamento ou anexo das fotos.');
+  if(items.length&&!confirm('A lista de fotos importadas no mapa será fechada. Atualizar a gestão?'))return false;
+  if(frameReady)await frame.contentWindow.CampoDesktopDraft.prepareReload();
+  return true;
+ }
+ window.CampoGestaoFotos={attachMap,addNetworkAction,prepareReload};
  window.CampoControlMap?.onAvailable?.(attachMap);
 })();

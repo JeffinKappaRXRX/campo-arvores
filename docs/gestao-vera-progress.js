@@ -22,8 +22,10 @@
   </div>
   <div class="vera-progress-totals" data-progress="totals"></div>
   <div class="vera-progress-scroll" data-progress="periods"></div>
+  <p class="small" data-progress="routeNote"></p>
   <p class="small" data-progress="treeNote"></p>
   <details data-progress="details"><summary>Alimentadores, chaves e vãos</summary>
+   <div class="vera-progress-scroll" data-progress="feeders"></div>
    <label>Buscar alimentador, chave ou ID do vão<input type="search" data-progress="spanQuery"></label>
    <div class="vera-progress-scroll" data-progress="spans"></div>
   </details>
@@ -73,12 +75,15 @@
   render();
  }
  function renderSpans(){
-  if(!ledger||!get('details').open)return;
+  if(!ledger||!selection||!get('details').open)return;
   const {period,field,feeder,section}=options(),query=get('spanQuery').value.trim().toUpperCase();
   if(!period)return;
   const rows=ledger.credited.filter(row=>row.day.startsWith(field==='day'?period.slice(0,7):period.slice(0,4))&&
    (!feeder||row.feeder===feeder)&&(!section||(section==='12'?['1','2'].includes(row.section):row.section===section))&&
    (!query||[row.feeder,row.block,row.id].some(value=>value.includes(query))));
+  table(get('feeders'),['Alimentador','Rede vistoriada (km)','Rotas ARBORA (km)'],selection.feeders
+   .filter(row=>!query||row.feeder.includes(query)).map(row=>[row.feeder,km(row.metres),km(row.routeMetres)]),
+   'Nenhum alimentador no recorte.');
   const spanTarget=get('spans');
   table(spanTarget,['Alimentador','Chave','Vão','Data','km','Fonte'],rows.slice(0,250).map(row=>
    [row.feeder,row.block||'—',row.id,dateLabel(row.day),km(row.metres),row.source]),'Nenhum vão neste recorte.');
@@ -99,10 +104,12 @@
   get('yearLabel').hidden=field!=='month';
   if(!ledger||!period)return;
   selection=core.select(ledger,filter);
-  const {periods,metres,trees,orders}=selection;
+  const {periods,metres,routeMetres,netRouteMetres,trees,orders}=selection;
   const totals=get('totals');
   totals.replaceChildren();
   summary(totals,km(metres)+' km','Rede vistoriada');
+  summary(totals,Array.isArray(snapshot.visits)?km(routeMetres)+' km':'–','Rotas confirmadas no ARBORA');
+  get('routeNote').textContent=routeMetres>0?km(netRouteMetres)+' km das rotas entraram no total consolidado após cruzar os vãos com VERA e SGM.':'';
   summary(totals,history?int(trees):'—','Árvores da planilha');
   summary(totals,orders.filter(row=>row.status==='executada').length.toLocaleString('pt-BR'),'OS executadas no período');
   summary(totals,orders.filter(row=>row.status==='pendente').length.toLocaleString('pt-BR'),sgm?'OS pendentes':'OS pendentes na planilha');
@@ -162,7 +169,7 @@
  window.addEventListener('campo-control-logout',()=>{
   generation++;lastLoad=0;pending=false;requestError='';
   history=sgm=historyUpdatedAt=sgmUpdatedAt=null;snapshot={};ledger=selection=null;
-  for(const name of ['annual','annualNote','periods','treeNote','spans','orders','totals','status'])get(name).replaceChildren();
+  for(const name of ['annual','annualNote','periods','routeNote','treeNote','feeders','spans','orders','totals','status'])get(name).replaceChildren();
   get('feeder').replaceChildren(new Option('Todos',''));
   get('reload').disabled=false;
  });

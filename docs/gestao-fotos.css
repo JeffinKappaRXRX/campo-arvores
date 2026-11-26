@@ -15,3 +15,8 @@ html.gestao-cadastro body>header,html.gestao-cadastro main>.hero,html.gestao-cad
 html.gestao-cadastro main { max-width:100%; padding:.5rem; }
 html.gestao-cadastro #desktopPublishStatus { margin-top:.5rem; }
 @media(max-width:700px){.desktop-photo-grid{grid-template-columns:1fr;}}
+.management-map-column { display:grid; gap:16px; min-width:0; align-content:start; }
+.management-map-column > .panel { min-width:0; }
+#gestaoFotos[hidden], #desktopPhotosOnMap[hidden], #managementUpdate[hidden] { display:none!important; }
+.desktop-collect-toggle { margin-inline-start:auto; }
+#managementUpdate:not([hidden]) { border-color:var(--green); }
