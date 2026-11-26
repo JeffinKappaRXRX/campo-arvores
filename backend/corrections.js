@@ -85,17 +85,18 @@ async function controlQuality(request,env,db){
  });
 }
 async function correctionDispatch(env,db,input){
- const {ids,assignee,operationId,fallbackOnly}=input,note=String(input.note||'').trim();
+ const {ids,assignee,operationId,fallbackOnly}=input,note=String(input.note||'').trim(),suggestions=input.suggestions===true;
+ const details=suggestions?input.details||{}:{};
  if(!Array.isArray(ids)||!ids.length||ids.length>correctionLimit||new Set(ids).size!==ids.length||ids.some(id=>!sharedId(id))||
-    !sharedId(operationId)||assignee&&!sharedId(assignee)||note.length>1000)throw sharedError('Selecione até 50 árvores e uma conta ativa.');
+    !sharedId(operationId)||assignee&&!sharedId(assignee)||note.length>1000||suggestions&&(ids.length>suggestionBatchSize||Object.entries(details).some(([id,value])=>!ids.includes(id)||typeof value!=='string'||value.length>400)))throw sharedError('Selecione até 50 árvores e uma conta ativa.');
  const [data,operators,current,existing]=await Promise.all([
-  controlUniverse(env),correctionOperators(db),
+  suggestions?suggestionUniverse(env,db,ids):controlUniverse(env),correctionOperators(db),
   db.prepare('SELECT id,version,deleted,pending FROM shared_trees WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)).all(),
   db.prepare("SELECT id,tree_id FROM campo_tree_corrections WHERE status='pending' AND tree_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all()
  ]);
  const active=new Map(current.results.map(row=>[row.id,row]));
  const pending=new Map(existing.results.map(row=>[row.tree_id,row.id]));
- const lookup=new Map(data.records.filter(correctionEligible).map(record=>[record.id,record]));
+ const lookup=new Map(data.records.filter(suggestions?suggestionYes:correctionEligible).map(record=>[record.id,record]));
  const responsible=correctionOperatorIndex(operators),override=operators.find(user=>user.id===assignee);
  if(assignee&&!override)throw sharedError('O inspetor informado não está disponível.',409);
  const stamp=new Date().toISOString(),actor=env.CAMPO_USER?.name||'Administrador',statements=[],requested=new Map(),skipped=[];
@@ -113,19 +114,30 @@ async function correctionDispatch(env,db,input){
   const operator=fallbackOnly?original||override:override||original;
   if(!operator)throw sharedError('Selecione um inspetor para '+id+'. A autoria original não tem uma conta ativa como referência.',409);
   const issues=CampoRegistrationQuality.issues(CampoRegistrationQuality.mask(record));
-  if(!issues.length&&!note)throw sharedError('Informe o que deve ser conferido no cadastro '+id+'.',409);
+  const guidance=suggestions?CampoSuggestionRules.guidance(CampoSuggestionRules.inspect(record)):'';
+  const extra=suggestions?details[id]||'':'';
+  const text=suggestions?[extra,guidance,note&&'Observação da gestão. '+note].filter(Boolean).join(' ').slice(0,1000):note;
+  if(!issues.length&&!text&&!suggestions)throw sharedError('Informe o que deve ser conferido no cadastro '+id+'.',409);
   if(!issues.length)issues.push('field');
   const task={species:record.species||'',inspector:correctionName(record),operator:operator.name,
    lat:Number(record.lat),lon:Number(record.lon),feeder:record.feeder||'',pole:record.pole||'',span:record.span||'',
-   address:record.address||record.street||'',issues,note,actor};
+   address:record.address||record.street||'',issues,note:text||(suggestions?'Confira em campo se o cadastro, a identificação e as medidas ainda correspondem a esta árvore.':''),actor};
   // Make a Drive-only record editable in the field under its original ID.
   if(!row){
-   const source={...record,photos:[]};
-   for(const key of ['repositorySources','archiveVersion','adminClassification','adminLabelRevision','adminLabelUpdatedAt','sharedVersion'])delete source[key];
+   const baseline=record.suggestionGeneration?await historyRecord(db,id):null;
+   if(baseline&&(baseline.row||baseline.baseline.generation!==record.suggestionGeneration))
+    throw sharedError('A base VERA mudou. Atualize antes de despachar.',409);
+   const source=baseline?{...baseline.record,archivedPhotoEvidence:record.archivedPhotoEvidence}:{...record,photos:[]};
+   for(const key of ['repositorySources','archiveVersion','adminClassification','adminLabelRevision','adminLabelUpdatedAt','sharedVersion','baseline','baselineToken'])delete source[key];
    source.createdBy=correctionName(record)||undefined;
    source.inspector=source.createdBy;
    source.archivedPhotoEvidence=({present:true,unknown:'unknown'})[CampoRegistrationQuality.photos(record)]||false;
-   statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').bind(id,JSON.stringify(source),stamp,taskId,actor));
+   if(baseline){
+    const guard=historyCondition(baseline,'dispatching');
+    statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE '+guard.sql)
+     .bind(id,JSON.stringify(source),stamp,taskId,actor,...guard.args));
+    statements.push(...historyBaselineStatements(db,baseline.baseline,taskId,id));
+   }else statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').bind(id,JSON.stringify(source),stamp,taskId,actor));
   }
   statements.push(db.prepare(`INSERT OR IGNORE INTO campo_tree_corrections(id,tree_id,assignee,base_version,data,dispatched_at)
    SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND (? OR last_op=?))`)

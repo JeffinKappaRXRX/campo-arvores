@@ -9,3 +9,12 @@
 .field-correction { padding:.8rem 0; border-bottom:1px solid currentColor; }
 .field-correction p { margin:.3rem 0; overflow-wrap:anywhere; }
 #fieldCorrectionsPages:not([hidden]) { margin-top:1rem; }
+
+.suggest-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));align-items:start;gap:.75rem;margin-block:1rem}
+.suggest-filters label{display:grid;gap:.25rem}.suggest-filters select{width:100%;max-width:100%}
+.suggest-filters select[multiple]{padding:.4rem;min-height:6.25rem}
+.suggest-table{max-height:41rem}.suggest-table td{vertical-align:top;white-space:normal;min-width:8rem}
+.suggest-table td:first-child{min-width:3rem}.suggest-table td:nth-child(3){min-width:16rem;max-width:28rem}
+.suggest-table ul{padding-inline-start:1rem;margin:0}.suggest-table li+li{margin-top:.35rem}
+.suggest-table li button{margin-inline-start:.35rem}.suggest-row-actions button{margin:.15rem;font-size:.85rem;padding:.35rem .5rem}
+#suggestStatus:not(:empty){margin-inline-start:.65rem}

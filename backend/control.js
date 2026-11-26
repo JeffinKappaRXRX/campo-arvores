@@ -48,6 +48,7 @@ async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
  if(new URL(request.url).pathname==='/api/control/edit')return await controlEditAPI(request,env,await adminDb(env));
  if(new URL(request.url).pathname==='/api/control/create')return await controlCreateAPI(request,env,await adminDb(env));
+ if(new URL(request.url).pathname==='/api/control/suggestions')return await controlSuggestions(request,env,await adminDb(env));
  if(request.method!=='GET')throw sharedError('Use GET para consultar o painel.',405);
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}

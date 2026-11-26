@@ -138,6 +138,81 @@ const ASSETS={};
  if(typeof module!=='undefined')module.exports=root.CampoRegistrationQuality;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
+(function(root){
+ 'use strict';
+ const labels={
+  photos:'Fotos',photoReview:'Fotos a confirmar',pole:'Poste',span:'Vão',species:'Espécie',
+  btDistance:'Distância da copa à BT',mtDistance:'Distância da copa à MT',atDistance:'Distância da copa à AT',
+  coordinates:'Coordenadas',feeder:'Alimentador',height:'Altura',trunk:'DAP ou CAP',
+  diameter:'Coerência entre DAP e CAP',poda:'Poda',projection:'Projeção',treeSite:'Área pública ou privada',
+  network:'Redes e distâncias',duplicate:'Possível duplicidade',
+  grouped:'Poda agrupada',position:'Posição em relação à rede'
+ };
+ const instructions={
+  photos:'Fotografe a árvore e o tronco. Para ajudar na identificação, faça uma foto de folha, flor ou fruto, quando disponível.',
+  photoReview:'Confirme se as fotos vinculadas correspondem a esta árvore e anexe fotos atuais se necessário.',
+  pole:'Confirme o ID do poste ou do vão mais próximo, conforme a rede presente.',
+  span:'Confira o ID do vão. Priorize MT se a rede estiver presente.',
+  species:'Identifique a árvore. Fotografe folha, flor ou fruto se o nome continuar incerto.',
+  btDistance:'Confira e informe a distância da copa à BT, em centímetros no app.',
+  mtDistance:'Confira e informe a distância da copa à MT, em centímetros no app.',
+  atDistance:'Confira e informe a distância da copa à AT, em centímetros no app.',
+  coordinates:'Confirme a posição da árvore no mapa e ajuste as coordenadas junto ao tronco.',
+  feeder:'Confirme o alimentador ou registre a localidade aplicável.',
+  height:'Meça ou confira a altura da árvore, em metros.',
+  trunk:'Meça DAP ou CAP do tronco, em centímetros.',
+  diameter:'Confira DAP ou CAP em centímetros no mesmo tronco e na mesma altura. Revise unidade e digitação.',
+  poda:'Confirme se a árvore precisa de poda.',
+  projection:'Confirme se a árvore está em projeção sobre a rede.',
+  treeSite:'Confira se o tronco está em área pública ou privada. Use referência cadastral ou confirme o limite em campo.',
+  network:'Confirme quais redes existem no local, o tipo de vão e as distâncias da copa para as redes presentes.',
+  duplicate:'Compare os pontos próximos e confirme se representam a mesma árvore.',
+  grouped:'Confirme se o ponto representa árvore individual ou poda agrupada.',
+  position:'Confira a posição da árvore em relação à rede.'
+ };
+ const normalize=value=>String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
+ const missing=value=>value==null||String(value).trim()==='';
+ const numeric=value=>!missing(value)&&Number.isFinite(Number(value));
+ const pos=value=>numeric(value)&&Number(value)>0;
+ const yes=value=>value===true||normalize(value)==='sim';
+ const declaredSite=value=>({'publico':'publico','publica':'publico','area publica':'publico','privado':'privado','privada':'privado','area privada':'privado'})[normalize(value)]||'';
+ const round=value=>Math.round(value*10)/10;
+ function inspect(record,duplicate=false){
+  const Q=root.CampoRegistrationQuality;
+  const issues=new Map(Q.issues(Q.mask(record)).map(key=>[key,{key,reason:instructions[key]}]));
+  const mark=(key,reason=instructions[key],change)=>issues.set(key,change?{key,reason,change}:{key,reason});
+  const {dap,circ}=record,hasDap=pos(dap),hasCap=pos(circ);
+  const diameter=hasDap?Number(dap):hasCap?Number(circ)/Math.PI:0;
+  const consistent=!(hasDap&&hasCap)||Math.abs(Number(circ)-Number(dap)*Math.PI)<=Math.max(1,Number(circ)*.07);
+  if(!consistent)mark('diameter','DAP e CAP divergem entre si. '+instructions.diameter);
+  else if(diameter>250||(!missing(dap)&&!hasDap)||(!missing(circ)&&!hasCap))mark('diameter','Medida fora do intervalo de triagem ou valor inválido. '+instructions.diameter);
+  else if(!yes(record.grouped)&&hasDap&&missing(circ)&&round(Number(dap)*Math.PI)>0)mark('diameter','CAP calculado a partir do DAP preenchido.',{field:'circ',value:round(Number(dap)*Math.PI),input:Number(dap),source:'DAP'});
+  else if(!yes(record.grouped)&&hasCap&&missing(dap)&&round(Number(circ)/Math.PI)>0)mark('diameter','DAP calculado a partir do CAP preenchido.',{field:'dap',value:round(Number(circ)/Math.PI),input:Number(circ),source:'CAP'});
+  const legacySite=declaredSite(record.area),site=record.treeSite;
+  if(!['publico','privado'].includes(site)&&legacySite)mark('treeSite','Classificação explícita já registrada no campo Área.',{field:'treeSite',value:legacySite,source:'Área'});
+  else if(legacySite&&legacySite!==site)mark('treeSite','A classificação de local diverge do campo Área. '+instructions.treeSite);
+  if(pos(record.height)&&Number(record.height)>60)mark('height','Altura acima de 60 m. Confira a medida e a unidade.');
+  if(numeric(record.lat)&&numeric(record.lon)&&Number(record.lat)===0&&Number(record.lon)===0)mark('coordinates',instructions.coordinates);
+  const networks=['mt','bt','at'],hasNetwork=networks.some(key=>yes(record[key]));
+  const audit=root.CampoInspectionRules.poleAudit(record);
+  if(networks.some(key=>!yes(record[key])&&numeric(record[key+'Distance'])&&Number(record[key+'Distance'])>=0)||
+    (yes(record.noNetwork)&&hasNetwork)||
+    (audit&&audit.expected.some(key=>yes(record[key])===audit.absent.includes(key)))||
+    (audit&&root.CampoInspectionRules.preferredSpanNetwork(record,audit)&&root.CampoInspectionRules.preferredSpanNetwork(record,audit)!==record.spanNetwork))mark('network');
+  if(hasNetwork&&normalize(record.position)==='projecao'&&normalize(record.projection)==='nao')mark('projection','A posição indica projeção, mas a resposta de projeção foi marcada como não. '+instructions.projection);
+  if(record.formValidation===1){
+   if(!['sim','nao'].includes(normalize(record.grouped)))mark('grouped');
+   if(hasNetwork&&!['projecao','lateral','abaixo da rede'].includes(normalize(record.position)))mark('position');
+  }
+  if(duplicate)mark('duplicate');
+  return Array.from(issues.values());
+ }
+ function patch(issues){return Object.fromEntries(issues.filter(issue=>issue.change).map(({change})=>[change.field,change.value]));}
+ function guidance(issues){return Array.from(new Set(issues.map(issue=>instructions[issue.key]).filter(Boolean))).join(' ');}
+ root.CampoSuggestionRules={labels,inspect,patch,guidance,normalize};
+ if(typeof module!=='undefined')module.exports=root.CampoSuggestionRules;
+})(typeof globalThis!=='undefined'?globalThis:this);
+
 'use strict';
 const CampoRoutes=(()=>{
  const FULL=10000;
@@ -1586,6 +1661,7 @@ async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
  if(new URL(request.url).pathname==='/api/control/edit')return await controlEditAPI(request,env,await adminDb(env));
  if(new URL(request.url).pathname==='/api/control/create')return await controlCreateAPI(request,env,await adminDb(env));
+ if(new URL(request.url).pathname==='/api/control/suggestions')return await controlSuggestions(request,env,await adminDb(env));
  if(request.method!=='GET')throw sharedError('Use GET para consultar o painel.',405);
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
@@ -1619,7 +1695,7 @@ async function controlEditSnapshot(db,env,id){
  const token=await authHash(JSON.stringify(record));
  return {row:null,record,version:0,archive:true,baseline:{tree_id:id,data:JSON.stringify(record),recorded_at:new Date().toISOString(),actor:record.inspector||'Inventário Drive',generation:token}};
 }
-async function controlEditAPI(request,env,db){
+async function controlEditAPI(request,env,db,prepared=null){
  const id=new URL(request.url).searchParams.get('id');
  if(request.method==='GET'){
   const part=await controlEditSnapshot(db,env,id);
@@ -1631,7 +1707,7 @@ async function controlEditAPI(request,env,db){
  if(!sharedId(body.id)||!sharedId(body.operationId)||!Number.isSafeInteger(body.version)||body.version<0||!body.values||Array.isArray(body.values)||typeof body.values!=='object'||Object.keys(body.values).some(k=>!controlEditFields.includes(k)||!['string','number','boolean'].includes(typeof body.values[k])))throw sharedError('Edição inválida. Reabra o cadastro.');
  const existing=await sharedRead(db,body.id);
  if(existing?.last_op===body.operationId&&!existing.deleted)return json({tree:sharedView(existing),replayed:true});
- const part=await controlEditSnapshot(db,env,body.id);
+ const part=prepared||await controlEditSnapshot(db,env,body.id);
  if(part.version!==body.version||!part.row&&part.baseline.generation!==body.baselineToken||part.row?.pending)throw sharedError('Cadastro alterado. Suas alterações foram mantidas na tela; reabra a versão atual antes de salvar.',409);
  const stamp=new Date().toISOString(),checked=sharedData({...part.record,...body.values,id:body.id},actor),data={...part.record};
  for(const k of Object.keys(body.values))data[k]=checked[k];
@@ -1778,17 +1854,18 @@ async function controlQuality(request,env,db){
  });
 }
 async function correctionDispatch(env,db,input){
- const {ids,assignee,operationId,fallbackOnly}=input,note=String(input.note||'').trim();
+ const {ids,assignee,operationId,fallbackOnly}=input,note=String(input.note||'').trim(),suggestions=input.suggestions===true;
+ const details=suggestions?input.details||{}:{};
  if(!Array.isArray(ids)||!ids.length||ids.length>correctionLimit||new Set(ids).size!==ids.length||ids.some(id=>!sharedId(id))||
-    !sharedId(operationId)||assignee&&!sharedId(assignee)||note.length>1000)throw sharedError('Selecione até 50 árvores e uma conta ativa.');
+    !sharedId(operationId)||assignee&&!sharedId(assignee)||note.length>1000||suggestions&&(ids.length>suggestionBatchSize||Object.entries(details).some(([id,value])=>!ids.includes(id)||typeof value!=='string'||value.length>400)))throw sharedError('Selecione até 50 árvores e uma conta ativa.');
  const [data,operators,current,existing]=await Promise.all([
-  controlUniverse(env),correctionOperators(db),
+  suggestions?suggestionUniverse(env,db,ids):controlUniverse(env),correctionOperators(db),
   db.prepare('SELECT id,version,deleted,pending FROM shared_trees WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)).all(),
   db.prepare("SELECT id,tree_id FROM campo_tree_corrections WHERE status='pending' AND tree_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all()
  ]);
  const active=new Map(current.results.map(row=>[row.id,row]));
  const pending=new Map(existing.results.map(row=>[row.tree_id,row.id]));
- const lookup=new Map(data.records.filter(correctionEligible).map(record=>[record.id,record]));
+ const lookup=new Map(data.records.filter(suggestions?suggestionYes:correctionEligible).map(record=>[record.id,record]));
  const responsible=correctionOperatorIndex(operators),override=operators.find(user=>user.id===assignee);
  if(assignee&&!override)throw sharedError('O inspetor informado não está disponível.',409);
  const stamp=new Date().toISOString(),actor=env.CAMPO_USER?.name||'Administrador',statements=[],requested=new Map(),skipped=[];
@@ -1806,19 +1883,30 @@ async function correctionDispatch(env,db,input){
   const operator=fallbackOnly?original||override:override||original;
   if(!operator)throw sharedError('Selecione um inspetor para '+id+'. A autoria original não tem uma conta ativa como referência.',409);
   const issues=CampoRegistrationQuality.issues(CampoRegistrationQuality.mask(record));
-  if(!issues.length&&!note)throw sharedError('Informe o que deve ser conferido no cadastro '+id+'.',409);
+  const guidance=suggestions?CampoSuggestionRules.guidance(CampoSuggestionRules.inspect(record)):'';
+  const extra=suggestions?details[id]||'':'';
+  const text=suggestions?[extra,guidance,note&&'Observação da gestão. '+note].filter(Boolean).join(' ').slice(0,1000):note;
+  if(!issues.length&&!text&&!suggestions)throw sharedError('Informe o que deve ser conferido no cadastro '+id+'.',409);
   if(!issues.length)issues.push('field');
   const task={species:record.species||'',inspector:correctionName(record),operator:operator.name,
    lat:Number(record.lat),lon:Number(record.lon),feeder:record.feeder||'',pole:record.pole||'',span:record.span||'',
-   address:record.address||record.street||'',issues,note,actor};
+   address:record.address||record.street||'',issues,note:text||(suggestions?'Confira em campo se o cadastro, a identificação e as medidas ainda correspondem a esta árvore.':''),actor};
   // Make a Drive-only record editable in the field under its original ID.
   if(!row){
-   const source={...record,photos:[]};
-   for(const key of ['repositorySources','archiveVersion','adminClassification','adminLabelRevision','adminLabelUpdatedAt','sharedVersion'])delete source[key];
+   const baseline=record.suggestionGeneration?await historyRecord(db,id):null;
+   if(baseline&&(baseline.row||baseline.baseline.generation!==record.suggestionGeneration))
+    throw sharedError('A base VERA mudou. Atualize antes de despachar.',409);
+   const source=baseline?{...baseline.record,archivedPhotoEvidence:record.archivedPhotoEvidence}:{...record,photos:[]};
+   for(const key of ['repositorySources','archiveVersion','adminClassification','adminLabelRevision','adminLabelUpdatedAt','sharedVersion','baseline','baselineToken'])delete source[key];
    source.createdBy=correctionName(record)||undefined;
    source.inspector=source.createdBy;
    source.archivedPhotoEvidence=({present:true,unknown:'unknown'})[CampoRegistrationQuality.photos(record)]||false;
-   statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').bind(id,JSON.stringify(source),stamp,taskId,actor));
+   if(baseline){
+    const guard=historyCondition(baseline,'dispatching');
+    statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE '+guard.sql)
+     .bind(id,JSON.stringify(source),stamp,taskId,actor,...guard.args));
+    statements.push(...historyBaselineStatements(db,baseline.baseline,taskId,id));
+   }else statements.push(db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').bind(id,JSON.stringify(source),stamp,taskId,actor));
   }
   statements.push(db.prepare(`INSERT OR IGNORE INTO campo_tree_corrections(id,tree_id,assignee,base_version,data,dispatched_at)
    SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND version=? AND deleted=0 AND pending IS NULL AND (? OR last_op=?))`)
@@ -1891,6 +1979,125 @@ async function correctionAPI(request,env){
  }catch(error){
   return json({error:error.status?error.message:'Retornos de campo temporariamente indisponíveis.'},error.status||503);
  }
+}
+
+// Admin-only review of active inspections, Drive records and the current VERA inventory.
+const suggestionPageSize=50,suggestionBatchSize=5;
+const suggestionYes=record=>!record.archiveCleanupPending&&!record.deletionRequest&&record.adminClassification!=='homologacao';
+function suggestionDate(record){
+ const raw=String(record.sourceDate||'').trim(),br=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+ return controlDay(record.createdAt)||(br?br[3]+'-'+br[2]+'-'+br[1]:controlDay(raw));
+}
+const suggestionCoord=record=>correctionHasCoordinates(record)&&(Number(record.lat)!==0||Number(record.lon)!==0);
+const suggestionKind=record=>record.id.startsWith('vera-')?'vera':'campo';
+const suggestionVersion=record=>Number(record.sharedVersion)||0;
+const suggestionFields=['dap','circ','treeSite','area','species','grouped'];
+function suggestionToken(record,generation=''){
+ return JSON.stringify([generation,...suggestionFields.map(key=>String(record[key]??'')),record.updatedAt||'']);
+}
+async function suggestionVera(db,ids=null){
+ if(ids&&!ids.length)return {records:[],available:true};
+ try{
+  const where="WHERE generation=(SELECT value FROM vera_meta WHERE key='generation')";
+  const query=db.prepare('SELECT id,data,generation FROM vera_trees '+where+(ids?' AND id IN (SELECT value FROM json_each(?))':''));
+  const [rows,photos]=await Promise.all([(ids?query.bind(JSON.stringify(ids)):query).all(),db.prepare('SELECT id FROM vera_thumbs').all()]);
+  const present=new Set(photos.results.map(row=>row.id));
+  return {available:true,records:rows.results.filter(row=>sharedId('vera-'+row.id)).map(row=>{
+   const data=historyBaseData(JSON.parse(row.data),'vera-'+row.id);
+   return {...data,suggestionGeneration:row.generation,archivedPhotoEvidence:present.has(veraPhotoId(row.id))};
+  })};
+ }catch(error){if(veraMissingTable(error)||/no such table.*vera_thumbs/i.test(error.message))return {available:false,records:[]};throw error;}
+}
+async function suggestionUniverse(env,db,ids=null){
+ const [data,vera]=await Promise.all([controlUniverse(env),suggestionVera(db,ids?.filter(id=>id.startsWith('vera-')).map(id=>id.slice(5)))]);
+ const seen=new Set([...(data.deletedIds||[]),...data.records.map(record=>record.id)]);
+ return {...data,veraAvailable:vera.available,records:[...data.records,...vera.records.filter(record=>!seen.has(record.id))]};
+}
+function suggestionDuplicates(records){
+ const groups=new Map(),dupes=new Set(),normalize=CampoSuggestionRules.normalize;
+ for(const record of records){
+  const species=normalize(record.species);
+  if(!suggestionCoord(record)||!species||CampoInspectionRules.unknownSpecies(record))continue;
+  const key=[Number(record.lat).toFixed(5),Number(record.lon).toFixed(5),normalize(record.feeder),species].join('|');
+  const first=groups.get(key);
+  if(first){dupes.add(first);dupes.add(record.id);}else groups.set(key,record.id);
+ }
+ return dupes;
+}
+function suggestionPhotoPaths(record){
+ const paths=controlPhotos(record).filter(photo=>sharedId(photo.assetId)).slice(0,3).map(photo=>
+  '/api/shared/photo?id='+encodeURIComponent(record.id)+'&asset='+encodeURIComponent(photo.assetId));
+ if(record.suggestionGeneration&&record.archivedPhotoEvidence&&sharedId(record.externalId))
+  paths.push('/api/vera/photo?id='+encodeURIComponent(record.externalId));
+ return paths;
+}
+async function suggestionList(request,env,db){
+ const p=new URL(request.url).searchParams,filters=controlFilters(p),S=CampoSuggestionRules,issue=p.getAll('issue'),status=p.get('status')||'any',source=p.get('source')||'',from=p.get('from')||'',to=p.get('to')||'',page=Number(p.get('page')||0);
+ if(!['any','review','apply','clean','photos','returned'].includes(status)||!['','vera','campo'].includes(source)||
+  issue.some(key=>!Object.hasOwn(S.labels,key))||[from,to].some(day=>day&&!/^\d{4}-\d{2}-\d{2}$/.test(day))||
+  (from&&to&&from>to)||!Number.isSafeInteger(page)||page<0)throw sharedError('Filtro de sugestões inválido.');
+ const [data,tasks,operators]=await Promise.all([suggestionUniverse(env,db),correctionStatuses(db),correctionOperators(db)]);
+ const responsible=correctionOperatorIndex(operators),records=data.records.filter(suggestionYes);
+ const duplicates=suggestionDuplicates(records);
+ const counts={review:0,apply:0,clean:0,photos:0,returned:0};
+ const names=new Set(),feeders=new Set(),result=[];
+ for(const record of records){
+  const name=controlInspector(record),day=suggestionDate(record),origin=suggestionKind(record);
+  if(name)names.add(name);
+  if(record.feeder)feeders.add(record.feeder);
+  if((source&&origin!==source)||(from&&day<from)||(to&&(!day||day>to))||!controlMatches(record,filters))continue;
+  const issues=S.inspect(record,duplicates.has(record.id)),photos=suggestionPhotoPaths(record),coordinates=suggestionCoord(record)?[Number(record.lat),Number(record.lon)]:null;
+  const task=tasks.get(record.id),pending=task?.status==='pending',editable=Boolean(coordinates&&!pending);
+  const scopes={review:issues.some(a=>!a.change),apply:editable&&issues.some(a=>a.change),clean:!issues.length,photos:photos.length>0,returned:pending};
+  if(issue.length&&!issues.some(a=>issue.includes(a.key)))continue;
+  for(const key of Object.keys(counts))if(scopes[key])counts[key]++;
+  if(status!=='any'&&!scopes[status])continue;
+  const base={id:record.id,version:suggestionVersion(record),token:suggestionToken(record,record.suggestionGeneration),assignee:responsible(record)?.id||null,
+   canDispatch:Boolean(coordinates&&!pending),editable,canApply:scopes.apply,hasPhoto:scopes.photos,hasIssues:Boolean(issues.length),species:record.species||''};
+  result.push({base,record,day,origin,issues,photos,coordinates,task});
+ }
+ const total=result.length,pages=Math.max(1,Math.ceil(total/suggestionPageSize)),current=Math.min(pages-1,page);
+ const response={total,pages,page:current,counts,archive:data.archive.available,vera:data.veraAvailable};
+ if(p.get('format')==='selection')return json({...response,items:result.map(a=>({...a.base,photos:a.photos,flags:a.issues.map(issue=>issue.key)}))});
+ const items=result.slice(current*suggestionPageSize,(current+1)*suggestionPageSize).map(({base,record,day,origin,issues,photos,coordinates,task})=>({
+  ...base,origin,day,issues,photos,coordinates,task:task?{status:task.status,operator:task.operator}:null,
+  inspector:controlInspector(record),feeder:record.feeder||'',pole:record.pole||'',span:record.span||'',dap:record.dap??'',circ:record.circ??'',treeSite:record.treeSite||''
+ }));
+ return json({...response,items,operators:operators.map(({id,name})=>({id,name})),options:{inspectors:[...names].sort(),feeders:[...feeders].sort()}});
+}
+async function suggestionApply(request,env,db){
+ const {items}=await sharedBody(request,22000);
+ if(!Array.isArray(items)||!items.length||items.length>suggestionBatchSize||new Set(items.map(item=>item?.id)).size!==items.length||
+  items.some(item=>!sharedId(item?.id)||!sharedId(item.operationId)||!Number.isSafeInteger(item.version)||item.version<0||
+   typeof item.token!=='string'||item.token.length>6500||item.species!==undefined&&(typeof item.species!=='string'||!item.species.trim()||item.species.length>160)))
+  throw sharedError('Envie até cinco sugestões válidas por lote.');
+ const results=[];
+ for(const item of items){
+  try{
+   const current=await sharedRead(db,item.id);
+   if(current?.last_op===item.operationId&&!current.deleted){results.push({id:item.id,status:'applied'});continue;}
+   const blocked=await db.prepare("SELECT 1 AS locked FROM campo_record_labels WHERE tree_id=? AND classification='homologacao' UNION ALL SELECT 1 FROM campo_tree_corrections WHERE tree_id=? AND status='pending' LIMIT 1").bind(item.id,item.id).first();
+   if(blocked)throw sharedError('Cadastro em homologação ou já despachado ao campo.',409);
+   const part=await controlEditSnapshot(db,env,item.id),record=part.record;
+   const generation=part.baseline&&!part.archive?part.baseline.generation:'';
+   if(part.version!==item.version||suggestionToken(record,generation)!==item.token)
+    throw sharedError('O cadastro ou a evidência de origem mudou. Atualize e confira a sugestão.',409);
+   const values=CampoSuggestionRules.patch(CampoSuggestionRules.inspect(record));
+   if(item.species!==undefined)values.species=item.species.trim();
+   if(!Object.keys(values).length){results.push({id:item.id,status:'unchanged'});continue;}
+   // The regular administrative editor still verifies version, preserves photos and writes the history.
+   const body={id:item.id,operationId:item.operationId,version:part.version,baselineToken:part.baseline?.generation||null,values};
+   const edit=new Request(request.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+   await controlEditAPI(edit,env,db,part);
+   results.push({id:item.id,status:'applied'});
+  }catch(error){results.push({id:item.id,status:'failed',message:error.status?error.message:'Não foi possível aplicar o ajuste. Tente novamente.'});}
+ }
+ return json({results});
+}
+async function controlSuggestions(request,env,db){
+ if(request.method==='GET')return suggestionList(request,env,db);
+ if(request.method==='POST')return suggestionApply(request,env,db);
+ throw sharedError('Use GET ou POST.',405);
 }
 
 // Base VERA corrigida: leitura restrita ao administrador; escrita só pelo envio local com VERA_SYNC_TOKEN.

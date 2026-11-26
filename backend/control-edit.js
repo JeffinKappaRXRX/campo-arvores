@@ -10,7 +10,7 @@ async function controlEditSnapshot(db,env,id){
  const token=await authHash(JSON.stringify(record));
  return {row:null,record,version:0,archive:true,baseline:{tree_id:id,data:JSON.stringify(record),recorded_at:new Date().toISOString(),actor:record.inspector||'Inventário Drive',generation:token}};
 }
-async function controlEditAPI(request,env,db){
+async function controlEditAPI(request,env,db,prepared=null){
  const id=new URL(request.url).searchParams.get('id');
  if(request.method==='GET'){
   const part=await controlEditSnapshot(db,env,id);
@@ -22,7 +22,7 @@ async function controlEditAPI(request,env,db){
  if(!sharedId(body.id)||!sharedId(body.operationId)||!Number.isSafeInteger(body.version)||body.version<0||!body.values||Array.isArray(body.values)||typeof body.values!=='object'||Object.keys(body.values).some(k=>!controlEditFields.includes(k)||!['string','number','boolean'].includes(typeof body.values[k])))throw sharedError('Edição inválida. Reabra o cadastro.');
  const existing=await sharedRead(db,body.id);
  if(existing?.last_op===body.operationId&&!existing.deleted)return json({tree:sharedView(existing),replayed:true});
- const part=await controlEditSnapshot(db,env,body.id);
+ const part=prepared||await controlEditSnapshot(db,env,body.id);
  if(part.version!==body.version||!part.row&&part.baseline.generation!==body.baselineToken||part.row?.pending)throw sharedError('Cadastro alterado. Suas alterações foram mantidas na tela; reabra a versão atual antes de salvar.',409);
  const stamp=new Date().toISOString(),checked=sharedData({...part.record,...body.values,id:body.id},actor),data={...part.record};
  for(const k of Object.keys(body.values))data[k]=checked[k];

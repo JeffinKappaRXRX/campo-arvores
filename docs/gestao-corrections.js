@@ -107,9 +107,12 @@
  }
  function locate(item){
   const [lat,lon]=item.coordinates;
+  const map=window.CampoControlMap;
+  const record={id:item.id,species:item.species,lat,lon};
+  if(map?.locateInspection){map.locateInspection(record);return;}
   location.hash='mapa';
   $('mapFrame').scrollIntoView({block:'center'});
-  window.CampoControlMap?.locate({id:item.id,species:item.species,lat,lon},null);
+  map?.locate(record,null);
  }
  function openDispatch(items,operators=data?.operators){
   if(sending)return;

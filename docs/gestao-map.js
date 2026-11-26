@@ -66,6 +66,20 @@
   if(!cycleActive&&(!treeLayer||$(treeLayer).checked))locationPin.addTo(map);
   map.setView([Number(r.lat),Number(r.lon)],18);
  }
+ function locateInspection(record){
+  if(!allowed()||!map||record.lat==null||record.lon==null||!Number.isFinite(Number(record.lat))||!Number.isFinite(Number(record.lon)))return;
+  location.hash='mapa';
+  const park=$('showVera');
+  if(park.checked){park.checked=false;park.dispatchEvent(new Event('change'));}
+  $('showTrees').checked=true;syncTreeVisibility();
+  fitted=true;treeController?.abort();treeRequest++;treeQuery='';
+  requestAnimationFrame(()=>{
+   if(!allowed()||location.hash!=='#mapa')return;
+   map.invalidateSize({pan:false});
+   locate(record,null);
+   $('mapFrame').scrollIntoView({block:'center'});
+  });
+ }
  // Read the existing GPKG configuration only; never load inspection records or photos.
  function meta(value){return new Promise((resolve,reject)=>{const request=indexedDB.open('campo-vegetacao',1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains('records'))db.createObjectStore('records',{keyPath:'id'});if(!db.objectStoreNames.contains('meta'))db.createObjectStore('meta');};request.onerror=()=>reject(request.error);request.onblocked=()=>reject(Error('Armazenamento ocupado por outra aba.'));request.onsuccess=()=>{const db=request.result;let result;const tx=db.transaction('meta',value?'readwrite':'readonly'),s=tx.objectStore('meta'),op=value?s.put(value,'gpkgConfig'):s.get('gpkgConfig');op.onsuccess=()=>result=op.result;tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(tx.error||Error('Leitura da configuração interrompida.'));};};});}
  function ensureWorker(){if(worker)return;worker=new Worker('package-worker.js');worker.onerror=()=>{status('O leitor da rede não pôde iniciar. Tente novamente.');release();};worker.onmessage=async event=>{const m=event.data;if(!allowed())return;if(['view','route-network','route-reference','route-network-error','inspection-pole'].includes(m.action)&&unifiedPending.has(m.requestId)){const wait=unifiedPending.get(m.requestId);unifiedPending.delete(m.requestId);clearTimeout(wait.timer);if(m.action==='route-network-error')wait.reject(Error(m.message));else wait.resolve(m);return;}if(m.action==='progress'){status(m.message);return;}if(m.action==='paused'){ready=false;restoring=false;paused=true;if(!document.hidden)void reuse();return;}if(m.action==='busy'){status(m.message);release(m.message);return;}if(m.action==='error'){status(m.message+' A configuração anterior foi preservada.');release(m.message);return;}
@@ -312,5 +326,5 @@
  function routeOverlay(spans,covered,focus,buffer=0,outlet=null){
   routeOverlayGroups([{spans,covered,buffer,outlet}],focus);
  }
- window.CampoControlMap={inspectionPole,resize:()=>map?.invalidateSize(),onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
+ window.CampoControlMap={inspectionPole,resize:()=>map?.invalidateSize(),onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,locateInspection,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
 })();
