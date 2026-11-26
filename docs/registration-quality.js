@@ -30,8 +30,12 @@
   if(state==='missing')add('photos');
   else if(state==='unknown')add('photoReview');
   const network=['mt','bt','at'].filter(key=>yes(record[key]));
-  if(network.length&&!text(record.pole))add('pole');
-  if(network.includes('mt')&&!text(record.span))add('span');
+  if(record.formValidation===1){
+   if(network.length&&!text(record.pole)&&!text(record.span))add('pole');
+  }else{
+   if(network.length&&!text(record.pole))add('pole');
+   if(network.includes('mt')&&!text(record.span))add('span');
+  }
   for(const key of network){
    const distance=record[key+'Distance'];
    if(!numeric(distance)||Number(distance)<0)add(key+'Distance');
@@ -40,9 +44,9 @@
   if(!within(record.lat,90)||!within(record.lon,180))add('coordinates');
   if(!text(record.feeder))add('feeder');
   if(!positive(record.height))add('height');
-  if(!positive(record.dap)&&!positive(record.circ))add('trunk');
+  if(!(record.formValidation===1&&yes(record.grouped))&&!positive(record.dap)&&!positive(record.circ))add('trunk');
   if(!assessed(record.poda))add('poda');
-  if(!assessed(record.projection))add('projection');
+  if(!yes(record.noNetwork)&&!assessed(record.projection))add('projection');
   if(!['publico','privado'].includes(record.treeSite))add('treeSite');
   return result;
  }

@@ -7,12 +7,14 @@ async function sharedBody(request,limit=6500000){try{return JSON.parse(await(awa
 async function sharedRead(db,id){return db.prepare('SELECT * FROM shared_trees WHERE id=?').bind(id).first();}
 function sharedData(raw,actor,imported=false){
  if(!raw||!sharedId(raw.id)||!sharedCoordinate(raw.lat,90)||!sharedCoordinate(raw.lon,180))throw sharedError('ID, latitude e longitude válidos são obrigatórios.');
- const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
+ const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
  const out={id:raw.id,lat:Number(raw.lat),lon:Number(raw.lon),photos:[],createdAt:Number.isFinite(Date.parse(raw.createdAt))?raw.createdAt:new Date().toISOString(),updatedAt:Number.isFinite(Date.parse(raw.updatedAt))?raw.updatedAt:new Date().toISOString()};
  for(const key of allowed){if(typeof raw[key]==='boolean')out[key]=raw[key];else if(raw[key]!==undefined&&raw[key]!==null)out[key]=String(raw[key]).slice(0,key==='note'?5000:1000);}
  if(out.treeSite!==undefined&&!['','publico','privado'].includes(out.treeSite))throw sharedError('Selecione área pública ou privada para o local da árvore.');
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
+ if(raw.noNetwork!==undefined)out.noNetwork=raw.noNetwork===true||raw.noNetwork==='sim';
+ if(raw.formValidation===1)out.formValidation=1;
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
  const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
  if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
@@ -34,6 +36,8 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if((old?.version||0)!==expected)throw sharedError('Outra pessoa atualizou esta árvore. Reabra a versão mais recente antes de salvar suas alterações.',409);
  const original=old?JSON.parse(old.data):null;
  if(original&&data.treeSite===undefined&&original.treeSite!==undefined)data.treeSite=original.treeSite;
+ if(original?.noNetwork!==undefined&&data.noNetwork===undefined)data.noNetwork=original.noNetwork;
+ if(original?.formValidation===1)data.formValidation=1;
  for(const key of ['archivedPhotoEvidence','folderUrl'])if(original?.[key]!=null)data[key]=original[key];
  data.createdBy=original?original.createdBy||original.inspector||original.lastInspector||old.actor:actor;
  if(identity){data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}
@@ -43,6 +47,10 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  for(const p of photos){if(!sharedId(p.id)||!sharedId(p.assetId))throw sharedError('Referência de foto inválida.');
   if(!uploadMap.has(p.assetId)&&!await db.prepare('SELECT asset_id FROM shared_photos WHERE tree_id=? AND asset_id=?').bind(id,p.assetId).first())throw sharedError('Foto ainda não recebida. Tente sincronizar novamente.');
   data.photos.push({id:p.id,assetId:p.assetId,name:String(p.name||'foto.jpg').slice(0,180),receivedAt:p.receivedAt||data.updatedAt,identify:p.identify===true,organ:String(p.organ||'auto').slice(0,20),phase:['before','after','current'].includes(p.phase)?p.phase:'current'});
+ }
+ if(body.record.formValidation===1&&!imported){
+  const missing=CampoInspectionRules.formMissing({...data,photos:data.photos.map(p=>({original:p.assetId}))});
+  if(missing.length)throw sharedError('Complete: '+missing.map(field=>field.label).join(', ')+'.');
  }
  const stamp=new Date().toISOString(),version=expected+1;
  const statement=old?db.prepare('UPDATE shared_trees SET data=?,version=?,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=shared_trees.id AND expires_at>unixepoch()*1000)').bind(JSON.stringify(data),version,stamp,body.operationId,actor,id,expected):db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)').bind(id,JSON.stringify(data),stamp,body.operationId,actor,id);

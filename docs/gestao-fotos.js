@@ -193,13 +193,14 @@
   const properties=new Map(Object.entries(p).map(([name,value])=>[name.normalize('NFD').replace(/[^\p{Letter}\p{Number}]/gu,'').toLowerCase(),value]));
   const value=(...names)=>names.map(name=>properties.get(name)).find(entry=>entry!=null&&String(entry).trim());
   const pole=point&&className.includes('POSTE')?value('idposte','iddoposte','id','numoperativo'):null;
-  const span=!point&&/\b(?:MT|BT|AT)\b|VAOS/.test(className)?value('idvao','id','span'):null;
+  const network=className.match(/(?:^|[^A-Z])(MT|BT|AT)(?=$|[^A-Z])/)?.[1].toLowerCase()||null;
+  const span=!point&&(network||className.includes('VAOS'))?value('idvao','id','span'):null;
   if(!pole&&!span)return;
   const button=document.createElement('button');button.type='button';button.textContent=pole?'Usar ID do poste no cadastro':'Usar ID do vão no cadastro';
   button.onclick=()=>{
    const coordinates=feature.geometry?.coordinates;
    const spanGeometry=span&&feature.geometry?.type==='LineString'?{geometry:{type:'LineString',coordinates},properties:{Id:String(span)}}:null;
-   if(send({type:'network',pole,span,feeder:span?value('alimentador','codigoalimentador','feeder'):null,spanGeometry})){
+   if(send({type:'network',pole,span,network,feeder:span?value('alimentador','codigoalimentador','feeder'):null,spanGeometry})){
     $('desktopFormStatus').textContent=pole?'Poste '+pole+' enviado ao formulário.':'Vão '+span+' enviado ao formulário.';
     towardForm();
    }

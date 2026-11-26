@@ -1,5 +1,5 @@
 // Administrative corrections reuse the central row and its immutable history.
-const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','os','address','note','area','access','team','municipality','perimeter','key','street'];
+const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
 async function controlEditSnapshot(db,env,id){
  if(!sharedId(id))throw sharedError('ID inválido.');
  const row=await sharedRead(db,id);
@@ -42,6 +42,12 @@ async function controlEditAPI(request,env,db){
   seen.add(p.assetId);copies.push(p);data.photos.push({id:p.assetId,assetId:p.assetId,name:String(p.name||'Foto anexada no PC').slice(0,180),receivedAt:stamp,phase:'current'});
  }
  if(data.photos.length>12&&data.photos.length>(part.record.photos||[]).length)throw sharedError('Limite de 12 fotos atuais por cadastro. As fotos existentes foram preservadas.');
+ const errors=record=>CampoInspectionRules.formMissing({
+  ...record,photos:[{original:'edição-administrativa'}]
+ });
+ const existingIssues=new Set(errors(part.record).map(issue=>issue.field+':'+issue.label));
+ const introduced=errors(data).filter(issue=>!existingIssues.has(issue.field+':'+issue.label));
+ if(introduced.length)throw sharedError('Complete: '+introduced.map(issue=>issue.label).join(', ')+'.');
  const condition=part.archive?{sql:'NOT EXISTS(SELECT 1 FROM shared_trees WHERE id=?)',args:[body.id]}:historyCondition(part,'editing');
  const guard=condition.sql+' AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)',args=[...condition.args,body.id];
  const first=part.row?db.prepare('UPDATE shared_trees SET data=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND '+guard).bind(JSON.stringify(data),stamp,body.operationId,actor,body.id,...args):db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE '+guard).bind(body.id,JSON.stringify(data),stamp,body.operationId,actor,...args);
@@ -63,7 +69,7 @@ async function controlCreateAPI(request,env,db){
  const old=await sharedRead(db,record.id);
  if(old&&old.last_op!==body.operationId)throw sharedError('Este ID já pertence a uma árvore.',409);
  const checked=sharedData({...record,inspector:actor},actor);
- const missing=CampoInspectionRules.missing({...checked,photos:[{original:'validar-no-envio'}]});
+ const missing=CampoInspectionRules.savedMissing({...checked,photos:[{original:'validar-no-envio'}]});
  if(missing.length)throw sharedError('Complete: '+missing.map(field=>field.label).join(', ')+'.');
  const tree=await sharedSave(db,{...body,record:{...record,inspector:actor,imported:false}},actor,false,env.CAMPO_USER);
  await realtimePublish(env,'management-create');

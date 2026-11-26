@@ -1,6 +1,6 @@
 'use strict';
 window.CampoManagementEdit=(()=>{
- const fields=[['species','Espécie','text'],['height','Altura · m','number'],['dap','DAP · cm','number'],['circ','CAP · cm','number'],['mt','Rede MT presente','bool'],['mtDistance','Distância da copa à MT · cm','distance'],['bt','Rede BT presente','bool'],['btDistance','Distância da copa à BT · cm','distance'],['at','Rede AT presente','bool'],['atDistance','Distância da copa à AT · cm','distance'],['pole','ID do poste','text'],['span','ID do vão','text'],['feeder','Alimentador','text'],['lat','Latitude','coordinate'],['lon','Longitude','coordinate'],['poda','Necessita poda','choice'],['projection','Em projeção','choice'],['position','Posição em relação à rede','text'],['grouped','Vegetação agrupada','choice'],['treeSite','Local da árvore','site'],['os','OS','text'],['address','Endereço','text'],['note','Observação','note']];
+ const fields=[['species','Espécie','text'],['height','Altura · m','number'],['dap','DAP · cm','number'],['circ','CAP · cm','number'],['mt','Rede MT presente','bool'],['mtDistance','Distância da copa à MT · cm','distance'],['bt','Rede BT presente','bool'],['btDistance','Distância da copa à BT · cm','distance'],['at','Rede AT presente','bool'],['atDistance','Distância da copa à AT · cm','distance'],['noNetwork','Sem rede próxima','bool'],['pole','ID do poste','text'],['span','ID do vão','text'],['feeder','Alimentador','text'],['lat','Latitude','coordinate'],['lon','Longitude','coordinate'],['poda','Necessita poda','choice'],['projection','Em projeção','choice'],['position','Posição em relação à rede','text'],['grouped','Vegetação agrupada','choice'],['treeSite','Local da árvore','site'],['os','OS','text'],['address','Endereço','text'],['note','Observação','note']];
  const dialog=document.createElement('dialog');dialog.id='managementEdit';dialog.className='tree-history-dialog';
  dialog.innerHTML='<form id="managementEditForm"><div class="dialog-head"><h2>Editar árvore e anexar fotos</h2><button type="button" id="managementEditClose">Voltar</button></div><p>Correção do mesmo cadastro. A data e o tempo do levantamento, as fotos anteriores e o histórico são preservados.</p><div id="managementEditFields" class="management-edit-fields"></div><p id="managementEditExisting"></p><label>Adicionar fotos do PC<input id="managementEditPhotos" type="file" accept="image/jpeg,image/png,image/webp" multiple></label><p class="small">Até 12 fotos no cadastro, incluindo as existentes. Arquivos de até 20 MB são convertidos em cópias JPEG de até 1.280 px; guarde os originais no PC.</p><div id="managementEditPreviews" class="management-edit-previews"></div><p id="managementEditStatus" role="status" aria-live="polite"></p><div class="selection-actions"><button id="managementEditSave" type="submit">Salvar alterações</button><button id="managementEditReload" type="button">Reabrir versão atual</button></div></form>';
  document.body.append(dialog);const $=id=>document.getElementById(id),api=(...args)=>window.CampoControl.api(...args);
@@ -40,6 +40,15 @@ window.CampoManagementEdit=(()=>{
   const batch=[];for(const f of files){const p=await photo(f);if(token!==serial)return;if(![...uploads,...batch,...(snapshot.record.photos||[])].some(x=>x.assetId===p.assetId))batch.push(p);}
   uploads.push(...batch);previews();$('managementEditStatus').textContent=uploads.length+' foto(s) pronta(s). Clique em Salvar alterações para enviar.';
  }catch(e){if(token===serial)$('managementEditStatus').textContent=e.message;}finally{busy=false;if(token===serial){disabled(false);$('managementEditPhotos').value='';}}};
+ $('managementEditFields').onchange=event=>{
+  const key=event.target.dataset.editField;
+  if(event.target.value!=='sim'||!['noNetwork','mt','bt','at'].includes(key))return;
+  const value=id=>dialog.querySelector('[data-edit-field="'+id+'"]');
+  if(key==='noNetwork'){
+   for(const network of ['mt','bt','at']){value(network).value='nao';value(network+'Distance').value='';}
+   value('position').value=value('projection').value='';
+  }else value('noNetwork').value='nao';
+ };
  $('managementEditForm').onsubmit=async event=>{
   event.preventDefault();if(busy||!snapshot||!window.CampoControl.authorized())return;
   const token=serial;

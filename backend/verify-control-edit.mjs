@@ -52,4 +52,24 @@ assert.equal(published.data.tree.photos.length,3);
 assert.equal((await call('/api/control/create',desktop)).data.tree.sharedVersion,1);
 assert.equal((await call('/api/control/create',{...desktop,operationId:'different-op'})).status,409);
 assert.equal(sql.prepare('SELECT COUNT(*) n FROM shared_photos WHERE tree_id=?').get('desktop-new').n,3);
+const bySpan={...desktop,operationId:'desktop-by-span',record:{...desktop.record,id:'desktop-by-span',
+ formValidation:1,mt:false,bt:true,btDistance:0,pole:'',span:'BT-234',position:'Lateral',projection:'nao',
+ species:'Não identificada',treeSite:'publico',poda:'nao',grouped:'nao',circ:28}};
+const blockedDistance=await call('/api/control/create',{...bySpan,record:{...bySpan.record,mt:true,mtDistance:''}});
+assert.equal(blockedDistance.status,400);
+assert.match(blockedDistance.data.error,/Distância copa → MT/);
+const missingReference=await call('/api/control/create',{...bySpan,record:{...bySpan.record,span:''}});
+assert.equal(missingReference.status,400);
+assert.match(missingReference.data.error,/ID do poste ou do vão/);
+const bySpanResult=await call('/api/control/create',bySpan);
+assert.equal(bySpanResult.status,200,JSON.stringify(bySpanResult.data));
+assert.equal(bySpanResult.data.tree.span,'BT-234');
+assert.equal(bySpanResult.data.tree.btDistance,'0');
+const invalidate=await call('/api/control/edit',{id:'desktop-by-span',version:1,operationId:'clear-ref',values:{span:''}});
+assert.equal(invalidate.status,400);assert.match(invalidate.data.error,/ID do poste ou do vão/);
+const offlinePlot={...bySpan,operationId:'desktop-no-network',record:{...bySpan.record,id:'desktop-no-network',noNetwork:true,
+ bt:false,span:'',btDistance:'',projection:'',position:'',grouped:'sim',circ:''}};
+const noNetwork=await call('/api/control/create',offlinePlot);
+assert.equal(noNetwork.status,200,JSON.stringify(noNetwork.data));
+assert.equal(noNetwork.data.tree.noNetwork,true);
 globalThis.fetch=nativeFetch;console.log('PASS management editing: permissions, conflicts and atomic locks, immutable history/photos, metadata and timing preserved, idempotent retry, VERA baseline and legacy Drive version checks. Isolated fixtures only.');

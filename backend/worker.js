@@ -1,10 +1,54 @@
 const ASSETS={};
-(function(root){'use strict';
-function numeric(value){return (typeof value==='number'||typeof value==='string')&&value!==null&&value!==undefined&&String(value).trim()!==''&&Number.isFinite(Number(value));}
-function missing(r){const out=[];const add=(field,label)=>out.push({field,label});if(!String(r.inspector||'').trim())add('inspector','Inspetor');if(!String(r.feeder||'').trim())add('feeder','Alimentador / localidade');if(!numeric(r.lat)||Math.abs(Number(r.lat))>90)add('lat','Latitude válida');if(!numeric(r.lon)||Math.abs(Number(r.lon))>180)add('lon','Longitude válida');if(!String(r.id||r.editing||'').startsWith('vera-')&&!r.photos?.some(p=>typeof p.original==='string'&&p.original.trim()))add('photos','Ao menos uma foto');if(!numeric(r.height)||Number(r.height)<=0)add('height','Altura da árvore');const network=['mt','bt','at'].filter(k=>r[k]===true||r[k]==='sim');if(network.length&&!String(r.pole||'').trim())add('pole','ID do poste');if(network.includes('mt')&&!String(r.span||'').trim())add('span','ID do vão MT');for(const k of network)if(!numeric(r[k+'Distance'])||Number(r[k+'Distance'])<0)add(k+'Distance','Distância copa → '+k.toUpperCase());return out;}
-function unknownSpecies(r){return !String(r.species||'').trim()||/^(árvore|arvore|não identificad[ao]|nao identificad[ao]|desconhecid[ao])$/i.test(String(r.species).trim());}
-function identificationPending(r){return !r.deletedRemote&&(unknownSpecies(r)||['queued','error','suggested'].includes(r.plantIdentification?.status));}
-root.CampoInspectionRules={missing,unknownSpecies,identificationPending};if(typeof module!=='undefined')module.exports=root.CampoInspectionRules;
+(function(root){
+ 'use strict';
+ const networkKeys=['mt','bt','at'];
+ const positions=['Projeção','Lateral','Abaixo da rede'];
+ const text=value=>String(value??'').trim();
+ const numeric=value=>(typeof value==='number'||typeof value==='string')&&text(value)!==''&&Number.isFinite(Number(value));
+ const positive=value=>numeric(value)&&Number(value)>0;
+ const yes=value=>value===true||value==='sim';
+ const answered=value=>value==='sim'||value==='nao';
+ const selectedNetworks=r=>networkKeys.filter(key=>yes(r[key]));
+ function missing(r){
+  const out=[];
+  const add=(field,label)=>out.push({field,label});
+  if(!text(r.inspector))add('inspector','Inspetor');
+  if(!text(r.feeder))add('feeder','Alimentador / localidade');
+  if(!numeric(r.lat)||Math.abs(Number(r.lat))>90)add('lat','Latitude válida');
+  if(!numeric(r.lon)||Math.abs(Number(r.lon))>180)add('lon','Longitude válida');
+  if(!String(r.id||r.editing||'').startsWith('vera-')&&!r.photos?.some(p=>typeof p?.original==='string'&&text(p.original)))
+   add('photos','Ao menos uma foto');
+  if(!positive(r.height))add('height','Altura da árvore');
+  const network=selectedNetworks(r);
+  if(network.length&&!text(r.pole)&&!text(r.span))add('pole','ID do poste ou do vão');
+  for(const key of network){
+   const distance=r[key+'Distance'];
+   if(!numeric(distance)||Number(distance)<0)add(key+'Distance','Distância copa → '+key.toUpperCase());
+  }
+  return out;
+ }
+ function formMissing(r){
+  const out=missing(r),network=selectedNetworks(r);
+  const add=(field,label)=>out.push({field,label});
+  if(!network.length&&!yes(r.noNetwork))add('noNetwork','Rede MT, BT, AT ou sem rede próxima');
+  if(network.length&&yes(r.noNetwork))add('noNetwork','Marque as redes presentes ou sem rede próxima');
+  if(!answered(r.grouped))add('grouped','Poda agrupada');
+  if(r.grouped!=='sim'&&!positive(r.dap)&&!positive(r.circ))add('dap','DAP ou CAP');
+  if(!text(r.species))add('species','Espécie ou “Não identificada”');
+  if(!answered(r.poda))add('poda','Necessidade de poda');
+  if(!['publico','privado'].includes(r.treeSite))add('treeSite','Local público ou privado');
+  if(network.length){
+   if(!positions.includes(r.position))add('position','Posição em relação à rede');
+   if(!answered(r.projection))add('projection','Árvore em projeção');
+   else if(r.position==='Projeção'&&r.projection!=='sim')add('projection','Projeção incompatível com a posição');
+  }
+  return out;
+ }
+ function unknownSpecies(r){return !text(r.species)||/^(árvore|arvore|não identificad[ao]|nao identificad[ao]|desconhecid[ao])$/i.test(text(r.species));}
+ function identificationPending(r){return !r.deletedRemote&&(unknownSpecies(r)||['queued','error','suggested'].includes(r.plantIdentification?.status));}
+ const savedMissing=r=>r.formValidation===1?formMissing(r):missing(r);
+ root.CampoInspectionRules={missing,formMissing,savedMissing,unknownSpecies,identificationPending};
+ if(typeof module!=='undefined')module.exports=root.CampoInspectionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 (function(root){
@@ -39,8 +83,12 @@ root.CampoInspectionRules={missing,unknownSpecies,identificationPending};if(type
   if(state==='missing')add('photos');
   else if(state==='unknown')add('photoReview');
   const network=['mt','bt','at'].filter(key=>yes(record[key]));
-  if(network.length&&!text(record.pole))add('pole');
-  if(network.includes('mt')&&!text(record.span))add('span');
+  if(record.formValidation===1){
+   if(network.length&&!text(record.pole)&&!text(record.span))add('pole');
+  }else{
+   if(network.length&&!text(record.pole))add('pole');
+   if(network.includes('mt')&&!text(record.span))add('span');
+  }
   for(const key of network){
    const distance=record[key+'Distance'];
    if(!numeric(distance)||Number(distance)<0)add(key+'Distance');
@@ -49,9 +97,9 @@ root.CampoInspectionRules={missing,unknownSpecies,identificationPending};if(type
   if(!within(record.lat,90)||!within(record.lon,180))add('coordinates');
   if(!text(record.feeder))add('feeder');
   if(!positive(record.height))add('height');
-  if(!positive(record.dap)&&!positive(record.circ))add('trunk');
+  if(!(record.formValidation===1&&yes(record.grouped))&&!positive(record.dap)&&!positive(record.circ))add('trunk');
   if(!assessed(record.poda))add('poda');
-  if(!assessed(record.projection))add('projection');
+  if(!yes(record.noNetwork)&&!assessed(record.projection))add('projection');
   if(!['publico','privado'].includes(record.treeSite))add('treeSite');
   return result;
  }
@@ -940,7 +988,7 @@ async function drive(request,env,status=false,consolidate=false,adminView=false)
   try{payload=JSON.parse(await (await limitedBody(request,30*1024*1024)).text());}catch(e){return json({error:e.message==='SIZE'?'Solicitação excede o limite. Use fotos de até 20 MB.':'Solicitação inválida.'},e.message==='SIZE'?413:400);}
   if(consolidate){if(!/^[a-zA-Z0-9_-]{1,100}$/.test(payload.recordId||'')||!Number.isFinite(Date.parse(payload.version))||!/^\d{4}-\d{2}-\d{2}T[\d:.Z+-]+$/.test(payload.version||''))return json({error:'Cadastro inválido.'},400);payload={action:'consolidate',recordId:payload.recordId,version:payload.version};}else{
   if(!/^[a-zA-Z0-9_-]{1,100}$/.test(payload.recordId||'')||!/^\d{4}-\d{2}-\d{2}T[\d:.Z+-]+$/.test(payload.version||'')||!Number.isFinite(Date.parse(payload.version))||! /^(?:[a-zA-Z0-9_-]+_(?:original\.(?:jpg|png|webp|heic)|georreferenciada\.jpg)|inspecao\.(?:xlsx|kml)|metadados\.json)$/.test(payload.name||'')||typeof payload.base64!=='string'||!payload.base64.length||payload.base64.length>28000000||payload.base64.length%4!==0||! /^[A-Za-z0-9+/]*={0,2}$/.test(payload.base64))return json({error:'Arquivo ou identificação inválidos.'},400);
-  if(payload.name==='metadados.json'){try{const bytes=Uint8Array.from(atob(payload.base64),c=>c.charCodeAt(0)),metadata=JSON.parse(new TextDecoder().decode(bytes)),missing=CampoInspectionRules.missing(metadata);if(metadata.id!==payload.recordId||metadata.updatedAt!==payload.version)return json({error:'Metadados não correspondem ao cadastro enviado.',code:'INVALID',retryable:false},422);if(missing.length)return json({error:'Preencha antes de sincronizar: '+missing.map(p=>p.label).join(', '),code:'INCOMPLETE',retryable:false},422);}catch{return json({error:'Metadados inválidos.',code:'INVALID',retryable:false},422);}}payload={action:'file',recordId:payload.recordId,version:payload.version,name:payload.name,base64:payload.base64};
+  if(payload.name==='metadados.json'){try{const bytes=Uint8Array.from(atob(payload.base64),c=>c.charCodeAt(0)),metadata=JSON.parse(new TextDecoder().decode(bytes)),missing=CampoInspectionRules.savedMissing(metadata);if(metadata.id!==payload.recordId||metadata.updatedAt!==payload.version)return json({error:'Metadados não correspondem ao cadastro enviado.',code:'INVALID',retryable:false},422);if(missing.length)return json({error:'Preencha antes de sincronizar: '+missing.map(p=>p.label).join(', '),code:'INCOMPLETE',retryable:false},422);}catch{return json({error:'Metadados inválidos.',code:'INVALID',retryable:false},422);}}payload={action:'file',recordId:payload.recordId,version:payload.version,name:payload.name,base64:payload.base64};
   }
  }
  if(!status&&env.SHARED_DB){try{const tree=await env.SHARED_DB.prepare('SELECT deleted FROM shared_trees WHERE id=?').bind(payload.recordId).first();if(tree?.deleted)return json({error:'Árvore excluída pelo administrador. Não será reenviada.',code:'DELETED'},410);}catch{return json({error:'Não foi possível conferir o cadastro. Tente novamente.'},503);}}
@@ -1098,12 +1146,14 @@ async function sharedBody(request,limit=6500000){try{return JSON.parse(await(awa
 async function sharedRead(db,id){return db.prepare('SELECT * FROM shared_trees WHERE id=?').bind(id).first();}
 function sharedData(raw,actor,imported=false){
  if(!raw||!sharedId(raw.id)||!sharedCoordinate(raw.lat,90)||!sharedCoordinate(raw.lon,180))throw sharedError('ID, latitude e longitude válidos são obrigatórios.');
- const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
+ const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
  const out={id:raw.id,lat:Number(raw.lat),lon:Number(raw.lon),photos:[],createdAt:Number.isFinite(Date.parse(raw.createdAt))?raw.createdAt:new Date().toISOString(),updatedAt:Number.isFinite(Date.parse(raw.updatedAt))?raw.updatedAt:new Date().toISOString()};
  for(const key of allowed){if(typeof raw[key]==='boolean')out[key]=raw[key];else if(raw[key]!==undefined&&raw[key]!==null)out[key]=String(raw[key]).slice(0,key==='note'?5000:1000);}
  if(out.treeSite!==undefined&&!['','publico','privado'].includes(out.treeSite))throw sharedError('Selecione área pública ou privada para o local da árvore.');
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
+ if(raw.noNetwork!==undefined)out.noNetwork=raw.noNetwork===true||raw.noNetwork==='sim';
+ if(raw.formValidation===1)out.formValidation=1;
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
  const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
  if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
@@ -1125,6 +1175,8 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if((old?.version||0)!==expected)throw sharedError('Outra pessoa atualizou esta árvore. Reabra a versão mais recente antes de salvar suas alterações.',409);
  const original=old?JSON.parse(old.data):null;
  if(original&&data.treeSite===undefined&&original.treeSite!==undefined)data.treeSite=original.treeSite;
+ if(original?.noNetwork!==undefined&&data.noNetwork===undefined)data.noNetwork=original.noNetwork;
+ if(original?.formValidation===1)data.formValidation=1;
  for(const key of ['archivedPhotoEvidence','folderUrl'])if(original?.[key]!=null)data[key]=original[key];
  data.createdBy=original?original.createdBy||original.inspector||original.lastInspector||old.actor:actor;
  if(identity){data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}
@@ -1134,6 +1186,10 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  for(const p of photos){if(!sharedId(p.id)||!sharedId(p.assetId))throw sharedError('Referência de foto inválida.');
   if(!uploadMap.has(p.assetId)&&!await db.prepare('SELECT asset_id FROM shared_photos WHERE tree_id=? AND asset_id=?').bind(id,p.assetId).first())throw sharedError('Foto ainda não recebida. Tente sincronizar novamente.');
   data.photos.push({id:p.id,assetId:p.assetId,name:String(p.name||'foto.jpg').slice(0,180),receivedAt:p.receivedAt||data.updatedAt,identify:p.identify===true,organ:String(p.organ||'auto').slice(0,20),phase:['before','after','current'].includes(p.phase)?p.phase:'current'});
+ }
+ if(body.record.formValidation===1&&!imported){
+  const missing=CampoInspectionRules.formMissing({...data,photos:data.photos.map(p=>({original:p.assetId}))});
+  if(missing.length)throw sharedError('Complete: '+missing.map(field=>field.label).join(', ')+'.');
  }
  const stamp=new Date().toISOString(),version=expected+1;
  const statement=old?db.prepare('UPDATE shared_trees SET data=?,version=?,updated_at=?,last_op=?,actor=? WHERE id=? AND version=? AND deleted=0 AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=shared_trees.id AND expires_at>unixepoch()*1000)').bind(JSON.stringify(data),version,stamp,body.operationId,actor,id,expected):db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)').bind(id,JSON.stringify(data),stamp,body.operationId,actor,id);
@@ -1528,7 +1584,7 @@ async function controlAPI(request,env){try{
  }}
 
 // Administrative corrections reuse the central row and its immutable history.
-const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','os','address','note','area','access','team','municipality','perimeter','key','street'];
+const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
 async function controlEditSnapshot(db,env,id){
  if(!sharedId(id))throw sharedError('ID inválido.');
  const row=await sharedRead(db,id);
@@ -1571,6 +1627,12 @@ async function controlEditAPI(request,env,db){
   seen.add(p.assetId);copies.push(p);data.photos.push({id:p.assetId,assetId:p.assetId,name:String(p.name||'Foto anexada no PC').slice(0,180),receivedAt:stamp,phase:'current'});
  }
  if(data.photos.length>12&&data.photos.length>(part.record.photos||[]).length)throw sharedError('Limite de 12 fotos atuais por cadastro. As fotos existentes foram preservadas.');
+ const errors=record=>CampoInspectionRules.formMissing({
+  ...record,photos:[{original:'edição-administrativa'}]
+ });
+ const existingIssues=new Set(errors(part.record).map(issue=>issue.field+':'+issue.label));
+ const introduced=errors(data).filter(issue=>!existingIssues.has(issue.field+':'+issue.label));
+ if(introduced.length)throw sharedError('Complete: '+introduced.map(issue=>issue.label).join(', ')+'.');
  const condition=part.archive?{sql:'NOT EXISTS(SELECT 1 FROM shared_trees WHERE id=?)',args:[body.id]}:historyCondition(part,'editing');
  const guard=condition.sql+' AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)',args=[...condition.args,body.id];
  const first=part.row?db.prepare('UPDATE shared_trees SET data=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND '+guard).bind(JSON.stringify(data),stamp,body.operationId,actor,body.id,...args):db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE '+guard).bind(body.id,JSON.stringify(data),stamp,body.operationId,actor,...args);
@@ -1592,7 +1654,7 @@ async function controlCreateAPI(request,env,db){
  const old=await sharedRead(db,record.id);
  if(old&&old.last_op!==body.operationId)throw sharedError('Este ID já pertence a uma árvore.',409);
  const checked=sharedData({...record,inspector:actor},actor);
- const missing=CampoInspectionRules.missing({...checked,photos:[{original:'validar-no-envio'}]});
+ const missing=CampoInspectionRules.savedMissing({...checked,photos:[{original:'validar-no-envio'}]});
  if(missing.length)throw sharedError('Complete: '+missing.map(field=>field.label).join(', ')+'.');
  const tree=await sharedSave(db,{...body,record:{...record,inspector:actor,imported:false}},actor,false,env.CAMPO_USER);
  await realtimePublish(env,'management-create');

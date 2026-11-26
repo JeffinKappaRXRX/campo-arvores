@@ -3,10 +3,10 @@ const dom=new JSDOM(fs.readFileSync('docs/index.html','utf8'),{url:'https://camp
 Object.defineProperty(w,'crypto',{value:globalThis.crypto});
 Object.defineProperty(w.navigator,'onLine',{value:false,configurable:true});
 Object.assign(w,{indexedDB,structuredClone,sharedContext:{},fieldMap:null,updateMapPosition(){},renderInspectionPins(){},renderSyncStatus(){},syncLabel:()=>'',receiptValid:()=>false,driveBusy:false,syncAutomatic:false,syncDestination:'google',renderPlantResult(){},refreshDistanceUnits(){},confirm:()=>{confirms++;return true;},scrollTo(){},fetch:async()=>{throw Error('Unexpected network call');}});w.HTMLElement.prototype.scrollIntoView=function(){};const run=source=>vm.runInContext(source,dom.getInternalVMContext());
-for(const f of ['distance-units.js','draft-store.js'])run(fs.readFileSync('docs/'+f,'utf8'));run(fs.readFileSync('docs/app.js','utf8').split('\n').filter(line=>!line.startsWith("window.addEventListener('DOMContentLoaded'")).join('\n'));run(fs.readFileSync('docs/field-reliability.js','utf8').split('\n').find(line=>line.startsWith('function fieldSignature(')));run(fs.readFileSync('docs/plant.js','utf8'));
+for(const f of ['distance-units.js','draft-store.js','inspection-rules.js'])run(fs.readFileSync('docs/'+f,'utf8'));run(fs.readFileSync('docs/app.js','utf8').split('\n').filter(line=>!line.startsWith("window.addEventListener('DOMContentLoaded'")).join('\n'));run(fs.readFileSync('docs/field-reliability.js','utf8').split('\n').find(line=>line.startsWith('function fieldSignature(')));run(fs.readFileSync('docs/plant.js','utf8'));
 const expr=s=>run(s),flush=()=>new Promise(r=>setImmediate(r));const image='data:image/jpeg;base64,ZmFrZQ==';
 const evidence=[image,'data:image/jpeg;base64,c2Vjb25k','data:image/jpeg;base64,dGhpcmQ='].map((original,i)=>({id:'photo-'+i,name:i+'.jpg',identify:true,original}));
-function fill(note='work',items=evidence){w.document.getElementById('inspector').value='Tester';w.document.getElementById('feeder').value='RBR-01C1';w.document.getElementById('lat').value='-9.97';w.document.getElementById('lon').value='-67.81';w.document.getElementById('height').value='7';w.document.getElementById('note').value=note;expr(`photos=${JSON.stringify(items)};renderPhotos();`);}
+function fill(note='work',items=evidence){w.document.getElementById('inspector').value='Tester';w.document.getElementById('feeder').value='RBR-01C1';w.document.getElementById('lat').value='-9.97';w.document.getElementById('lon').value='-67.81';w.document.getElementById('height').value='7';w.document.getElementById('note').value=note;for(const [id,value] of Object.entries({dap:'12',poda:'nao',grouped:'nao',treeSite:'publico',species:'Não identificada'}))w.document.getElementById(id).value=value;w.document.getElementById('noNetwork').checked=true;expr(`photos=${JSON.stringify(items)};renderPhotos();`);}
 async function submit(kind='next'){const b=kind==='next'?w.document.querySelector('.actions button[type=submit]'):w.document.querySelector('[data-after-save="'+kind+'"]');await w.document.getElementById('form').onsubmit({preventDefault(){},submitter:b});assert.equal(b.disabled,false);return b;}
 (async()=>{await expr('openFieldDatabase()');
 const photoStatus=w.document.getElementById('photoMinimum'),saveStatus=w.document.getElementById('formSaveStatus');
@@ -20,6 +20,31 @@ for(const [action,count] of [['next',0],['keep',1],['sync',2],['zip',2]]){
  assert.equal((await expr("req('meta','readonly',s=>s.get('draft'))")).photos.length,items.length);
  assert.equal(w.document.getElementById('note').value,'offline draft for '+action);
 }
+fill('dock');
+const field=id=>w.document.getElementById(id);
+field('noNetwork').checked=false;
+await submit();
+assert.match(saveStatus.textContent,/Sem rede próxima/i);
+assert.equal(expr('records.length'),0);
+assert.equal((await expr("req('meta','readonly',s=>s.get('draft'))")).note,'dock');
+field('bt').checked=true;field('bt').dispatchEvent(new w.Event('change',{bubbles:true}));
+field('span').value='BT-12';field('position').value='Lateral';field('projection').value='nao';
+await submit();
+assert.match(saveStatus.textContent,/Distância copa → BT/);
+assert.doesNotMatch(saveStatus.textContent,/ID do poste ou do vão/);
+assert.equal(expr('records.length'),0);
+field('btDistance').value='0';
+assert.equal(expr('CampoInspectionRules.formMissing(read()).length'),0);
+field('mt').checked=true;field('mt').dispatchEvent(new w.Event('change',{bubbles:true}));
+assert.deepEqual(Array.from(expr('CampoInspectionRules.formMissing(read()).map(p=>p.field)')),['mtDistance']);
+field('mtDistance').value='50';field('span').value='';field('pole').value='P-15';
+assert.equal(expr('CampoInspectionRules.formMissing(read()).length'),0);
+field('grouped').value='sim';field('dap').value=field('circ').value='';
+assert.equal(expr('CampoInspectionRules.formMissing(read()).length'),0);
+field('noNetwork').checked=true;field('noNetwork').dispatchEvent(new w.Event('change',{bubbles:true}));
+assert.equal(field('bt').checked,false);assert.equal(field('mt').checked,false);
+assert.equal(field('projection').disabled,true);
+assert.equal(expr('CampoInspectionRules.formMissing(read()).length'),0);
 fill();
 w.document.querySelector('[data-remove="2"]').click();
 assert.match(photoStatus.textContent,/2 de 3/);

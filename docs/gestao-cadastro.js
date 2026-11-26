@@ -160,6 +160,7 @@
   if(data.type==='map-feedback')coordinates.textContent=data.message;
   if(data.type==='network'&&!formSaveBusy&&!attaching){
    for(const key of ['pole','span','feeder'])setField(key,data[key]);
+   if(['mt','bt','at'].includes(data.network)){const network=$(data.network);network.checked=true;network.dispatchEvent(new Event('change',{bubbles:true}));}
    if(data.spanGeometry&&typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(data.spanGeometry);
    scheduleDraft();renderCompletion();
   }
@@ -187,8 +188,6 @@
   form.onsubmit=event=>{
    event.preventDefault();
    if(!authorized||attaching||publishing||pending().length){publishStatus('Aguarde ou sincronize o cadastro anterior.');return;}
-   const problems=completionProblems(read()).filter(problem=>problem.field!=='photos');
-   if(problems.length){publishStatus('Complete os campos obrigatórios: '+problems.map(problem=>problem.label).join(', ')+'.');return;}
    if(!editing){
     const selected=usePhotoDate?capturePhoto():null;
     if(usePhotoDate&&!selected){publishStatus('A data da foto está ausente ou inválida. Anexe uma foto com data válida ou desative a opção na Gestão.');return;}

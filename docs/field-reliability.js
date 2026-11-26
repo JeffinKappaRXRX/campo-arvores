@@ -1,6 +1,6 @@
 'use strict';
 let fieldBaseline=null,fieldReady=false,trunkMeasureSource=null,latestZipBackup=null;
-function fieldSignature(v=read()){const values=fields.map(k=>v[k]??'');return JSON.stringify([values,v.photos?.map(p=>[p.id,p.name])||[],v.heightMeasurement,v.plantIdentification]);}
+function fieldSignature(v=read()){const values=fields.map(k=>v[k]??(k==='noNetwork'?false:''));return JSON.stringify([values,v.photos?.map(p=>[p.id,p.name])||[],v.heightMeasurement,v.plantIdentification]);}
 function setFieldBaseline(v=read()){fieldBaseline=fieldSignature(v);trunkMeasureSource=v.measurements?.trunk?.source||null;}
 function fieldHasChanges(){return fieldReady&&fieldBaseline!==fieldSignature();}
 function guardFieldNavigation(name){if(name==='inspect'||$('inspect').hidden||!fieldHasChanges())return true;if(!confirm('Há alterações ainda não salvas como cadastro. Sair desta tela e manter o rascunho neste aparelho?'))return false;saveDraft().catch(e=>tell('Rascunho não salvo: '+e.message));return true;}
