@@ -41,8 +41,8 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if(original&&data.treeSite===undefined&&original.treeSite!==undefined)data.treeSite=original.treeSite;
  if(original?.noNetwork!==undefined&&data.noNetwork===undefined)data.noNetwork=original.noNetwork;
  if(original?.formValidation===1)data.formValidation=1;
- if(body.record.formValidation!==1&&data.pole===original?.pole&&original.poleAudit)data.poleAudit=original.poleAudit;
- if(body.record.formValidation!==1&&data.span===original?.span&&original.spanNetwork)data.spanNetwork=original.spanNetwork;
+ if(body.record.formValidation!==1&&original?.poleAudit&&data.pole===original.pole)data.poleAudit=original.poleAudit;
+ if(body.record.formValidation!==1&&original?.spanNetwork&&data.span===original.span)data.spanNetwork=original.spanNetwork;
  for(const key of ['archivedPhotoEvidence','folderUrl'])if(original?.[key]!=null)data[key]=original[key];
  data.createdBy=original?original.createdBy||original.inspector||original.lastInspector||old.actor:actor;
  if(identity){data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}
