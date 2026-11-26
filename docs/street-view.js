@@ -7,7 +7,7 @@ const CampoStreetView=(()=>{
  return {coordinate,url,inside};
 })();
 if(typeof module!=='undefined')module.exports=CampoStreetView;
-if(typeof document!=='undefined'){
+if(typeof document!=='undefined'&&document.querySelector('.map-canvas')){
  const sv={active:false,point:null,marker:null,googleMarker:null,pano:null,serial:0,timer:null,drag:null,suppressClick:false};
  const person='<svg viewBox="0 0 24 32" aria-hidden="true"><circle cx="12" cy="5" r="4"/><path d="M7 11h10l3 9-3 1-2-6v15h-4V20h-1v10H6V15l-2 6-3-1 4-9z"/></svg>';
  const button=document.createElement('button');button.type='button';button.id='streetViewToggle';button.className='street-view-toggle secondary';button.title='Arraste o bonequinho até a rua ou toque e escolha um ponto';button.setAttribute('aria-label','Street View: arrastar ou escolher ponto na rua');button.setAttribute('aria-pressed','false');button.innerHTML=person+'<span>Ver rua</span>';
