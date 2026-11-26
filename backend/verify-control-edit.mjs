@@ -35,4 +35,21 @@ snap=(await call('/api/control/edit?id=legacy')).data;archive={...archive,note:'
 const legacyBody={id:'legacy',version:0,baselineToken:snap.baselineToken,operationId:'legacy-edit',values:{species:'Ipê'}};assert.equal((await call('/api/control/edit',legacyBody)).status,409);
 snap=(await call('/api/control/edit?id=legacy')).data;result=await call('/api/control/edit',{...legacyBody,baselineToken:snap.baselineToken});assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(result.data.tree.photos[0].assetId,'p0');assert.equal(JSON.parse(sql.prepare('SELECT data FROM shared_baselines WHERE tree_id=?').get('legacy').data).note,archive.note);
 await call('/api/admin/users',{name:'Inspector',email:'inspector@example.test',username:'inspector',password:'Inspector-password-123',role:'inspector',blocked:false});const inspector=await call('/api/auth/login',{username:'inspector',password:'Inspector-password-123'}),inspectorCookie=inspector.response.headers.getSetCookie().find(v=>v.startsWith('__Host-campo-session=')).split(';')[0];assert.equal((await call('/api/control/edit?id=tree1',undefined,inspectorCookie)).status,403);assert.equal((await call('/api/control/edit',body,inspectorCookie)).status,403);
+const desktopPhotos=await Promise.all([1,2,3].map(async n=>{
+ const buffer=Buffer.from([255,216,255,n]),assetId='desktop-photo-'+n;
+ const sha256=Buffer.from(await crypto.subtle.digest('SHA-256',buffer)).toString('hex');
+ return {id:assetId,assetId,image:'data:image/jpeg;base64,'+buffer.toString('base64'),sha256,name:'Foto '+n};
+}));
+const desktop={record:{...original,id:'desktop-new',feeder:'TAN-01C1',pole:'10',span:'11',photos:desktopPhotos.map(({id,assetId,name})=>({id,assetId,name}))},
+ baseVersion:0,operationId:'desktop-op',uploads:desktopPhotos};
+assert.equal((await call('/api/control/create',desktop,inspectorCookie)).status,403);
+assert.equal((await call('/api/control/create',{...desktop,record:{...desktop.record,photos:desktop.record.photos.slice(0,2)}})).status,400);
+assert.equal((await call('/api/control/create',{...desktop,record:{...desktop.record,height:''}})).status,400);
+const published=await call('/api/control/create',desktop);
+assert.equal(published.status,200,JSON.stringify(published.data));
+assert.equal(published.data.tree.inspector,'Administrador (Gestão)');
+assert.equal(published.data.tree.photos.length,3);
+assert.equal((await call('/api/control/create',desktop)).data.tree.sharedVersion,1);
+assert.equal((await call('/api/control/create',{...desktop,operationId:'different-op'})).status,409);
+assert.equal(sql.prepare('SELECT COUNT(*) n FROM shared_photos WHERE tree_id=?').get('desktop-new').n,3);
 globalThis.fetch=nativeFetch;console.log('PASS management editing: permissions, conflicts and atomic locks, immutable history/photos, metadata and timing preserved, idempotent retry, VERA baseline and legacy Drive version checks. Isolated fixtures only.');

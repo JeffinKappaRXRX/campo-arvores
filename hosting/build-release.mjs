@@ -14,6 +14,20 @@ assets['/sw.js']=canonical['/sw.js'].replace("const CACHE='campo-app-build';","c
 // Use distinct request URLs even when the browser is still controlled by an older worker.
 const versionLinks=html=>html.replace(/((?:src|href)=")([\w./-]+\.(?:js|css))"/g,'$1$2?v='+build+'"');
 assets['/acesso.html']=versionLinks(assets['/index.html']);
+// The desktop entry reuses the field form markup and logic with a separate draft database.
+if(assets['/gestao-cadastro.js']){
+ const fieldApp=assets['/app.js'];
+ const initListener=/^window\.addEventListener\('DOMContentLoaded',\(\)=>init\(\).+$/m;
+ if(!initListener.test(fieldApp)||!fieldApp.includes("indexedDB.open('campo-vegetacao',1)"))throw Error('Revise a inicialização do formulário da gestão.');
+ assets['/gestao-cadastro-app.js']=fieldApp.replace("indexedDB.open('campo-vegetacao',1)","indexedDB.open('campo-gestao-cadastro',1)").replace(initListener,'');
+ const omitFromDesktop=['app-updates.js','user-access.js','team-presence.js','field-corrections.js','offline-auto.js','field-photo-gps.js','route-field.js'];
+ let desktop=assets['/index.html'].replace('class="account-locked"','class="account-locked gestao-cadastro"')
+  .replace('<script src="app.js"></script>','<script src="gestao-cadastro-app.js"></script>')
+  .replace('</head>','<link rel="stylesheet" href="gestao-fotos.css"></head>')
+  .replace('</body>','<script src="gestao-cadastro.js"></script></body>');
+ for(const name of omitFromDesktop)desktop=desktop.replace('<script src="'+name+'"></script>','');
+ assets['/gestao-cadastro.html']=versionLinks(desktop);
+}
 for(const page of ['/gestao.html','/consulta-arbora.html'])if(assets[page])assets[page]=versionLinks(assets[page]);
 await fs.writeFile(new URL('sw.js',docs),assets['/sw.js']);
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');

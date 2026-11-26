@@ -139,9 +139,8 @@
   }
   return null;
  }
- function read(url){
+ function readSource(image){
   try{
-   const image=source(url);
    if(!image||image.size<8)return null;
    const header=image.read(0,Math.min(12,image.size)),first=header.getUint16(0);
    if(first===0xffd8)return jpeg(image);
@@ -153,6 +152,7 @@
   }catch{/* Malformed or unsupported metadata remains optional. */}
   return null;
  }
- globalThis.CampoExifGps={read};
- if(typeof module!=='undefined')module.exports={read};
+ function read(url){return readSource(source(url));}
+ globalThis.CampoExifGps={read,readSource};
+ if(typeof module!=='undefined')module.exports={read,readSource};
 })();

@@ -1,0 +1,17 @@
+#controlBasemapStatus { position:absolute; bottom:1.75rem; left:.6rem; z-index:700; max-width:75%; pointer-events:none; background:var(--panel,#221d32); padding:.3rem .5rem; border-radius:.4rem; }
+#controlBasemapStatus:empty { display:none; }
+#gestaoFotos [hidden] { display:none!important; }
+.desktop-photo-grid { display:grid; grid-template-columns:minmax(18rem,1fr) minmax(15rem,1fr); gap:1rem; margin-top:1rem; }
+#desktopPhotoRows { max-height:25rem; overflow:auto; }
+.desktop-photo-row { display:flex; align-items:center; gap:.55rem; padding:.3rem 0; }
+.desktop-photo-row button { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+.desktop-photo-row input { width:auto; }
+#desktopPhotoImage { display:block; max-width:100%; max-height:22rem; object-fit:contain; }
+#desktopPhotoImage[hidden] { display:none; }
+#desktopFormHost iframe { width:100%; height:min(80vh,65rem); min-height:30rem; border:1px solid currentColor; border-radius:10px; background:#12261f; }
+.desktop-photo-popup-image { display:block; width:100%; max-height:13rem; object-fit:contain; margin:.45rem 0; }
+.desktop-photo-marker { background:#5837a1; color:white; border:2px solid white; border-radius:100%; display:grid; place-items:center; font:700 12px system-ui; box-shadow:0 1px 5px #0007; }
+html.gestao-cadastro body>header,html.gestao-cadastro main>.hero,html.gestao-cadastro main>nav,html.gestao-cadastro #accountPanel { display:none!important; }
+html.gestao-cadastro main { max-width:100%; padding:.5rem; }
+html.gestao-cadastro #desktopPublishStatus { margin-top:.5rem; }
+@media(max-width:700px){.desktop-photo-grid{grid-template-columns:1fr;}}

@@ -48,6 +48,17 @@ const infos=box('iinf',full(0),u16(1),item);
 const locations=box('iloc',full(1),Buffer.from([0x44,0]),u16(1),u16(5),u16(1),u16(0),u16(1),u32(0),u32(tiffPacket.length));
 const heic=bytes(box('ftyp',Buffer.from('heic')),box('meta',full(0),infos,locations,box('idat',tiffPacket)));
 assert.deepEqual(exif.read(url(heic,'image/heic')),coordinates);
+// Desktop import reads metadata from bounded file slices instead of reading or decoding full images.
+const readSizes=[],responses=[],fakeFile=buffer=>({size:buffer.length,slice(start,end){return buffer.subarray(start,end);}});
+const workerContext=vm.createContext({importScripts(){},CampoExifGps:exif,self:{postMessage:message=>responses.push(message)},DataView,
+ FileReaderSync:class{readAsArrayBuffer(part){readSizes.push(part.length);return part.buffer.slice(part.byteOffset,part.byteOffset+part.byteLength);}}});
+vm.runInContext(fs.readFileSync('docs/gestao-foto-worker.js','utf8'),workerContext);
+workerContext.self.onmessage({data:{files:[fakeFile(image),fakeFile(png),fakeFile(Buffer.from('no metadata'))],start:48,scan:2}});
+assert.equal(responses[0].start,48);
+assert.deepEqual(Array.from(responses[0].points),[coordinates,coordinates,null]);
+assert(readSizes.every(size=>size<=256*1024));
+assert(readSizes.reduce((sum,size)=>sum+size,0)<2048,'large PNG payload is not read');
+
 
 (async()=>{
  const html=fs.readFileSync('docs/index.html','utf8'),dom=new JSDOM(html,{runScripts:'outside-only',url:'https://campo.test/'}),w=dom.window,d=w.document;

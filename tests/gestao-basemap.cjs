@@ -1,28 +1,41 @@
-const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const source=fs.readFileSync('docs/gestao-map.js','utf8'),html=fs.readFileSync('docs/gestao.html','utf8');
-const start=source.indexOf(' function setTiles('),end=source.indexOf(' function appendParams(',start);
-assert(start>=0&&end>start,'setTiles must remain available in the management map');
-assert.match(html,/<option value="local">Rede local · offline<\/option>/,'management offers the same offline local-map choice as field inspection');
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const {controller}=require('../docs/gestao-fundo.js');
+const html=fs.readFileSync('docs/gestao.html','utf8');
+assert.match(html,/<option value="local">Rede local · offline<\/option>/);
 
-const nodes={basemap:{value:'hybrid'},networkStatus:{textContent:''}},created=[],removed=[];
-const map={removeLayer:layer=>removed.push(layer)};
-const L={tileLayer(url,options){const handlers={};const layer={url,options,handlers,on(name,fn){handlers[name]=fn;return this;},addTo(target){this.target=target;return this;}};created.push(layer);return layer;}};
-const navigator={onLine:true};
-const context=vm.createContext({map,L,navigator,$:id=>nodes[id],status:text=>nodes.networkStatus.textContent=text,tiles:null});
-vm.runInContext(source.slice(start,end),context);
-
-context.setTiles();
-assert.equal(created.length,1);
-assert.match(created[0].url,/google\.com/);
-created[0].handlers.tileerror();created[0].handlers.tileerror();
-assert.equal(nodes.basemap.value,'hybrid','isolated tile failures do not discard the selected background');
-created[0].handlers.tileerror();
-assert.equal(nodes.basemap.value,'local','repeated online failures fall back to the local network');
-assert.equal(context.tiles,null);
-assert.match(nodes.networkStatus.textContent,/rede local ativada/i);
-
-nodes.basemap.value='streets';navigator.onLine=false;context.setTiles();
-assert.equal(nodes.basemap.value,'local','offline startup selects the local network immediately');
-assert.equal(created.length,1,'offline mode does not create a failing online tile layer');
-assert(removed.includes(created[0]));
-console.log('PASS management basemap: local offline option, immediate offline fallback and repeated tile-error fallback.');
+const layers=[];
+let choice='hybrid',online=true,status='';
+const backgrounds=controller({},{
+ choice:()=>choice,online:()=>online,status:text=>{status=text;},
+ layer:(url,options)=>{
+  const tile={url,options,events:{},on(name,fn){this.events[name]=fn;},addTo(){},remove(){this.removed=true;},setZIndex(){}};
+  layers.push(tile);return tile;
+ }
+});
+const load=(layer,event,count)=>{for(let i=0;i<count;i++)layer.events[event]();};
+backgrounds.select();
+assert.match(layers[0].url,/google\.com/);
+load(layers[0],'tileerror',1);
+load(layers[0],'tileload',3);
+layers[0].events.load();
+assert.equal(layers.length,1,'a partial tile failure does not change the background');
+layers[0].events.loading();
+load(layers[0],'tileerror',5);
+layers[0].events.load();
+assert.equal(choice,'hybrid','fallback preserves the chosen map');
+assert.match(layers[1].url,/arcgisonline/);
+assert(!layers[0].removed,'previous tiles stay on screen during recovery');
+load(layers[1],'tileload',2);layers[1].events.load();
+assert(layers[0].removed);
+assert.match(status,/satélite de reserva/);
+online=false;backgrounds.select();
+assert.equal(layers.length,2,'offline recovery does not request new tiles');
+assert(!layers[1].removed);
+online=true;backgrounds.select();
+assert.match(layers[2].url,/google\.com/);
+load(layers[2],'tileload',2);layers[2].events.load();
+assert(layers[1].removed);
+assert.equal(status,'');
+choice='local';backgrounds.select();
+assert(layers[2].removed);
+console.log('PASS management basemap: partial failure tolerance, fallback retains map selection, reconnect restores hybrid, explicit local mode.');

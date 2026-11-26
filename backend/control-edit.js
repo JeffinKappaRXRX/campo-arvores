@@ -52,3 +52,20 @@ async function controlEditAPI(request,env,db){
  await realtimePublish(env,'management-edit');
  return json({tree:sharedView(await sharedRead(db,body.id)),preserved:true});
 }
+
+async function controlCreateAPI(request,env,db){
+ if(request.method!=='POST')throw sharedError('Use POST.',405);
+ const body=await sharedBody(request),record=body?.record;
+ if(body?.baseVersion!==0||!sharedId(record?.id)||record.id.startsWith('vera-'))throw sharedError('Envie um novo cadastro de árvore.');
+ if(!Array.isArray(record.photos)||record.photos.length>12||new Set(record.photos.map(photo=>photo?.assetId).filter(sharedId)).size<3)
+  throw sharedError('Anexe pelo menos três fotos diferentes.');
+ const actor=env.CAMPO_USER?.name||'Administrador (Gestão)';
+ const old=await sharedRead(db,record.id);
+ if(old&&old.last_op!==body.operationId)throw sharedError('Este ID já pertence a uma árvore.',409);
+ const checked=sharedData({...record,inspector:actor},actor);
+ const missing=CampoInspectionRules.missing({...checked,photos:[{original:'validar-no-envio'}]});
+ if(missing.length)throw sharedError('Complete: '+missing.map(field=>field.label).join(', ')+'.');
+ const tree=await sharedSave(db,{...body,record:{...record,inspector:actor,imported:false}},actor,false,env.CAMPO_USER);
+ await realtimePublish(env,'management-create');
+ return json({tree});
+}
