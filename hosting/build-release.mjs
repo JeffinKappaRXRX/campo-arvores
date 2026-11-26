@@ -24,7 +24,7 @@ if(assets['/gestao-cadastro.js']){
  let desktop=assets['/index.html'].replace('class="account-locked"','class="account-locked gestao-cadastro"')
   .replace('<script src="app.js"></script>','<script src="gestao-cadastro-app.js"></script>')
   .replace('</head>','<link rel="stylesheet" href="gestao-fotos.css"></head>')
-  .replace('</body>','<script src="gestao-cadastro.js"></script></body>');
+  .replace('</body>','<script src="photo-exif-gps.js"></script><script src="gestao-cadastro.js"></script></body>');
  for(const name of omitFromDesktop)desktop=desktop.replace('<script src="'+name+'"></script>','');
  assets['/gestao-cadastro.html']=versionLinks(desktop);
 }

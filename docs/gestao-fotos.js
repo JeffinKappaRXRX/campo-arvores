@@ -5,6 +5,9 @@
  const allowed=()=>window.CampoControl?.authorized();
  const list=$('desktopPhotoRows'),feedback=$('desktopPhotoStatus'),filter=$('desktopPhotoFilter');
  const pageSize=25,batchSize=48;
+ const usePhotoDate=$('desktopUsePhotoDate'),datePreference='arbora-gestao-use-photo-date';
+ const dateFormat=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Rio_Branco'});
+ try{usePhotoDate.checked=localStorage.getItem(datePreference)==='1';}catch{/* The setting remains usable for this session. */}
  let map,layer,worker,scan=0,scanning=false,items=[],keys=new Set(),checked=new Set(),cluster=[],photo=null,page=0,bounds=null,plotted=0,processed=0;
  let previewUrl=null,frame=null,frameReady=false,queued=null,request=0,drawJob=0;
  const readyButtons=()=>{
@@ -45,8 +48,12 @@
   if(previewUrl)URL.revokeObjectURL(previewUrl);
   previewUrl=null;$('desktopPhotoImage').removeAttribute('src');
  }
+ function paintPhotoDate(){
+  $('desktopPhotoCapturedAt').textContent=photo?.capturedAt?'Tirada em '+dateFormat.format(new Date(photo.capturedAt)):
+   photo?.loaded?'Data de captura ausente nos metadados.':'';
+ }
  function preview(item){
-  photo=item;
+  photo=item;paintPhotoDate();
   $('desktopPhotoPreview').hidden=false;
   $('desktopPhotoName').textContent=photoName(item);
   $('desktopPhotoLocation').textContent=item.point?item.point.lat.toFixed(7)+', '+item.point.lon.toFixed(7):item.loaded?'Sem GPS legível. Você pode anexar a foto e marcar o ponto manualmente.':'Aguardando leitura do GPS…';
@@ -104,6 +111,7 @@
   if(processed>=items.length){
    scanning=false;msg();render();scheduleDraw();
    if(photo?.loaded){
+    paintPhotoDate();
     $('desktopLocatePhoto').disabled=!photo.point;
     $('desktopPhotoLocation').textContent=photo.point?photo.point.lat.toFixed(7)+', '+photo.point.lon.toFixed(7):'Sem GPS legível. Marque o ponto manualmente no formulário.';
    }
@@ -132,12 +140,13 @@
    worker.onmessage=event=>{
     const data=event.data;
     if(!allowed()||data.scan!==scan||data.start!==processed)return;
-    for(let n=0;n<data.points.length;n++){
+    for(let n=0;n<data.metadata.length;n++){
      const item=items[processed++];
-     item.point=data.points[n];item.loaded=true;
+     const metadata=data.metadata[n];
+     item.point=metadata?.point||null;item.capturedAt=metadata?.capturedAt||null;item.loaded=true;
      if(item.point){plotted++;include(item.point);}
     }
-    msg();scheduleDraw();
+    msg();paintPhotoDate();scheduleDraw();
     // Only repaint the file list when the import advances to the next visible page.
     if(processed<=pageSize||processed%240===0){render();if(photo?.point)$('desktopLocatePhoto').disabled=false;}
     processNext();
@@ -200,7 +209,12 @@
  $('desktopFiles').onclick=()=>$('desktopFilesInput').click();
  for(const id of ['desktopFolderInput','desktopFilesInput'])$(id).onchange=()=>{const input=$(id);addFiles(input.files);input.value='';};
  $('desktopFitPhotos').onclick=fit;$('desktopClearPhotos').onclick=clear;
- $('desktopCollect').onchange=()=>{loadForm();readyButtons();};
+ $('desktopCollect').onchange=()=>{loadForm();configurePhotoDate();readyButtons();};
+ function configurePhotoDate(){send({type:'photo-date',enabled:usePhotoDate.checked});}
+ usePhotoDate.onchange=()=>{
+  try{localStorage.setItem(datePreference,usePhotoDate.checked?'1':'0');}catch{/* Applies to this session. */}
+  configurePhotoDate();
+ };
  $('desktopGoToForm').onclick=towardForm;
  filter.onchange=()=>{page=0;render();};
  $('desktopPhotoPrevious').onclick=()=>{page--;render();};$('desktopPhotoNext').onclick=()=>{page++;render();};
@@ -211,7 +225,7 @@
  window.addEventListener('message',event=>{
   if(!allowed()||event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='arbora-gestao-cadastro')return;
   const data=event.data;
-  if(data.type==='ready'){frameReady=true;$('desktopFormStatus').textContent='Formulário pronto. Selecione uma foto no mapa para usar a posição e anexar.';readyButtons();}
+  if(data.type==='ready'){frameReady=true;configurePhotoDate();$('desktopFormStatus').textContent='Formulário pronto. Selecione uma foto no mapa para usar a posição e anexar.';readyButtons();}
   if(data.type==='status')$('desktopFormStatus').textContent=data.message;
   if(data.type==='attached'&&data.request===queued?.id){
    $('desktopFormStatus').textContent=data.error||(data.count?data.count+' foto(s) anexada(s) ao formulário.':'As fotos já estavam anexadas.');

@@ -1,7 +1,27 @@
 'use strict';
 (()=>{
  const send=(type,extra={})=>parent.postMessage({source:'arbora-gestao-cadastro',type,...extra},location.origin);
- let authorized=false,publishing=false,attaching=false,archiving=false;
+ let authorized=false,publishing=false,attaching=false,archiving=false,usePhotoDate=false;
+ const dateFormat=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Rio_Branco'});
+ const dateCache=new WeakMap(),dateHint=document.createElement('p');
+ dateHint.className='hint';dateHint.setAttribute('role','status');$('photoMinimum').after(dateHint);
+ function capturePhoto(){
+  for(const photo of photos){
+   if(!dateCache.has(photo))dateCache.set(photo,CampoExifGps.readMetadata(photo.original)?.capturedAt||null);
+   const date=dateCache.get(photo);
+   if(date&&Date.parse(date)<=Date.now()+300000)return {date,name:photo.name};
+  }
+  return null;
+ }
+ function showMappingDate(){
+  dateHint.hidden=!usePhotoDate||Boolean(editing);
+  if(dateHint.hidden)return;
+  const selected=capturePhoto();
+  dateHint.textContent=selected?'Data do mapeamento: '+dateFormat.format(new Date(selected.date))+' · '+selected.name:
+   'Anexe uma foto com data de captura válida. Para registrar com a data de hoje, desative a opção na Gestão.';
+ }
+ const renderExistingPhotos=renderPhotos;
+ renderPhotos=function(...args){renderExistingPhotos(...args);showMappingDate();};
  const status=document.createElement('p');
  status.id='desktopPublishStatus';status.setAttribute('role','status');$('formSaveStatus').after(status);
  const retry=document.createElement('button');
@@ -96,6 +116,7 @@
   if(!authorized||event.origin!==location.origin||event.source!==parent||event.data?.source!=='arbora-gestao-fotos')return;
   const data=event.data;
   if(data.type==='attach')void attach(data);
+  if(data.type==='photo-date'){usePhotoDate=data.enabled===true;showMappingDate();}
   if(data.type==='network'&&!formSaveBusy&&!attaching){
    for(const key of ['pole','span','feeder'])setField(key,data[key]);
    if(data.spanGeometry&&typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(data.spanGeometry);
@@ -127,6 +148,12 @@
    if(!authorized||attaching||publishing||pending().length){publishStatus('Aguarde ou sincronize o cadastro anterior.');return;}
    const problems=completionProblems(read()).filter(problem=>problem.field!=='photos');
    if(problems.length){publishStatus('Complete os campos obrigatórios: '+problems.map(problem=>problem.label).join(', ')+'.');return;}
+   if(!editing){
+    const selected=usePhotoDate?capturePhoto():null;
+    if(usePhotoDate&&!selected){publishStatus('A data da foto está ausente ou inválida. Anexe uma foto com data válida ou desative a opção na Gestão.');return;}
+    if(selected)sharedContext.createdAt=selected.date;
+    else delete sharedContext.createdAt;
+   }
    return submit(event);
   };
   authorized=true;

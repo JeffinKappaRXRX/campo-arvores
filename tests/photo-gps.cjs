@@ -48,14 +48,31 @@ const infos=box('iinf',full(0),u16(1),item);
 const locations=box('iloc',full(1),Buffer.from([0x44,0]),u16(1),u16(5),u16(1),u16(0),u16(1),u32(0),u32(tiffPacket.length));
 const heic=bytes(box('ftyp',Buffer.from('heic')),box('meta',full(0),infos,locations,box('idat',tiffPacket)));
 assert.deepEqual(exif.read(url(heic,'image/heic')),coordinates);
+function datedImage(date,offset=''){
+ const value=Buffer.alloc(96);
+ const short=(n,i)=>value.writeUInt16LE(n,i),long=(n,i)=>value.writeUInt32LE(n,i);
+ const entry=(at,id,type,count,pointer)=>{short(id,at);short(type,at+2);long(count,at+4);long(pointer,at+8);};
+ value.write('II');short(42,2);long(8,4);
+ short(1,8);entry(10,0x8769,4,1,26);
+ short(offset?2:1,26);entry(28,0x9003,2,20,58);
+ value.write(date,58);
+ if(offset){entry(40,0x9011,2,7,78);value.write(offset,78);}
+ return jpeg(value);
+}
+const dated=datedImage('2024:02:29 23:10:03');
+assert.deepEqual(exif.readMetadata(url(dated)),{point:null,capturedAt:'2024-03-01T04:10:03.000Z'});
+assert.equal(exif.read(url(dated)),null,'a date does not masquerade as GPS in the field app');
+assert.equal(exif.readMetadata(url(datedImage('2024:02:29 23:10:03','-03:00'))).capturedAt,'2024-03-01T02:10:03.000Z');
+assert.equal(exif.readMetadata(url(datedImage('2025:02:29 23:10:03'))).capturedAt,null,'invalid calendar dates are rejected');
+
 // Desktop import reads metadata from bounded file slices instead of reading or decoding full images.
 const readSizes=[],responses=[],fakeFile=buffer=>({size:buffer.length,slice(start,end){return buffer.subarray(start,end);}});
 const workerContext=vm.createContext({importScripts(){},CampoExifGps:exif,self:{postMessage:message=>responses.push(message)},DataView,
  FileReaderSync:class{readAsArrayBuffer(part){readSizes.push(part.length);return part.buffer.slice(part.byteOffset,part.byteOffset+part.byteLength);}}});
 vm.runInContext(fs.readFileSync('docs/gestao-foto-worker.js','utf8'),workerContext);
-workerContext.self.onmessage({data:{files:[fakeFile(image),fakeFile(png),fakeFile(Buffer.from('no metadata'))],start:48,scan:2}});
+workerContext.self.onmessage({data:{files:[fakeFile(image),fakeFile(png),fakeFile(dated),fakeFile(Buffer.from('no metadata'))],start:48,scan:2}});
 assert.equal(responses[0].start,48);
-assert.deepEqual(Array.from(responses[0].points),[coordinates,coordinates,null]);
+assert.deepEqual(Array.from(responses[0].metadata),[{point:coordinates,capturedAt:null},{point:coordinates,capturedAt:null},{point:null,capturedAt:'2024-03-01T04:10:03.000Z'},null]);
 assert(readSizes.every(size=>size<=256*1024));
 assert(readSizes.reduce((sum,size)=>sum+size,0)<2048,'large PNG payload is not read');
 

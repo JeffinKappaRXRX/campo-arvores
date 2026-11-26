@@ -15,7 +15,7 @@
    return new DataView(bytes.buffer,offset-first*3,length);
   }};
  }
- function tiff(view,start=0){
+ function tiff(view,start,metadata){
   if(view.byteLength-start<8)return null;
   const order=view.getUint16(start),little=order===0x4949;
   if(!little&&order!==0x4d4d)return null;
@@ -31,44 +31,77 @@
    }
    return props;
   }
-  const pointer=entries(long(4)).get(0x8825);
-  if(pointer?.type!==4||pointer.count!==1)return null;
-  const gps=entries(long(pointer.at));
-  function coord(valueTag,refTag,positive,negative,max){
-   const value=gps.get(valueTag),ref=gps.get(refTag);
-   if(value?.type!==5||value.count!==3||ref?.type!==2||ref.count!==2)return NaN;
-   const letter=String.fromCharCode(view.getUint8(start+ref.at));
-   if(letter!==positive&&letter!==negative)return NaN;
-   const offset=long(value.at);
-   const [degrees,minutes,seconds]=[0,8,16].map(n=>long(offset+n)/long(offset+n+4));
-   const number=degrees+minutes/60+seconds/3600;
-   if(minutes>=60||seconds>=60||!Number.isFinite(number)||number>max)return NaN;
-   return letter===negative?-number:number;
+  const root=entries(long(4));
+  function point(){
+   const pointer=root.get(0x8825);
+   if(pointer?.type!==4||pointer.count!==1)return null;
+   const gps=entries(long(pointer.at));
+   function coord(valueTag,refTag,positive,negative,max){
+    const value=gps.get(valueTag),ref=gps.get(refTag);
+    if(value?.type!==5||value.count!==3||ref?.type!==2||ref.count!==2)return NaN;
+    const letter=String.fromCharCode(view.getUint8(start+ref.at));
+    if(letter!==positive&&letter!==negative)return NaN;
+    const offset=long(value.at);
+    const [degrees,minutes,seconds]=[0,8,16].map(n=>long(offset+n)/long(offset+n+4));
+    const number=degrees+minutes/60+seconds/3600;
+    if(minutes>=60||seconds>=60||!Number.isFinite(number)||number>max)return NaN;
+    return letter===negative?-number:number;
+   }
+   const lat=coord(2,1,'N','S',90),lon=coord(4,3,'E','W',180);
+   return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null;
   }
-  const lat=coord(2,1,'N','S',90),lon=coord(4,3,'E','W',180);
-  return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null;
+  function captureDate(){
+   const pointer=root.get(0x8769);
+   if(pointer?.type!==4||pointer.count!==1)return null;
+   const fields=entries(long(pointer.at));
+   const ascii=(key,max)=>{
+    const item=fields.get(key);
+    if(item?.type!==2||item.count<1||item.count>max)return '';
+    const at=item.count<=4?item.at:long(item.at);
+    return tag(view,start+at,item.count).split('\0')[0].trim();
+   };
+   return captureTime(ascii(0x9003,24),ascii(0x9011,8));
+  }
+  if(!metadata)return point();
+  let coordinates=null,capturedAt=null;
+  try{coordinates=point();}catch{/* Incomplete GPS tags do not discard a valid date. */}
+  try{capturedAt=captureDate();}catch{/* Incomplete time tags do not discard a valid position. */}
+  return {point:coordinates,capturedAt};
  }
- function exif(view){
-  return tiff(view,view.byteLength>=6&&tag(view,0,6)==='Exif\0\0'?6:0);
+ function captureTime(value,offset){
+  const match=/^(\d{4}):(\d{2}):(\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(value);
+  if(!match||Number(match[1])<1900)return null;
+  const [,year,month,day,time]=match;
+  const local=year+'-'+month+'-'+day+'T'+time;
+  const utc=Date.parse(local+'Z');
+  if(!Number.isFinite(utc)||!new Date(utc).toISOString().startsWith(local+'.'))return null;
+  // Acre inspection dates are reported in Rio Branco. Honor the camera's offset when present.
+  const zone=offset||'-05:00';
+  if(!/^[+-](?:0\d|1[0-3]):[0-5]\d$|^[+-]14:00$/.test(zone))return null;
+  const instant=Date.parse(local+zone);
+  return Number.isFinite(instant)?new Date(instant).toISOString():null;
  }
- function jpeg(image){
+ function exif(view,metadata){
+  return tiff(view,view.byteLength>=6&&tag(view,0,6)==='Exif\0\0'?6:0,metadata);
+ }
+ function jpeg(image,metadata){
   for(let at=2,segments=0;at+4<=image.size&&segments++<512;){
    const header=image.read(at,4),marker=header.getUint16(0);
    if((marker&0xff00)!==0xff00||marker===0xffda||marker===0xffd9)return null;
    if(marker===0xffff){at++;continue;}
    const size=header.getUint16(2),data=at+4;
    if(size<2||data+size-2>image.size)return null;
-   if(marker===0xffe1&&size>=8&&tag(image.read(data,6),0,6)==='Exif\0\0')return exif(image.read(data,size-2));
+   if(marker===0xffe1&&size>=8&&tag(image.read(data,6),0,6)==='Exif\0\0')return exif(image.read(data,size-2),metadata);
    at+=size+2;
   }
   return null;
  }
- function chunks(image,png){
+ function chunks(image,png,metadata){
   const name=png?'eXIf':'EXIF';
   for(let at=png?8:12,scanned=0;at+8<=image.size&&scanned++<1024;){
    const header=image.read(at,8),size=header.getUint32(png?0:4,!png),kind=tag(header,png?4:0,4);
    if(at+8+size>image.size)return null;
-   if(kind===name)return exif(image.read(at+8,size));
+   if(kind===name)return exif(image.read(at+8,size),metadata);
    if(png&&kind==='IEND')return null;
    at+=8+size+(png?4:size%2);
   }
@@ -86,7 +119,7 @@
   }
   return result;
  }
- function iso(image){
+ function iso(image,metadata){
   const meta=boxes(image,0,image.size).find(box=>box.name==='meta');
   if(!meta)return null;
   const children=boxes(image,meta.start+4,meta.end);
@@ -135,24 +168,26 @@
    let pos=0;
    for(const part of parts){bytes.set(new Uint8Array(part.buffer,part.byteOffset,part.byteLength),pos);pos+=part.byteLength;}
    const payload=new DataView(bytes.buffer),start=payload.getUint32(0)+4;
-   return tiff(payload,start);
+   return tiff(payload,start,metadata);
   }
   return null;
  }
- function readSource(image){
+ function readSource(image,metadata=false){
   try{
    if(!image||image.size<8)return null;
    const header=image.read(0,Math.min(12,image.size)),first=header.getUint16(0);
-   if(first===0xffd8)return jpeg(image);
-   if(first===0x4949||first===0x4d4d)return exif(image.read(0,Math.min(image.size,MAX_EXIF)));
-   if(header.getUint32(0)===0x89504e47&&header.getUint32(4)===0x0d0a1a0a)return chunks(image,true);
+   if(first===0xffd8)return jpeg(image,metadata);
+   if(first===0x4949||first===0x4d4d)return exif(image.read(0,Math.min(image.size,MAX_EXIF)),metadata);
+   if(header.getUint32(0)===0x89504e47&&header.getUint32(4)===0x0d0a1a0a)return chunks(image,true,metadata);
    if(header.byteLength<12)return null;
-   if(tag(header,0,4)==='RIFF'&&tag(header,8,4)==='WEBP')return chunks(image,false);
-   if(tag(header,4,4)==='ftyp')return iso(image);
+   if(tag(header,0,4)==='RIFF'&&tag(header,8,4)==='WEBP')return chunks(image,false,metadata);
+   if(tag(header,4,4)==='ftyp')return iso(image,metadata);
   }catch{/* Malformed or unsupported metadata remains optional. */}
   return null;
  }
  function read(url){return readSource(source(url));}
- globalThis.CampoExifGps={read,readSource};
- if(typeof module!=='undefined')module.exports={read,readSource};
+ function readMetadataSource(image){return readSource(image,true);}
+ function readMetadata(url){return readMetadataSource(source(url));}
+ globalThis.CampoExifGps={read,readSource,readMetadata,readMetadataSource};
+ if(typeof module!=='undefined')module.exports=globalThis.CampoExifGps;
 })();
