@@ -3,8 +3,9 @@
  const $=id=>document.getElementById(id),Q=window.CampoRegistrationQuality;
  const nav=$('fieldCorrectionsNav'),panel=$('fieldCorrections'),status=$('fieldCorrectionsStatus'),container=$('fieldCorrectionsItems');
  if(!panel)return;
- const pageSize=20;
- let owner=null,items=[],page=0,generation=0,request=null,closing=null,marker=null,googleMarker=null;
+ const pageSize=20,feederSelect=$('fieldCorrectionsFeeder');
+ let owner=null,items=[],feeder='',page=0,generation=0,request=null,closing=null,marker=null,googleMarker=null;
+ const feederName=item=>String(item.feeder??'').trim().toUpperCase()||'Sem alimentador';
  const userId=()=>{const account=window.CampoAccount?.current();return account?.role==='inspector'?account.id:null;};
  const cacheKey=id=>'arbora-corrections-v1:'+id;
  const active=()=>owner&&owner===userId();
@@ -15,16 +16,30 @@
   if(!text)return;
   const p=document.createElement('p');p.textContent=text;parent.append(p);
  }
+ function paintFeeders(){
+  const counts=new Map();
+  if(feeder)counts.set(feeder,0);
+  for(const item of items){
+   const name=feederName(item);
+   counts.set(name,(counts.get(name)||0)+1);
+  }
+  feederSelect.replaceChildren(new Option('Todos os alimentadores',''),...[...counts.keys()].sort().map(name=>
+   new Option(name+' ('+counts.get(name)+')',name)));
+  feederSelect.value=feeder;
+  feederSelect.disabled=!counts.size;
+ }
  function paint(){
   nav.hidden=!active();
   nav.textContent='Correções recebidas'+(items.length?' · '+items.length:'');
   container.replaceChildren();
+  paintFeeders();
   if(!active())return;
-  const pages=Math.max(1,Math.ceil(items.length/pageSize));page=Math.min(page,pages-1);
+  const visible=feeder?items.filter(item=>feederName(item)===feeder):items;
+  const pages=Math.max(1,Math.ceil(visible.length/pageSize));page=Math.min(page,pages-1);
   $('fieldCorrectionsPages').hidden=pages===1;
   $('fieldCorrectionsPrevious').disabled=page===0;$('fieldCorrectionsNext').disabled=page+1>=pages;
   $('fieldCorrectionsPage').textContent='Página '+(page+1)+' de '+pages;
-  for(const item of items.slice(page*pageSize,(page+1)*pageSize)){
+  for(const item of visible.slice(page*pageSize,(page+1)*pageSize)){
    const article=document.createElement('article'),title=document.createElement('h3'),actions=document.createElement('div');
    article.className='field-correction';title.textContent=(item.species||'Árvore')+' · '+item.treeId;article.append(title);
    line(article,[item.feeder,item.pole&&'Poste '+item.pole,item.span&&'Vão '+item.span,item.address].filter(Boolean).join(' · '));
@@ -36,7 +51,7 @@
    conclude.disabled=Boolean(closing);actions.append(conclude);
    article.append(actions);container.append(article);
   }
-  if(!items.length)line(container,'Nenhuma correção pendente.');
+  if(!visible.length)line(container,feeder?'Nenhuma correção pendente neste alimentador.':'Nenhuma correção pendente.');
  }
  async function api(path,body){
   const response=await fetch('/api/corrections'+path,{method:body?'POST':'GET',cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout?.(15000),
@@ -68,7 +83,7 @@
   const account=userId();
   if(owner===account&&account){void refresh();return;}
   const token=++generation;
-  owner=account;items=[];page=0;request=null;closing=null;
+  owner=account;items=[];feeder='';page=0;request=null;closing=null;
   clearMarker();status.textContent='';paint();
   if(!account){if(!panel.hidden)view('inspect');return;}
   try{
@@ -133,6 +148,7 @@
   finally{if(token===generation){closing=null;paint();}}
  }
  $('fieldCorrectionsReload').onclick=()=>void refresh();
+ feederSelect.onchange=()=>{feeder=feederSelect.value;page=0;paint();};
  $('fieldCorrectionsPrevious').onclick=()=>{page--;paint();};
  $('fieldCorrectionsNext').onclick=()=>{page++;paint();};
  nav.addEventListener('click',()=>void refresh());

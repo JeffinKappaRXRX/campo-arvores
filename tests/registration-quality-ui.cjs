@@ -44,7 +44,9 @@ const item={id:'tree-1',treeId:'tree-1',species:'Oiti',inspector:'Ana',assignee:
  dom.window.close();
 
  ({dom,w,$,run}=start('index.html'));
- let account={id:'ana',role:'inspector'},verified=true,listed=true,edited,completed;
+ let account={id:'ana',role:'inspector'},verified=true,listed=true,edited,completed,fetches=0;
+ const other=Array.from({length:21},(_,i)=>({...item,id:'other-'+i,treeId:'other-'+i,feeder:i?'RBR-02C1':' rbr-02c1 ',note:''}));
+ const unknown={...item,id:'without-feeder',treeId:'without-feeder',feeder:null,note:''};
  const cache=new Map();
  w.CampoAccount={current:()=>account,verified:()=>verified};
  Object.assign(w,{editing:null,req:async(_table,_mode,run)=>run({get:key=>cache.get(key),put:(value,key)=>cache.set(key,value)}),
@@ -52,22 +54,37 @@ const item={id:'tree-1',treeId:'tree-1',species:'Oiti',inspector:'Ana',assignee:
   tell:message=>{$('message').textContent=message;},setMapFullscreen(){},sharedCycle:async()=>{},
   editSharedTree:async id=>{edited=id;w.editing=id;w.view('inspect');},
   fetch:async(path,options)=>{
+   fetches++;
    if(path.endsWith('/complete')){completed=JSON.parse(options.body).id;listed=false;return Response.json({ok:true});}
-   return Response.json({items:listed?[{...item,id:'dispatch-1'}]:[]});
+   return Response.json({items:[...(listed?[{...item,id:'dispatch-1'}]:[]),...other,unknown]});
   }});
  run('field-corrections.js');await tick();
  assert.equal($('fieldCorrectionsNav').hidden,false);
- assert.match($('fieldCorrectionsNav').textContent,/· 1/);
+ assert.match($('fieldCorrectionsNav').textContent,/· 23/);
  assert.match($('fieldCorrectionsItems').textContent,/Frente da praça/);
  assert(w.CampoFieldCorrections.includes('tree-1'));
+ const filter=$('fieldCorrectionsFeeder'),filterBy=value=>{filter.value=value;filter.dispatchEvent(new w.Event('change'));};
+ assert.deepEqual([...filter.options].map(o=>o.text),['Todos os alimentadores','RBR-01C1 (1)','RBR-02C1 (21)','Sem alimentador (1)']);
+ $('fieldCorrectionsNext').click();assert.match($('fieldCorrectionsPage').textContent,/Página 2/);
+ filterBy('RBR-02C1');assert.match($('fieldCorrectionsPage').textContent,/Página 1 de 2/);
+ assert.equal($('fieldCorrectionsItems').querySelectorAll('article').length,20);
+ assert.doesNotMatch($('fieldCorrectionsItems').textContent,/Frente da praça/);
+ assert(w.CampoFieldCorrections.includes('tree-1'));
+ Object.defineProperty(w.navigator,'onLine',{value:false,configurable:true});
+ filterBy('Sem alimentador');assert.match($('fieldCorrectionsItems').textContent,/without-feeder/);
+ filterBy('RBR-01C1');assert.match($('fieldCorrectionsItems').textContent,/Frente da praça/);
+ assert.equal(fetches,1);
+ Object.defineProperty(w.navigator,'onLine',{value:true,configurable:true});
  let buttons=$('fieldCorrectionsItems').querySelectorAll('button');
  buttons[1].click();await tick();assert.equal(edited,'tree-1');
  verified=false;buttons[2].click();assert.match($('fieldCorrectionsStatus').textContent,/Conecte-se/);
  verified=true;buttons[2].click();await tick();assert.equal(completed,'dispatch-1');
- assert.match($('fieldCorrectionsItems').textContent,/Nenhuma correção/);
+ assert.match($('fieldCorrectionsItems').textContent,/Nenhuma correção pendente neste alimentador/);
+ assert.equal(filter.value,'RBR-01C1');
+ filterBy('');assert.equal($('fieldCorrectionsItems').querySelectorAll('article').length,20);
  account=null;w.dispatchEvent(new w.Event('campo-account-changed'));await tick();
  assert.equal($('fieldCorrectionsNav').hidden,true);
  assert.equal($('fieldCorrectionsItems').textContent,'');
  dom.window.close();
- console.log('PASS correction UI: ranking, selection, scoped filters, map and editor actions, inspector inbox and online confirmation.');
+ console.log('PASS correction UI: management audit, inspector feeder filter and pagination offline, and completion without switching feeders.');
 })().catch(error=>{console.error(error);process.exit(1);});
