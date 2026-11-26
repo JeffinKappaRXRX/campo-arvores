@@ -21,6 +21,7 @@
    'Anexe uma foto com data de captura válida. Para registrar com a data de hoje, desative a opção na Gestão.';
  }
  const coordinates=$('desktopCoordinatesStatus');
+ coordinates.textContent='Clique no mapa para marcar a localização da árvore.';
  coordinates.after($('gpsStatus'));
  const locationHead=$('gps').parentElement;
  locationHead.classList.add('desktop-location');

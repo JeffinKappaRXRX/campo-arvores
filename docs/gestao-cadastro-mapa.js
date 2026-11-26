@@ -61,14 +61,17 @@
   mapPanel.scrollIntoView({block:'start'});
  }
  function click(event){
-  if(!mode||event.target.closest?.('.leaflet-control,.leaflet-popup')||map.dragging?.moved?.())return;
-  if(!permitted()){cancel();return;}
+  if(!enabled||event.target.closest?.('.leaflet-control,.leaflet-popup')||map.dragging?.moved?.())return;
+  if(!permitted()){if(mode)cancel();return;}
+  if(!mode&&(!form()?.formReady()||window.CampoGestaoLocalizar?.picking?.()||
+   event.target.closest?.('.leaflet-marker-icon,.leaflet-tooltip')))return;
   const chosen=coordinate(map.mouseEventToLatLng(event));
   if(!chosen)return;
-  event.preventDefault();event.stopImmediatePropagation();
-  if(mode==='position'){
+  if(mode){event.preventDefault();event.stopImmediatePropagation();}
+  if(mode!=='distance'){
    if(send({type:'map-position',point:chosen})){point=chosen;paintPin();}
-   setMode(null);return;
+   if(mode)setMode(null);
+   return;
   }
   if(points.length===2)return;
   points.push({lat:chosen.lat,lng:chosen.lon});

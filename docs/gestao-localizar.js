@@ -118,6 +118,6 @@
  window.addEventListener('campo-control-logout',()=>{
   setMode(null);notify('');drag=null;ghost.hidden=true;marker?.remove();viewpoint?.remove();marker=viewpoint=null;
  });
- window.CampoGestaoLocalizar={attachMap,cancelPicking(){drag=null;ghost.hidden=true;setMode(null);notify('');}};
+ window.CampoGestaoLocalizar={attachMap,picking:()=>Boolean(mode),cancelPicking(){drag=null;ghost.hidden=true;setMode(null);notify('');}};
  window.CampoControlMap?.onAvailable?.(attachMap);
 })();

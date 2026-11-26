@@ -74,5 +74,20 @@ pinMarker.panel.querySelector('button').click();
 assert(pinMarker.removed);
 w.dispatchEvent(new w.Event('campo-control-logout'));
 assert(markers[1].removed);
+
+vm.runInContext(fs.readFileSync('docs/gestao-cadastro-mapa.js','utf8'),dom.getInternalVMContext());
+const cadastro=w.CampoGestaoCadastroMapa,placed=[];
+w.CampoGestaoFotos={formReady:()=>true,sendToForm:data=>{placed.push(data);return true;}};
+cadastro.attachMap(map);available=true;
+clickMap(200,300);assert.equal(placed.length,0,'the regular map leaves the draft alone');
+cadastro.setEnabled(true);
+clickMap(200,300);assert.deepEqual(JSON.parse(JSON.stringify(placed.at(-1))),{type:'map-position',point:{lat:-9,lon:-68}});
+clickMap(250,340);assert.equal(placed.length,2,'consecutive map clicks reposition the tree without arming a tool');
+pin.click();clickMap(230,350);assert.equal(placed.length,2,'the separate pin tool retains its own click');
+available=false;clickMap(200,300);assert.equal(placed.length,2,'route and polygon tools retain priority');
+available=true;const photoNode=draftPhoto();
+photoNode.dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:200,clientY:300}));
+assert.equal(placed.length,2,'clicking an existing marker keeps its own action');
+function draftPhoto(){const element=w.document.createElement('div');element.className='leaflet-marker-icon';canvas.append(element);return element;}
 dom.window.close();
 console.log('PASS management pin and Street View: map selection, drop, marker repositioning, offline link and coexistence with route picking.');
