@@ -23,9 +23,16 @@ const CampoVeraProgress=(()=>{
   }
   for(const row of history.coverage||[])add(row,'VERA');
   for(const row of sgm.coverage||[])add(row,'SGM');
-  const routes=new Map((snapshot.routes||[]).filter(route=>!route.homologation&&!route.deletedAt&&
-   !['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode)).map(route=>[route.id,new Map(route.spans.map(span=>[span.id,span]))]));
-  const routeSpans=new Map([...routes.values()].flatMap(spans=>[...spans]));
+  const active=(snapshot.routes||[]).filter(route=>!route.homologation&&!route.deletedAt&&
+   !['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode));
+  const routes=new Map(),routeSpans=new Map();
+  for(const parts of CampoRoutes.campaignParts(active)){
+   const spans=new Map();
+   for(const route of parts){
+    routes.set(route.id,spans);
+    for(const span of route.spans){spans.set(span.id,span);routeSpans.set(span.id,span);}
+   }
+  }
   for(const visit of snapshot.visits||[]){
    const spans=routes.get(visit.routeId);
    if(!spans)continue;

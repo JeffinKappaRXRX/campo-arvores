@@ -72,6 +72,12 @@
   }catch(error){publishStatus(error.message+' O cadastro está salvo neste PC para tentar novamente.');}
   finally{publishing=false;retry.disabled=false;retry.hidden=!pending().length;archiveInBackground();}
  }
+ window.CampoGestaoCadastro={async prepareUpdate(){
+  const busy=()=>publishing||attaching||archiving||formSaveBusy||plantBusy||gpsBusy||$('photoFiles')?.files?.length||$('photos')?.files?.length;
+  if(!authorized||busy())return false;
+  await checkpointDraft();
+  return !busy();
+ }};
  sharedCycle=publish;
  retry.onclick=()=>void publish();
  window.addEventListener('online',()=>{void publish();archiveInBackground();});

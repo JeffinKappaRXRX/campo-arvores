@@ -103,6 +103,8 @@
   const totals=get('totals');
   totals.replaceChildren();
   summary(totals,km(metres)+' km','Rede vistoriada');
+  const arboraMetres=periods.reduce((sum,row)=>sum+(row.sources.get('ARBORA')||0),0);
+  summary(totals,km(arboraMetres)+' km','Crédito das rotas ARBORA');
   summary(totals,history?int(trees):'—','Árvores da planilha');
   summary(totals,orders.filter(row=>row.status==='executada').length.toLocaleString('pt-BR'),'OS executadas no período');
   summary(totals,orders.filter(row=>row.status==='pendente').length.toLocaleString('pt-BR'),sgm?'OS pendentes':'OS pendentes na planilha');

@@ -37,3 +37,19 @@ assert.equal(goals[0].pending,0);
 assert.equal(goals[1].advance,368600);
 assert.ok(Math.abs(goals[2].advance-72700.48)<1e-6);
 console.log('Histórico, cobertura parcial, deduplicação, SGM e antecipação VERA verificados.');
+
+const campaign=ledger({}, {}, {
+ routes:[
+  {id:'part-a',campaign:{id:'production',index:1,total:2},spans:[{id:'a',metres:800,feeder:'AAL-01C9',section:'1'}]},
+  {id:'part-b',campaign:{id:'production',index:2,total:2},spans:[{id:'b',metres:600,feeder:'TAN-01C6',section:'2'}]},
+  {id:'other',spans:[{id:'z',metres:9000,feeder:'TAN-01C6',section:'2'}]},
+  {id:'returned',returned:{reasonCode:'reprogramacao'},spans:[{id:'r',metres:400,feeder:'TAN-01C6',section:'2'}]}
+ ],
+ visits:[
+  {routeId:'part-a',day:'2026-11-24',ranges:[{spanId:'a',start:0,end:10000},{spanId:'b',start:0,end:10000},{spanId:'z',start:0,end:10000}]},
+  {routeId:'part-b',day:'2026-11-25',ranges:[{spanId:'b',start:0,end:10000}]},
+  {routeId:'returned',day:'2026-11-25',ranges:[{spanId:'r',start:0,end:5000}]}
+ ]
+});
+assert.deepEqual(campaign.credited.map(row=>[row.id,row.metres]),[['a',800],['b',600],['r',200]]);
+assert.equal(select(campaign,{period:'2026-11',field:'day',feeder:'TAN-01C6',section:'12'}).metres,800);

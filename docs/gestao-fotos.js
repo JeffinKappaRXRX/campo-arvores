@@ -2,7 +2,8 @@
 (()=>{
  const $=id=>document.getElementById(id),root=$('gestaoFotos');
  if(!root)return;
- const allowed=()=>window.CampoControl?.authorized();
+ const enabled=$('desktopCollect');
+ const allowed=()=>window.CampoControl?.authorized()&&enabled.checked;
  const list=$('desktopPhotoRows'),feedback=$('desktopPhotoStatus'),filter=$('desktopPhotoFilter');
  const pageSize=25,batchSize=48;
  const usePhotoDate=$('desktopUsePhotoDate'),datePreference='arbora-gestao-use-photo-date';
@@ -66,8 +67,9 @@
   render();
  }
  function draw(){
-  if(!map||!layer||!allowed())return;
+  if(!map||!layer)return;
   layer.clearLayers();
+  if(!allowed())return;
   const area=map.getBounds().pad(.08),cells=new Map();
   for(const item of items){
    const p=item.point;
@@ -209,7 +211,17 @@
  $('desktopFiles').onclick=()=>$('desktopFilesInput').click();
  for(const id of ['desktopFolderInput','desktopFilesInput'])$(id).onchange=()=>{const input=$(id);addFiles(input.files);input.value='';};
  $('desktopFitPhotos').onclick=fit;$('desktopClearPhotos').onclick=clear;
- $('desktopCollect').onchange=()=>{loadForm();configurePhotoDate();readyButtons();};
+ function toggleRegistration(){
+  $('desktopRegistrationTools').hidden=!allowed();
+  $('desktopPhotosOnMap').hidden=!allowed();
+  if(!enabled.checked)map?.closePopup();
+  scheduleDraw();
+  loadForm();
+  configurePhotoDate();
+  readyButtons();
+ }
+ enabled.checked=false;
+ enabled.onchange=toggleRegistration;
  function configurePhotoDate(){send({type:'photo-date',enabled:usePhotoDate.checked});}
  usePhotoDate.onchange=()=>{
   try{localStorage.setItem(datePreference,usePhotoDate.checked?'1':'0');}catch{/* Applies to this session. */}
@@ -223,7 +235,7 @@
  $('desktopIdentifyPhoto').onclick=()=>{if(photo)attach([photo]);};
  $('desktopAttachPhotos').onclick=()=>attach([...checked]);
  window.addEventListener('message',event=>{
-  if(!allowed()||event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='arbora-gestao-cadastro')return;
+  if(!window.CampoControl?.authorized()||event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='arbora-gestao-cadastro')return;
   const data=event.data;
   if(data.type==='ready'){frameReady=true;configurePhotoDate();$('desktopFormStatus').textContent='Formulário pronto. Selecione uma foto no mapa para usar a posição e anexar.';readyButtons();}
   if(data.type==='status')$('desktopFormStatus').textContent=data.message;
@@ -238,12 +250,16 @@
  });
  window.addEventListener('campo-control-logout',()=>{
   clear();frame?.remove();frame=null;frameReady=false;queued=null;
-  $('desktopCollect').checked=false;$('desktopFormPanel').hidden=true;
+  enabled.checked=false;toggleRegistration();
  });
  function attachMap(instance){
   if(map===instance)return;
   map=instance;layer=L.layerGroup().addTo(map);map.on('moveend resize',scheduleDraw);scheduleDraw();
  }
- window.CampoGestaoFotos={attachMap,addNetworkAction};
+ window.CampoGestaoFotos={attachMap,addNetworkAction,async prepareUpdate(){
+  if(enabled.checked||items.length||scanning||queued)throw Error('Finalize o cadastro e retire as fotos importadas antes de atualizar.');
+  if(!frameReady)return;
+  if(!await frame.contentWindow.CampoGestaoCadastro?.prepareUpdate())throw Error('Aguarde a operação do cadastro terminar e tente novamente.');
+ }};
  window.CampoControlMap?.onAvailable?.(attachMap);
 })();

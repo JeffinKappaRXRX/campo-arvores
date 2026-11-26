@@ -28,6 +28,8 @@ if(assets['/gestao-cadastro.js']){
  for(const name of omitFromDesktop)desktop=desktop.replace('<script src="'+name+'"></script>','');
  assets['/gestao-cadastro.html']=versionLinks(desktop);
 }
+if(assets['/gestao.html'])assets['/gestao.html']=assets['/gestao.html'].replace('</head>','<meta name="arbora-release" content="'+build+'"></head>');
+assets['/release-gestao.json']=JSON.stringify({build});
 for(const page of ['/gestao.html','/consulta-arbora.html'])if(assets[page])assets[page]=versionLinks(assets[page]);
 await fs.writeFile(new URL('sw.js',docs),assets['/sw.js']);
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');

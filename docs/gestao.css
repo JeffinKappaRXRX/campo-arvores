@@ -35,3 +35,11 @@
 .control-location-ghost { position:fixed; z-index:9999; transform:translate(-50%,-95%); pointer-events:none; }
 .control-location-ghost[hidden] { display:none; }
 .control-location-actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+
+.inspection-overview > #mapa { grid-column:1; grid-row:1; }
+.inspection-overview > #gestaoFotos { grid-column:1; grid-row:2; }
+.inspection-overview > .inspection-feeder-panel { grid-column:2; grid-row:1 / span 2; }
+.inspection-overview { grid-template-rows:auto 1fr; align-items:start; }
+.inspection-feeder-panel { min-width:0; }
+#managementUpdateStatus { margin:0 0 12px; }
+@media (max-width:1050px){.inspection-overview { grid-template-columns:minmax(0,1fr); grid-template-rows:auto; } .inspection-overview > .inspection-feeder-panel { grid-column:1; grid-row:3; }}

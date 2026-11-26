@@ -540,9 +540,9 @@
   if(from&&through&&from>through){table.textContent='Confira o intervalo de datas.';return;}
   const inPeriod=day=>(!from||day>=from)&&(!through||day<=through),asOf=through&&through<today()?through:today();
   const rows=new Map();
-  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!route.returned&&!isTest(route)&&(!assignee||route.assignee===assignee)))){
+  for(const parts of M.campaignParts(snapshot.routes.filter(route=>!isTest(route)&&(!assignee||route.assignee===assignee)))){
    const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
-   const daily=M.dailyCoverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId))),targets=M.schedule(route.plan,M.metres(spans));
+   const daily=M.dailyCoverage(spans,snapshot.visits.filter(visit=>ids.has(visit.routeId))),targets=route.returned?[]:M.schedule(route.plan,M.metres(spans));
    const work=daily.filter(entry=>inPeriod(entry.day)),due=targets.filter(entry=>inPeriod(entry.day)).reduce((sum,entry)=>sum+entry.metres,0);
    if(!work.length&&!due)continue;
     const done=work.reduce((sum,entry)=>sum+entry.metres+entry.sharedMetres,0);
@@ -564,12 +564,28 @@
   if(id)showPublished(M.campaignParts(snapshot.routes.filter(route=>route.assignee===id&&!route.returned&&!isTest(route))));
  };
  for(const id of ['routeKpiStart','routeKpiEnd','routeKpiOperator'])$(id).addEventListener('input',paintKpis);
+ let snapshotRequest=null,sessionGeneration=0;
+ function refreshSnapshot(){
+  if(!window.CampoControl?.authorized())return Promise.resolve();
+  if(snapshotRequest)return snapshotRequest;
+  const generation=sessionGeneration;
+  snapshotRequest=api('/api/routes').then(state=>{
+   if(generation!==sessionGeneration||!window.CampoControl?.authorized())return;
+   snapshot=state;
+   window.CampoVeraDashboard?.updateRoutes(state);
+   paint();
+   if(shownPublished.length){
+    const shown=new Set(shownPublished);
+    showPublished(M.campaignParts(snapshot.routes).filter(group=>shown.has(group[0].id)),false);
+   }
+  }).finally(()=>{if(generation===sessionGeneration)snapshotRequest=null;});
+  return snapshotRequest;
+ }
  async function refresh(){
   if(!window.CampoControl?.authorized())return;
-  const [state,accounts,teams]=await Promise.all([api('/api/routes'),api('/api/admin/users'),api('/api/admin/gerencial/equipes').catch(()=>({}))]);
-  if(!window.CampoControl?.authorized())return;
-  snapshot=state;
-  window.CampoVeraDashboard?.updateRoutes(state);
+  const generation=sessionGeneration;
+  const [,accounts,teams]=await Promise.all([refreshSnapshot(),api('/api/admin/users'),api('/api/admin/gerencial/equipes').catch(()=>({}))]);
+  if(generation!==sessionGeneration||!window.CampoControl?.authorized())return;
   const names=new Map((teams.teams||[]).map(team=>[team.id,team.name]));
   teamByAccount=new Map((teams.members||[]).filter(member=>names.has(member.teamId)).map(member=>[member.userId,names.get(member.teamId)]));
   const users=(accounts.users||[]).filter(u=>!u.blocked&&!u.deleted_at&&u.passwordConfigured);
@@ -578,10 +594,6 @@
    for(const u of users)select.add(new Option(teamLabel(u.id,u.name),u.id));select.value=old;
   }
   paint();
-  if(shownPublished.length){
-   const shown=new Set(shownPublished);
-   showPublished(M.campaignParts(snapshot.routes).filter(group=>shown.has(group[0].id)),false);
-  }
  }
  const load=()=>void refresh().catch(e=>{status.textContent=e.message;});
  window.addEventListener('campo-gerencial-equipes',load);
@@ -594,6 +606,8 @@
  paintDraft();
  window.CampoRoutePlanner={
   refresh:load,
+  refreshCoverage:()=>void refreshSnapshot().catch(e=>{status.textContent=e.message;}),
+  updateBusy:()=>publishing||withdrawing||selecting||Boolean(job)||Boolean(draft.length)||pendingBlocks.size>0,
   picking:()=>selecting&&!job,
   select(f){
    if(!$('routePlan').open||!selecting||job)return false;
@@ -645,6 +659,6 @@
    }catch{}
    load();
   },
-  stop(){selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;blockMode.checked=false;resetBlocks();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
+  stop(){sessionGeneration++;snapshotRequest=null;selecting=false;clearTimeout(filterTimer);job=null;checkpoint();filteredDraft=false;draft=[];draftId=null;snapshot={routes:[],visits:[]};shownPublished=[];selectedPublished.clear();teamByAccount.clear();sgm=null;form.reset();form.elements.planStart.value=today();historyCapacity=false;blockMode.checked=false;resetBlocks();search.reset();clearNetwork();paintDraft();paint();$('routePick').setAttribute('aria-pressed','false');$('routePick').textContent='Selecionar vãos no mapa';}
  };
 })();
