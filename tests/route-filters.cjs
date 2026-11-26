@@ -60,6 +60,24 @@ const read=file=>fs.readFileSync(file,'utf8');
  assert.deepEqual(linked.features.map(f=>M.feature(f).id),['6587410','6784695']);
  assert(Math.abs(M.metres(linked.features.map(M.feature))-64.163)<1e-8);
  assert.deepEqual(query({blocks:['RBR6496'],sections:['1','2'],zone:'URBANO'}).features.map(f=>M.feature(f).id),['6784695']);
+ db.exec('CREATE TABLE fixture_posts (Id TEXT, geom TEXT); CREATE VIRTUAL TABLE spatial USING rtree(id,minx,maxx,miny,maxy); CREATE TABLE refs (id INTEGER PRIMARY KEY,layer INT,row_id INT);');
+ const point=[-67.839,-9.96];
+ const insertLine=(table,id,coordinates)=>db.prepare('INSERT INTO '+table+' (Id,geom) VALUES (?,?)').run(id,JSON.stringify({type:'LineString',coordinates}));
+ const mt=insertLine('mt','MP-7',[point,[-67.838,-9.96]]);
+ const bt=insertLine('bt','BP-7',[[-67.840,-9.96],point]);
+ const crossing=insertLine('bt','BT-cross',[[-67.840,-9.96],[-67.838,-9.96]]);
+ for(const [i,result,layer,min,max] of [[1,mt,0,-67.839,-67.838],[2,bt,1,-67.84,-67.839],[3,crossing,1,-67.84,-67.838]]){
+  db.prepare('INSERT INTO refs VALUES (?,?,?)').run(i,layer,result.lastInsertRowid);
+  db.prepare('INSERT INTO spatial VALUES (?,?,?,?,?)').run(i,min,max,-9.96,-9.96);
+ }
+ db.prepare('INSERT INTO fixture_posts VALUES (?,?)').run('PX-7',JSON.stringify({type:'Point',coordinates:point}));
+ for(const layer of worker.layers)layer.mapping={span:'Id'};
+ worker.layers.push({table_name:'fixture_posts',column_name:'geom',classification:'POSTE',mapping:{pole:'Id'},srs_id:4326});
+ vm.runInContext('currentLayers=layers; indexDb=database;',worker);
+ const inspect=(value)=>JSON.parse(JSON.stringify(vm.runInContext('inspectionPole('+JSON.stringify(value)+')',worker)));
+ assert.deepEqual(inspect({pole:'PX-7'}),{mt:['MP-7'],bt:['BP-7']},'the R-tree supplies both networks; a passing span is ignored');
+ assert.deepEqual(inspect({pole:'PX-7',point}),{mt:['MP-7'],bt:['BP-7']});
+ assert.equal(inspect({pole:'unknown'}),null);
  const dom=new JSDOM('<main><div id="managementMapWorkspace"><article id="mapa"><button id="mapRoutesShortcut">Rotas</button><div id="mapFrame"><div id="controlMap"></div></div></article><section id="gestaoFotos" hidden></section></div></main>',{runScripts:'outside-only',url:'https://campo.test'});
  const w=dom.window,d=w.document,$=id=>d.getElementById(id);
  let onMap,submitted,overlays,draftMap,response=network,failPart=false,wholeBlockRequest,outletAttempts=[];

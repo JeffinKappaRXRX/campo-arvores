@@ -7,7 +7,7 @@ async function sharedBody(request,limit=6500000){try{return JSON.parse(await(awa
 async function sharedRead(db,id){return db.prepare('SELECT * FROM shared_trees WHERE id=?').bind(id).first();}
 function sharedData(raw,actor,imported=false){
  if(!raw||!sharedId(raw.id)||!sharedCoordinate(raw.lat,90)||!sharedCoordinate(raw.lon,180))throw sharedError('ID, latitude e longitude válidos são obrigatórios.');
- const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
+ const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','spanNetwork','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
  const out={id:raw.id,lat:Number(raw.lat),lon:Number(raw.lon),photos:[],createdAt:Number.isFinite(Date.parse(raw.createdAt))?raw.createdAt:new Date().toISOString(),updatedAt:Number.isFinite(Date.parse(raw.updatedAt))?raw.updatedAt:new Date().toISOString()};
  for(const key of allowed){if(typeof raw[key]==='boolean')out[key]=raw[key];else if(raw[key]!==undefined&&raw[key]!==null)out[key]=String(raw[key]).slice(0,key==='note'?5000:1000);}
  if(out.treeSite!==undefined&&!['','publico','privado'].includes(out.treeSite))throw sharedError('Selecione área pública ou privada para o local da árvore.');
@@ -15,6 +15,9 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  if(raw.noNetwork!==undefined)out.noNetwork=raw.noNetwork===true||raw.noNetwork==='sim';
  if(raw.formValidation===1)out.formValidation=1;
+ const audit=CampoInspectionRules.poleAudit({...out,poleAudit:raw.poleAudit});
+ if(audit)out.poleAudit=audit;
+ if(!['mt','bt','at'].includes(out.spanNetwork))delete out.spanNetwork;
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
  const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
  if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
@@ -38,6 +41,8 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if(original&&data.treeSite===undefined&&original.treeSite!==undefined)data.treeSite=original.treeSite;
  if(original?.noNetwork!==undefined&&data.noNetwork===undefined)data.noNetwork=original.noNetwork;
  if(original?.formValidation===1)data.formValidation=1;
+ if(body.record.formValidation!==1&&data.pole===original?.pole&&original.poleAudit)data.poleAudit=original.poleAudit;
+ if(body.record.formValidation!==1&&data.span===original?.span&&original.spanNetwork)data.spanNetwork=original.spanNetwork;
  for(const key of ['archivedPhotoEvidence','folderUrl'])if(original?.[key]!=null)data[key]=original[key];
  data.createdBy=original?original.createdBy||original.inspector||original.lastInspector||old.actor:actor;
  if(identity){data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}

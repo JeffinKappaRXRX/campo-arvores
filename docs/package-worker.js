@@ -97,6 +97,44 @@ function searchCondition(layer,search){
  return {sql:' AND '+sql,bind};
 }
 function rowFeature(layer,row,transform){const geometry=decodeGeometry(row[layer.column_name],transform);if(!geometry)return null;delete row[layer.column_name];const id=layer.table_name+':'+row._campo_rid;delete row._campo_rid;for(const k of Object.keys(row))if(row[k] instanceof Uint8Array)delete row[k];return {type:'Feature',id,geometry,properties:{...row,_layer:layer.table_name,_class:layer.classification}};}
+function inspectionPole(m){
+ const id=String(m.pole||'').trim();
+ if(!id||id.length>100||!sourceDb||!indexDb)return null;
+ const isPoint=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=180&&Math.abs(p[1])<85;
+ let point=isPoint(m.point)?m.point:null;
+ if(!point){
+  const points=[];
+  for(const layer of currentLayers.filter(l=>l.classification==='POSTE')){
+   const column=(layer.mapping||currentMapping)?.pole;
+   if(!column)continue;
+   const found=rows(sourceDb,'SELECT '+q(layer.column_name)+' AS geom FROM '+q(layer.table_name)+' WHERE '+q(column)+' = ? COLLATE NOCASE LIMIT 3',[id]);
+   const transform=projection(layer.srs_id);
+   for(const row of found){const g=decodeGeometry(row.geom,transform);if(g?.type==='Point'&&isPoint(g.coordinates))points.push(g.coordinates);}
+  }
+  if(points.length!==1)return null;
+  point=points[0];
+ }
+ const [lon,lat]=point,y=111195,x=y*Math.cos(lat*Math.PI/180),limit=1.5;
+ const bind=[lon+limit/x,lon-limit/x,lat+limit/y,lat-limit/y],links={};
+ for(const [i,layer] of currentLayers.entries()){
+  const network=layer.classification?.toLowerCase();
+  if(!['mt','bt','at'].includes(network))continue;
+  const hits=rows(indexDb,'SELECT r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=? AND r.layer=? LIMIT 161',[...bind,i]);
+  if(!hits.length||hits.length>160)continue;
+  const column=(layer.mapping||currentMapping)?.span;
+  const result=rows(sourceDb,'SELECT '+q(layer.column_name)+' AS geom'+(column?','+q(column)+' AS span':'')+' FROM '+q(layer.table_name)+' WHERE rowid IN ('+hits.map(r=>Number(r.row_id)).join(',')+')');
+  const transform=projection(layer.srs_id),close=p=>Math.hypot((p[0]-lon)*x,(p[1]-lat)*y)<=limit;
+  for(const row of result){
+   const g=decodeGeometry(row.geom,transform);
+   const lines=g?.type==='LineString'?[g.coordinates]:g?.type==='MultiLineString'?g.coordinates:[];
+   if(!lines.some(line=>line.length>1&&(close(line[0])||close(line.at(-1)))))continue;
+   links[network]??=[];
+   const span=String(row.span??'').trim().slice(0,100);
+   if(span&&!links[network].includes(span)&&links[network].length<20)links[network].push(span);
+  }
+ }
+ return links;
+}
 function inspectionSpan(m){
  const candidates=[];
  if(sourceDb&&typeof m.id==='string'&&m.id.length<=1000)for(const layer of currentLayers){
@@ -129,7 +167,7 @@ function queryFiltered(m,limit){
  postMessage({action:'view',requestId:m.requestId,collection:{type:'FeatureCollection',features:features.slice(0,limit)},capped:features.length>limit});
 }
 function query(m){if(!indexDb)return;const limit=Number.isInteger(m.limit)?Math.max(100,Math.min(4000,m.limit)):4000;if(m.search?.text||m.blocks?.length)return queryFiltered(m,limit);const b=m.bounds,bind=[b.east,b.west,b.north,b.south],selection=feederSelection(m,!m.strictFeeders),filter=selection.sql;bind.push(...selection.bind);let refs=rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+layerClause(m)+' LIMIT '+(limit+1),bind);const capped=refs.length>limit;if(capped){const active=currentLayers.map((l,i)=>!Array.isArray(m.visibleLayers)||m.visibleLayers.includes(l.table_name)?i:-1).filter(i=>i>=0);const quota=Math.floor(limit/Math.max(1,active.length));refs=active.flatMap(i=>rows(indexDb,'SELECT r.layer,r.row_id FROM spatial s CROSS JOIN refs r ON r.id=s.id WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=?'+filter+' AND r.layer=? LIMIT '+quota,[...bind,i]));}const features=[];for(let i=0;i<currentLayers.length;i++){const l=currentLayers[i],ids=refs.slice(0,limit).filter(r=>r.layer===i).map(r=>r.row_id);if(!ids.length)continue;const transform=projection(l.srs_id),stmt=sourceDb.prepare('SELECT rowid AS _campo_rid,* FROM '+q(l.table_name)+' WHERE rowid IN ('+ids.map(Number).join(',')+')');try{while(stmt.step()){const feature=rowFeature(l,stmt.get({}),transform);if(feature)features.push(feature);}}finally{stmt.finalize();}}postMessage({action:'view',requestId:m.requestId,collection:{type:'FeatureCollection',features},capped});}
-let queue=Promise.resolve(),latestView=null;onmessage=e=>{if(e.data.action==='cancel'){cancelled=true;return;}const m=e.data;if(m.action==='view')latestView=m;queue=queue.then(async()=>{if(m.action==='view'&&latestView!==m)return;try{cancelled=false;if(m.action==='import-remote')await importRemote(m.manifest);else if(m.action==='inspect-file'){remoteSource=null;await importFile(m.file);}else if(m.action==='zip-list'){remoteSource=null;await zipDirectory(m.file);}else if(m.action==='open-zip')await openZip(m.index);else if(m.action==='configure')await configure(m);else if(m.action==='view')query(m);else if(m.action==='focus')focus(m);else if(m.action==='inspection-span'){let candidates=[];try{candidates=inspectionSpan(m);}catch{}postMessage({action:'inspection-span',requestId:m.requestId,candidates});}else if(m.action==='search'||m.action==='universal-search')searchNetwork(m);else if(m.action==='route-reference')postMessage({action:'route-reference',requestId:m.requestId,count:await loadRouteReference(m.file)});else if(m.action==='route-network'){let referenceError='';try{await loadRouteReference();}catch(e){referenceError=e.message;}postMessage({action:'route-network',requestId:m.requestId,referenceError,...routeNetwork(m)});}else if(m.action==='block-summary')postMessage({action:'block-summary',requestId:m.requestId,items:blockSummary(m)});else if(m.action==='pause')await pausePackage();else if(m.action==='restore'){await engine();close();currentPath=m.config.path;currentIndex=m.config.indexPath;currentLayers=m.config.layers;currentMapping=m.config.mapping;sourceDb=new pool.OpfsSAHPoolDb(currentPath,'r');indexDb=new pool.OpfsSAHPoolDb(currentIndex,'r');postMessage({action:'restored'});}else if(m.action==='prune'){for(const path of m.paths||[])if(path&&path!==currentPath&&path!==currentIndex)pool.unlink(path);}else if(m.action==='remove'){close();if(currentPath)pool.unlink(currentPath);if(currentIndex)pool.unlink(currentIndex);postMessage({action:'removed'});}}catch(e){const busy=e.code==='CAMPO_PACKAGE_BUSY'||/createSyncAccessHandle|Access Handles|another open.*Handle/i.test(e.message);postMessage({action:busy?'busy':m.action==='universal-search'?'universal-search-error':m.action==='search'?'search-error':m.action==='block-summary'?'block-error':['route-network','route-reference'].includes(m.action)?'route-network-error':'error',requestId:m.requestId,message:busy?packageBusyError().message:e.message});}});};
+let queue=Promise.resolve(),latestView=null;onmessage=e=>{if(e.data.action==='cancel'){cancelled=true;return;}const m=e.data;if(m.action==='view')latestView=m;queue=queue.then(async()=>{if(m.action==='view'&&latestView!==m)return;try{cancelled=false;if(m.action==='import-remote')await importRemote(m.manifest);else if(m.action==='inspect-file'){remoteSource=null;await importFile(m.file);}else if(m.action==='zip-list'){remoteSource=null;await zipDirectory(m.file);}else if(m.action==='open-zip')await openZip(m.index);else if(m.action==='configure')await configure(m);else if(m.action==='view')query(m);else if(m.action==='focus')focus(m);else if(m.action==='inspection-pole'){let links=null;try{links=inspectionPole(m);}catch{}postMessage({action:'inspection-pole',requestId:m.requestId,links});}else if(m.action==='inspection-span'){let candidates=[];try{candidates=inspectionSpan(m);}catch{}postMessage({action:'inspection-span',requestId:m.requestId,candidates});}else if(m.action==='search'||m.action==='universal-search')searchNetwork(m);else if(m.action==='route-reference')postMessage({action:'route-reference',requestId:m.requestId,count:await loadRouteReference(m.file)});else if(m.action==='route-network'){let referenceError='';try{await loadRouteReference();}catch(e){referenceError=e.message;}postMessage({action:'route-network',requestId:m.requestId,referenceError,...routeNetwork(m)});}else if(m.action==='block-summary')postMessage({action:'block-summary',requestId:m.requestId,items:blockSummary(m)});else if(m.action==='pause')await pausePackage();else if(m.action==='restore'){await engine();close();currentPath=m.config.path;currentIndex=m.config.indexPath;currentLayers=m.config.layers;currentMapping=m.config.mapping;sourceDb=new pool.OpfsSAHPoolDb(currentPath,'r');indexDb=new pool.OpfsSAHPoolDb(currentIndex,'r');postMessage({action:'restored'});}else if(m.action==='prune'){for(const path of m.paths||[])if(path&&path!==currentPath&&path!==currentIndex)pool.unlink(path);}else if(m.action==='remove'){close();if(currentPath)pool.unlink(currentPath);if(currentIndex)pool.unlink(currentIndex);postMessage({action:'removed'});}}catch(e){const busy=e.code==='CAMPO_PACKAGE_BUSY'||/createSyncAccessHandle|Access Handles|another open.*Handle/i.test(e.message);postMessage({action:busy?'busy':m.action==='universal-search'?'universal-search-error':m.action==='search'?'search-error':m.action==='block-summary'?'block-error':['route-network','route-reference'].includes(m.action)?'route-network-error':'error',requestId:m.requestId,message:busy?packageBusyError().message:e.message});}});};
 
 function feederSelection(m,includeUnassigned=true){const values=[...new Set((Array.isArray(m.feeders)?m.feeders:(m.feeder?[m.feeder]:[])).map(v=>String(v).trim()).filter(Boolean))];return values.length?{sql:' AND (r.feeder IN ('+values.map(()=>'?').join(',')+')'+(includeUnassigned?" OR r.feeder=''":'')+')',bind:values}:{sql:'',bind:[]};}
 

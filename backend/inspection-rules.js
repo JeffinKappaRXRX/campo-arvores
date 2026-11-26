@@ -8,6 +8,16 @@
  const yes=value=>value===true||value==='sim';
  const answered=value=>value==='sim'||value==='nao';
  const selectedNetworks=r=>networkKeys.filter(key=>yes(r[key]));
+ function poleAudit(r){
+  const saved=r.poleAudit,pole=text(r.pole).toUpperCase();
+  if(!pole||!saved||saved.pole!==pole||!Array.isArray(saved.expected)||!Array.isArray(saved.absent))return null;
+  const expected=networkKeys.filter(key=>saved.expected.includes(key));
+  if(!expected.length)return null;
+  return {pole,expected,absent:expected.filter(key=>saved.absent.includes(key))};
+ }
+ function preferredSpanNetwork(r,audit=poleAudit(r)){
+  return audit?selectedNetworks(r)[0]||'':'';
+ }
  function missing(r){
   const out=[];
   const add=(field,label)=>out.push({field,label});
@@ -27,10 +37,19 @@
   return out;
  }
  function formMissing(r){
-  const out=missing(r),network=selectedNetworks(r);
+  const out=missing(r),network=selectedNetworks(r),audit=poleAudit(r);
   const add=(field,label)=>out.push({field,label});
-  if(!network.length&&!yes(r.noNetwork))add('noNetwork','Rede MT, BT, AT ou sem rede próxima');
+  if(!network.length&&!yes(r.noNetwork)&&!(audit&&audit.expected.every(key=>audit.absent.includes(key))))add('noNetwork','Rede MT, BT, AT ou sem rede próxima');
   if(network.length&&yes(r.noNetwork))add('noNetwork','Marque as redes presentes ou sem rede próxima');
+  if(audit){
+   for(const key of audit.expected){
+    const present=network.includes(key),absent=audit.absent.includes(key);
+    if(present===absent)add(key,present?'Revise a situação da '+key.toUpperCase():'Poste com '+key.toUpperCase()+' no cadastro: confirme a rede ou marque que não existe no campo');
+   }
+   const preferred=preferredSpanNetwork(r,audit);
+   if(preferred&&!text(r.span))add('span','ID do vão '+preferred.toUpperCase());
+   else if(preferred&&r.spanNetwork!==preferred)add('spanNetwork','Informe um vão da rede '+preferred.toUpperCase());
+  }
   if(!answered(r.grouped))add('grouped','Poda agrupada');
   if(r.grouped!=='sim'&&!positive(r.dap)&&!positive(r.circ))add('dap','DAP ou CAP');
   if(!text(r.species))add('species','Espécie ou “Não identificada”');
@@ -46,6 +65,6 @@
  function unknownSpecies(r){return !text(r.species)||/^(árvore|arvore|não identificad[ao]|nao identificad[ao]|desconhecid[ao])$/i.test(text(r.species));}
  function identificationPending(r){return !r.deletedRemote&&(unknownSpecies(r)||['queued','error','suggested'].includes(r.plantIdentification?.status));}
  const savedMissing=r=>r.formValidation===1?formMissing(r):missing(r);
- root.CampoInspectionRules={missing,formMissing,savedMissing,unknownSpecies,identificationPending};
+ root.CampoInspectionRules={missing,formMissing,savedMissing,poleAudit,preferredSpanNetwork,unknownSpecies,identificationPending};
  if(typeof module!=='undefined')module.exports=root.CampoInspectionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);

@@ -200,7 +200,7 @@
   button.onclick=()=>{
    const coordinates=feature.geometry?.coordinates;
    const spanGeometry=span&&feature.geometry?.type==='LineString'?{geometry:{type:'LineString',coordinates},properties:{Id:String(span)}}:null;
-   if(send({type:'network',pole,span,network,feeder:span?value('alimentador','codigoalimentador','feeder'):null,spanGeometry})){
+   if(send({type:'network',pole,polePoint:pole?coordinates:null,span,network,feeder:span?value('alimentador','codigoalimentador','feeder'):null,spanGeometry})){
     $('desktopFormStatus').textContent=pole?'Poste '+pole+' enviado ao formulário.':'Vão '+span+' enviado ao formulário.';
     towardForm();
    }
@@ -240,6 +240,10 @@
  window.addEventListener('message',event=>{
   if(!allowed()||event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.source!=='arbora-gestao-cadastro')return;
   const data=event.data;
+  if(data.type==='pole-lookup'){
+   void Promise.resolve(window.CampoControlMap?.inspectionPole?.(data.pole,data.point)).then(links=>send({type:'inspection-pole',action:'inspection-pole',requestId:data.requestId,links}));
+   return;
+  }
   if(data.type==='ready'){frameReady=true;configurePhotoDate();syncTheme();$('desktopFormStatus').textContent='';readyButtons();}
   if(data.type==='form-height'&&Number.isFinite(data.height)&&data.height>=100){
    frame.style.height=Math.min(data.height,20000)+'px';

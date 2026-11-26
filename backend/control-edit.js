@@ -1,5 +1,5 @@
 // Administrative corrections reuse the central row and its immutable history.
-const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
+const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','spanNetwork','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
 async function controlEditSnapshot(db,env,id){
  if(!sharedId(id))throw sharedError('ID inválido.');
  const row=await sharedRead(db,id);
@@ -26,6 +26,12 @@ async function controlEditAPI(request,env,db){
  if(part.version!==body.version||!part.row&&part.baseline.generation!==body.baselineToken||part.row?.pending)throw sharedError('Cadastro alterado. Suas alterações foram mantidas na tela; reabra a versão atual antes de salvar.',409);
  const stamp=new Date().toISOString(),checked=sharedData({...part.record,...body.values,id:body.id},actor),data={...part.record};
  for(const k of Object.keys(body.values))data[k]=checked[k];
+ const audit=CampoInspectionRules.poleAudit(data);
+ if(audit){
+  audit.absent=audit.expected.filter(key=>Object.hasOwn(body.values,key)?!data[key]:audit.absent.includes(key));
+  data.poleAudit=audit;
+ }else delete data.poleAudit;
+ if(Object.hasOwn(body.values,'span')&&!Object.hasOwn(body.values,'spanNetwork'))delete data.spanNetwork;
  for(const k of ['sharedVersion','sharedDeleted','sharedUpdatedAt','sharedActor','deletionRequest','baselineToken','baseline'])delete data[k];
  data.updatedAt=stamp;data.lastInspector=actor;data.lastEditorUserId=env.CAMPO_USER?.id||null;data.lastEditorEmail=env.CAMPO_USER?.email||null;data.managementEdit={at:stamp,actor,fields:Object.keys(body.values)};
  if(Object.hasOwn(body.values,'height')&&Number(data.height)!==Number(part.record.height))data.heightMeasurement={method:'manual-management',confirmedAt:stamp,actor};

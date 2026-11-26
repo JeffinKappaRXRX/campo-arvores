@@ -9,6 +9,16 @@ const ASSETS={};
  const yes=value=>value===true||value==='sim';
  const answered=value=>value==='sim'||value==='nao';
  const selectedNetworks=r=>networkKeys.filter(key=>yes(r[key]));
+ function poleAudit(r){
+  const saved=r.poleAudit,pole=text(r.pole).toUpperCase();
+  if(!pole||!saved||saved.pole!==pole||!Array.isArray(saved.expected)||!Array.isArray(saved.absent))return null;
+  const expected=networkKeys.filter(key=>saved.expected.includes(key));
+  if(!expected.length)return null;
+  return {pole,expected,absent:expected.filter(key=>saved.absent.includes(key))};
+ }
+ function preferredSpanNetwork(r,audit=poleAudit(r)){
+  return audit?selectedNetworks(r)[0]||'':'';
+ }
  function missing(r){
   const out=[];
   const add=(field,label)=>out.push({field,label});
@@ -28,10 +38,19 @@ const ASSETS={};
   return out;
  }
  function formMissing(r){
-  const out=missing(r),network=selectedNetworks(r);
+  const out=missing(r),network=selectedNetworks(r),audit=poleAudit(r);
   const add=(field,label)=>out.push({field,label});
-  if(!network.length&&!yes(r.noNetwork))add('noNetwork','Rede MT, BT, AT ou sem rede próxima');
+  if(!network.length&&!yes(r.noNetwork)&&!(audit&&audit.expected.every(key=>audit.absent.includes(key))))add('noNetwork','Rede MT, BT, AT ou sem rede próxima');
   if(network.length&&yes(r.noNetwork))add('noNetwork','Marque as redes presentes ou sem rede próxima');
+  if(audit){
+   for(const key of audit.expected){
+    const present=network.includes(key),absent=audit.absent.includes(key);
+    if(present===absent)add(key,present?'Revise a situação da '+key.toUpperCase():'Poste com '+key.toUpperCase()+' no cadastro: confirme a rede ou marque que não existe no campo');
+   }
+   const preferred=preferredSpanNetwork(r,audit);
+   if(preferred&&!text(r.span))add('span','ID do vão '+preferred.toUpperCase());
+   else if(preferred&&r.spanNetwork!==preferred)add('spanNetwork','Informe um vão da rede '+preferred.toUpperCase());
+  }
   if(!answered(r.grouped))add('grouped','Poda agrupada');
   if(r.grouped!=='sim'&&!positive(r.dap)&&!positive(r.circ))add('dap','DAP ou CAP');
   if(!text(r.species))add('species','Espécie ou “Não identificada”');
@@ -47,7 +66,7 @@ const ASSETS={};
  function unknownSpecies(r){return !text(r.species)||/^(árvore|arvore|não identificad[ao]|nao identificad[ao]|desconhecid[ao])$/i.test(text(r.species));}
  function identificationPending(r){return !r.deletedRemote&&(unknownSpecies(r)||['queued','error','suggested'].includes(r.plantIdentification?.status));}
  const savedMissing=r=>r.formValidation===1?formMissing(r):missing(r);
- root.CampoInspectionRules={missing,formMissing,savedMissing,unknownSpecies,identificationPending};
+ root.CampoInspectionRules={missing,formMissing,savedMissing,poleAudit,preferredSpanNetwork,unknownSpecies,identificationPending};
  if(typeof module!=='undefined')module.exports=root.CampoInspectionRules;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
@@ -1146,7 +1165,7 @@ async function sharedBody(request,limit=6500000){try{return JSON.parse(await(awa
 async function sharedRead(db,id){return db.prepare('SELECT * FROM shared_trees WHERE id=?').bind(id).first();}
 function sharedData(raw,actor,imported=false){
  if(!raw||!sharedId(raw.id)||!sharedCoordinate(raw.lat,90)||!sharedCoordinate(raw.lon,180))throw sharedError('ID, latitude e longitude válidos são obrigatórios.');
- const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
+ const allowed=['externalId','inspector','feeder','height','dap','circ','position','pole','span','spanNetwork','os','species','note','poda','projection','grouped','treeSite','noNetwork','mt','bt','at','mtDistance','btDistance','atDistance','area','access','team','photoReference','address','municipality','perimeter','key','street'];
  const out={id:raw.id,lat:Number(raw.lat),lon:Number(raw.lon),photos:[],createdAt:Number.isFinite(Date.parse(raw.createdAt))?raw.createdAt:new Date().toISOString(),updatedAt:Number.isFinite(Date.parse(raw.updatedAt))?raw.updatedAt:new Date().toISOString()};
  for(const key of allowed){if(typeof raw[key]==='boolean')out[key]=raw[key];else if(raw[key]!==undefined&&raw[key]!==null)out[key]=String(raw[key]).slice(0,key==='note'?5000:1000);}
  if(out.treeSite!==undefined&&!['','publico','privado'].includes(out.treeSite))throw sharedError('Selecione área pública ou privada para o local da árvore.');
@@ -1154,6 +1173,9 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  if(raw.noNetwork!==undefined)out.noNetwork=raw.noNetwork===true||raw.noNetwork==='sim';
  if(raw.formValidation===1)out.formValidation=1;
+ const audit=CampoInspectionRules.poleAudit({...out,poleAudit:raw.poleAudit});
+ if(audit)out.poleAudit=audit;
+ if(!['mt','bt','at'].includes(out.spanNetwork))delete out.spanNetwork;
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
  const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
  if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest);
@@ -1177,6 +1199,8 @@ async function sharedSave(db,body,actor,imported=false,identity=null){
  if(original&&data.treeSite===undefined&&original.treeSite!==undefined)data.treeSite=original.treeSite;
  if(original?.noNetwork!==undefined&&data.noNetwork===undefined)data.noNetwork=original.noNetwork;
  if(original?.formValidation===1)data.formValidation=1;
+ if(body.record.formValidation!==1&&data.pole===original?.pole&&original.poleAudit)data.poleAudit=original.poleAudit;
+ if(body.record.formValidation!==1&&data.span===original?.span&&original.spanNetwork)data.spanNetwork=original.spanNetwork;
  for(const key of ['archivedPhotoEvidence','folderUrl'])if(original?.[key]!=null)data[key]=original[key];
  data.createdBy=original?original.createdBy||original.inspector||original.lastInspector||old.actor:actor;
  if(identity){data.createdByUserId=original?.createdByUserId||(old?null:identity.id);data.createdByEmail=original?.createdByEmail||(old?null:identity.email);data.lastEditorUserId=identity.id;data.lastEditorEmail=identity.email;if(!old)data.inspector=identity.name;else data.inspector=original.inspector||data.inspector;}
@@ -1584,7 +1608,7 @@ async function controlAPI(request,env){try{
  }}
 
 // Administrative corrections reuse the central row and its immutable history.
-const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
+const controlEditFields=['lat','lon','species','height','dap','circ','mt','bt','at','mtDistance','btDistance','atDistance','pole','span','spanNetwork','feeder','poda','projection','position','grouped','treeSite','noNetwork','os','address','note','area','access','team','municipality','perimeter','key','street'];
 async function controlEditSnapshot(db,env,id){
  if(!sharedId(id))throw sharedError('ID inválido.');
  const row=await sharedRead(db,id);
@@ -1611,6 +1635,12 @@ async function controlEditAPI(request,env,db){
  if(part.version!==body.version||!part.row&&part.baseline.generation!==body.baselineToken||part.row?.pending)throw sharedError('Cadastro alterado. Suas alterações foram mantidas na tela; reabra a versão atual antes de salvar.',409);
  const stamp=new Date().toISOString(),checked=sharedData({...part.record,...body.values,id:body.id},actor),data={...part.record};
  for(const k of Object.keys(body.values))data[k]=checked[k];
+ const audit=CampoInspectionRules.poleAudit(data);
+ if(audit){
+  audit.absent=audit.expected.filter(key=>Object.hasOwn(body.values,key)?!data[key]:audit.absent.includes(key));
+  data.poleAudit=audit;
+ }else delete data.poleAudit;
+ if(Object.hasOwn(body.values,'span')&&!Object.hasOwn(body.values,'spanNetwork'))delete data.spanNetwork;
  for(const k of ['sharedVersion','sharedDeleted','sharedUpdatedAt','sharedActor','deletionRequest','baselineToken','baseline'])delete data[k];
  data.updatedAt=stamp;data.lastInspector=actor;data.lastEditorUserId=env.CAMPO_USER?.id||null;data.lastEditorEmail=env.CAMPO_USER?.email||null;data.managementEdit={at:stamp,actor,fields:Object.keys(body.values)};
  if(Object.hasOwn(body.values,'height')&&Number(data.height)!==Number(part.record.height))data.heightMeasurement={method:'manual-management',confirmedAt:stamp,actor};

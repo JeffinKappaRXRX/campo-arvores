@@ -72,4 +72,19 @@ const offlinePlot={...bySpan,operationId:'desktop-no-network',record:{...bySpan.
 const noNetwork=await call('/api/control/create',offlinePlot);
 assert.equal(noNetwork.status,200,JSON.stringify(noNetwork.data));
 assert.equal(noNetwork.data.tree.noNetwork,true);
+const both={...bySpan,operationId:'dual-net',record:{...bySpan.record,id:'dual-net',pole:'P-004',mt:true,mtDistance:1.2,
+ span:'BT-234',spanNetwork:'bt',poleAudit:{pole:'P-004',expected:['mt','bt'],absent:[]}}};
+let dualNet=await call('/api/control/create',both);
+assert.equal(dualNet.status,400);assert.match(dualNet.data.error,/vão da rede MT/);
+dualNet=await call('/api/control/create',{...both,record:{...both.record,bt:false,spanNetwork:'mt',span:'MT-101'}});
+assert.equal(dualNet.status,400);assert.match(dualNet.data.error,/Poste com BT no cadastro/);
+dualNet=await call('/api/control/create',{...both,record:{...both.record,bt:false,spanNetwork:'mt',span:'MT-101',
+ poleAudit:{...both.record.poleAudit,absent:['bt']}}});
+assert.equal(dualNet.status,200,JSON.stringify(dualNet.data));
+assert.deepEqual(dualNet.data.tree.poleAudit.absent,['bt']);
+const fieldBt=await call('/api/control/edit',{id:'dual-net',version:1,operationId:'mt-removed',values:{
+ mt:false,bt:true,btDistance:0,span:'BT-234',spanNetwork:'bt'}});
+assert.equal(fieldBt.status,200,JSON.stringify(fieldBt.data));
+assert.deepEqual(fieldBt.data.tree.poleAudit.absent,['mt']);
+assert.equal(fieldBt.data.tree.spanNetwork,'bt');
 globalThis.fetch=nativeFetch;console.log('PASS management editing: permissions, conflicts and atomic locks, immutable history/photos, metadata and timing preserved, idempotent retry, VERA baseline and legacy Drive version checks. Isolated fixtures only.');

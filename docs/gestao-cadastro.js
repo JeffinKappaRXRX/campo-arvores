@@ -158,8 +158,11 @@
   }
   if(data.type==='map-distance')returnMeasurement(data);
   if(data.type==='map-feedback')coordinates.textContent=data.message;
+  if(data.type==='inspection-pole')window.CampoFieldPoleCheck?.receive(data);
   if(data.type==='network'&&!formSaveBusy&&!attaching){
    for(const key of ['pole','span','feeder'])setField(key,data[key]);
+   if(data.pole)window.CampoFieldPoleCheck?.lookup(data.polePoint);
+   if(data.span&&data.network)window.CampoFieldPoleCheck?.selectSpan(data.span,data.network);
    if(['mt','bt','at'].includes(data.network)){const network=$(data.network);network.checked=true;network.dispatchEvent(new Event('change',{bubbles:true}));}
    if(data.spanGeometry&&typeof CampoFieldSpanQuality!=='undefined')CampoFieldSpanQuality.choose(data.spanGeometry);
    scheduleDraft();renderCompletion();
