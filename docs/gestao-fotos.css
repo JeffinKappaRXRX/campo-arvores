@@ -32,7 +32,9 @@ html.gestao-cadastro #desktopPublishStatus { margin-top:.5rem; }
 .desktop-map-tools p { flex:1; margin:0; }
 #desktopMapTools[hidden],#desktopMapMeasure[hidden],#desktopMapPick[hidden],#mapExit[hidden] { display:none!important; }
 .desktop-capture-active #controlMap { cursor:crosshair; }
-.desktop-draft-marker { background:#ffc64d; color:#2d210b; border:2px solid #201a12; border-radius:50%; display:grid; place-items:center; font-weight:800; box-shadow:0 1px 5px #0009; }
+.desktop-draft-marker { display:grid; place-items:start center; padding-top:2px; }
+.desktop-draft-marker > span { display:grid; place-items:center; width:29px; height:29px; border:2px solid #fff; border-radius:50% 50% 50% 7px; background:#087d59; color:#fff; transform:rotate(-45deg); box-shadow:0 3px 8px #0008; }
+.desktop-draft-marker svg { width:21px; height:21px; transform:rotate(45deg); }
 #managementMapWorkspace:fullscreen,#managementMapWorkspace.map-fullscreen { width:100%; height:100dvh; background:var(--bg); overflow:auto; display:flex; flex-direction:column; overscroll-behavior:contain; }
 #managementMapWorkspace.map-fullscreen { position:fixed; inset:0; z-index:2500; }
 html.management-fullscreen-fallback { overflow:hidden; }

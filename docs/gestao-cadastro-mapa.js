@@ -16,7 +16,8 @@
  function paintPin(){
   if(!enabled||!map||!point){pin?.remove();pin=null;return;}
   if(pin){pin.setLatLng([point.lat,point.lon]);return;}
-  const icon=L.divIcon({className:'desktop-draft-marker',html:'＋',iconSize:[25,25],iconAnchor:[12,12]});
+  const symbol='<span aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L5 11h3l-4 6h6v5h4v-5h6l-4-6h3Z" fill="currentColor"/></svg></span>';
+  const icon=L.divIcon({className:'desktop-draft-marker',html:symbol,iconSize:[34,38],iconAnchor:[17,36]});
   pin=L.marker([point.lat,point.lon],{pane:'controlPhotos',icon,draggable:true,title:'Posição da árvore em cadastro',bubblingMouseEvents:false}).addTo(map);
   pin.on('dragend',()=>{
    const next=coordinate(pin.getLatLng());
