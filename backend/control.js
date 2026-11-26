@@ -36,20 +36,29 @@ function controlMap(rows,params){
  return {count:points.length,grouped:true,points:[...groups.values()].map(g=>({...g,lat:g.lat/g.count,lon:g.lon/g.count}))};
 }
 function controlRecord(r){return {...r,photos:controlPhotos(r).map(p=>({id:p.id,assetId:p.assetId,name:p.name,receivedAt:p.receivedAt})),missingFields:controlProblems(r).map(p=>p.label)};}
-async function controlUniverse(env,force=false){const archive=await controlInventory(env,force),inventory=archive.inventory||{archive:[],deleted:new Set(),revision:null,pending:[]};const data=await universalAdminRecords(env,{...inventory,deleted:new Set(inventory.deleted)});return {...data,archive:{available:Boolean(archive.inventory),at:archive.at?new Date(archive.at).toISOString():null,error:archive.error||null}};}
+async function controlUniverse(env,force=false,includeArchive=false){const archive=await controlInventory(env,force),inventory=archive.inventory||{archive:[],deleted:new Set(),revision:null,pending:[]};const data=await universalAdminRecords(env,{...inventory,deleted:new Set(inventory.deleted)});return {...data,...(includeArchive&&{archiveRecords:inventory.archive}),archive:{available:Boolean(archive.inventory),at:archive.at?new Date(archive.at).toISOString():null,error:archive.error||null}};}
 async function controlLiveUniverse(env){const inventory=controlArchiveState?.endpoint===env.GOOGLE_SCRIPT_URL&&controlArchiveState.inventory||{archive:[],deleted:new Set(),revision:null,pending:[]};return universalAdminRecords(env,{...inventory,deleted:new Set(inventory.deleted)});}
 function controlBounds(rows){let bounds=null;for(const r of rows){if(!sharedCoordinate(r.lat,90)||!sharedCoordinate(r.lon,180))continue;const lon=Number(r.lon),lat=Number(r.lat);bounds=bounds?[Math.min(bounds[0],lon),Math.min(bounds[1],lat),Math.max(bounds[2],lon),Math.max(bounds[3],lat)]:[lon,lat,lon,lat];}return bounds;}
 function controlCsvCell(value){let text=value===null||value===undefined?'':String(value);if(typeof value!=='number'&&/^[=+\-@]/.test(text))text="'"+text;return /[;"\r\n]/.test(text)?'"'+text.replaceAll('"','""')+'"':text;}
-function controlPhotoName(r){return controlPhotos(r).map(p=>p.name||p.id||p.assetId).filter(Boolean).join(' | ');}
-function controlPhotoLink(r){const value=r.folderUrl||r.photoReference||r.googleReceipt?.folderUrl||'';try{const url=new URL(value);return url.protocol==='https:'?url.href:'';}catch{return '';}}
+function controlPhotoUrl(value){
+ try{
+  const url=new URL(value);
+  return url.protocol==='https:'&&!url.username&&!url.password?url.href:'';
+ }catch{return '';}
+}
+function controlPhotoLink(r,archived){
+ const photos=[...controlPhotos(r),...controlPhotos(archived||{})];
+ return [r.folderUrl,r.googleReceipt?.folderUrl,archived?.folderUrl,r.photoReference,...photos.map(photo=>photo.originalUrl)]
+  .map(controlPhotoUrl).find(Boolean)||'';
+}
 function controlCsvNumber(value){return value===null||value===undefined||value===''?'':Number.isFinite(Number(value))?Number(value):value;}
-function controlExportCsv(rows,{extras=false,idMode='original',unit='m'}={}){
+function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
  const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
  if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
  const counts={missing:0,review:0,adjustable:0};
  const all=rows.map(r=>{
-  const pole=r.pole??'';
-  const id=idMode==='pole'?pole:idMode==='empty'?'':r.externalId||r.id;
+  const pole=String(r.pole??''),link=controlPhotoLink(r,archive.get(r.id));
+  const id=idMode==='pole'?pole:idMode==='empty'?'':String(r.externalId||r.id);
   const distances=['bt','mt','at'].map(network=>{
    const {value,issue}=CampoSuggestionRules.networkDistance(r,network);
    if(issue){
@@ -59,12 +68,13 @@ function controlExportCsv(rows,{extras=false,idMode='original',unit='m'}={}){
    }
    return value===null?'':unit==='cm'?Number((value*100).toPrecision(12)):value;
   });
-  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,pole,...distances,controlPhotoName(r),r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
-  if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',controlPhotoLink(r));
-  return values;
+  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
+  if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',link);
+  if(!manifest)return values;
+  const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl)}));
+  return {id:r.id,values,photos};
  });
- const csv='\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';
- return {csv,counts};
+ return {headers,all,counts};
 }
 async function controlExport(env,params){
  const from=params.get('from')||'',to=params.get('to')||'',extras=params.get('extras')==='1';
@@ -72,13 +82,17 @@ async function controlExport(env,params){
  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
   throw sharedError('Período inválido.');
  if(!['original','pole','empty'].includes(idMode)||!['m','cm'].includes(unit))throw sharedError('Opção de exportação inválida.');
- const data=await controlUniverse(env);
+ const data=await controlUniverse(env,false,true);
  const rows=data.records.filter(r=>{
   if(!controlMatches(r,filters))return false;
   const day=controlDay(r.createdAt);
   return (!from||day>=from)&&(!to||day<=to);
  }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
- const {csv,counts}=controlExportCsv(rows,{extras,idMode,unit});
+ const manifest=params.get('format')==='package';
+ const archive=new Map(data.archiveRecords.map(record=>[record.id,record]));
+ const {headers,all,counts}=controlExportTable(rows,{extras,idMode,unit,archive,manifest});
+ if(manifest)return json({headers,rows:all,unit,counts,driveAvailable:data.archive.available});
+ const csv='\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';
  return new Response(csv,{headers:{
   'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"',
   'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length),
@@ -86,8 +100,27 @@ async function controlExport(env,params){
   'X-Campo-Distance-Missing':String(counts.missing),'X-Campo-Archive-Available':data.archive.available?'1':'0'
  }});
 }
+async function controlExportPhotos(request,env){
+ if(request.method!=='POST')throw sharedError('Use POST.',405);
+ const body=await sharedBody(request,12000),photos=body?.photos;
+ if(!Array.isArray(photos)||!photos.length||photos.length>12||photos.some(p=>!sharedId(p?.id)||!sharedId(p?.asset)))
+  throw sharedError('Selecione até 12 fotos válidas por lote.');
+ const db=await adminDb(env);
+ const rows=await db.prepare(`
+  WITH requested AS (
+   SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.asset') asset FROM json_each(?)
+  )
+  SELECT s.tree_id id,s.asset_id asset,s.image
+  FROM requested r
+  JOIN shared_photos s ON s.tree_id=r.id AND s.asset_id=r.asset
+  JOIN shared_trees t ON t.id=r.id AND t.deleted=0
+  WHERE EXISTS(SELECT 1 FROM json_each(t.data,'$.photos') p WHERE json_extract(p.value,'$.assetId')=r.asset)
+ `).bind(JSON.stringify(photos)).all();
+ return json({photos:rows.results});
+}
 async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
+ if(new URL(request.url).pathname==='/api/control/export/photos')return await controlExportPhotos(request,env);
  if(new URL(request.url).pathname==='/api/control/edit')return await controlEditAPI(request,env,await adminDb(env));
  if(new URL(request.url).pathname==='/api/control/create')return await controlCreateAPI(request,env,await adminDb(env));
  if(new URL(request.url).pathname==='/api/control/suggestions')return await controlSuggestions(request,env,await adminDb(env));

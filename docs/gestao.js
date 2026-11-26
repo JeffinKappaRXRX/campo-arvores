@@ -77,37 +77,98 @@
  async function requests(){if(!authorized)return;try{const d=await api('/api/shared/admin/deletions');if(!authorized)return;$('deletionRequests').innerHTML=d.requests.map(r=>'<div class="event-item"><strong>'+esc(r.actor)+' · '+esc(r.status)+'</strong><p>'+esc(r.reason)+' · '+esc(stamp(r.created_at))+'</p><button type="button" data-evidence="'+esc(r.id)+'">Ver evidência / analisar</button></div>').join('')||'<p>Nenhuma solicitação.</p>';$('deletionRequests').querySelectorAll('[data-evidence]').forEach(b=>b.onclick=()=>void evidence(b.dataset.evidence));}catch(e){$('deletionRequests').textContent=e.message;}}
  async function evidence(id){try{const {request:r}=await api('/api/shared/admin/evidence?id='+encodeURIComponent(id));if(!authorized)return;$('recordTitle').textContent='Pedido de exclusão · '+r.actor;$('recordBody').textContent='';$('recordPhotos').textContent='';$('photoStatus').textContent='';const p=document.createElement('p');p.textContent=r.reason+' · '+stamp(r.created_at)+' · GPS '+r.evidence.lat+', '+r.evidence.lon+' · '+(r.evidence.address||'Sem endereço disponível');$('recordBody').append(p);const image=r.evidence.annotated||r.evidence.original;if(/^data:image\/(?:jpe?g|png|webp);base64,[a-z0-9+/=]+$/i.test(image)){const img=document.createElement('img');img.src=image;img.alt='Evidência da solicitação';img.style.maxWidth='100%';$('recordPhotos').append(img);}if(r.status==='pending')for(const [decision,label]of [['approve','Aprovar exclusão'],['reject','Recusar pedido']]){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=async()=>{if(!confirm(label+' desta árvore?'+(decision==='approve'?' A árvore será removida do mapa e a pasta será enviada à lixeira do Drive.':'')))return;b.disabled=true;try{await api('/api/shared/admin/review',{id,decision,note:''});$('recordDialog').close();await load();void auxiliary();}catch(e){$('photoStatus').textContent=e.message;b.disabled=false;}};$('recordBody').append(b);}$('recordDialog').showModal();}catch(e){feedback(e.message);}}
  async function auxiliary(){await Promise.allSettled([audit(),presence(),requests()]);}
+ const exportVersion=new URL(document.currentScript?.src||location.href).search;
+ let exportWorker=null,exporting=false;
+ function downloadExport(blob,filename){
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=filename;
+  document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }
+ function exportOptions(){
+  const unit=$('exportDistanceUnit').value,from=$('exportFrom').value,to=$('exportTo').value;
+  const query=new URLSearchParams({idMode:$('exportPoleAsId').checked?'pole':'empty',distanceUnit:unit});
+  if($('exportScope').value==='filtered')for(const [key,value] of params())if(!['page','bbox','zoom'].includes(key))query.append(key,value);
+  if(from)query.set('from',from);
+  if(to)query.set('to',to);
+  if($('exportExtras').checked)query.set('extras','1');
+  return {query,unit,filename:'arbora-template-vera-'+unit+'-'+(from||'inicio')+'-'+(to||new Date().toISOString().slice(0,10))};
+ }
+ function exportNotes(total,unit,counts,driveAvailable){
+  const notes=[fmt(total)+' cadastros exportados · distâncias em '+unit];
+  if(counts.adjustable)notes.push(fmt(counts.adjustable)+' medida(s) com sugestão de ajuste');
+  if(counts.review)notes.push(fmt(counts.review)+' medida(s) para conferir');
+  if(counts.missing)notes.push(fmt(counts.missing)+' campo(s) de distância sem valor exportável');
+  if(!driveAvailable)notes.push('Drive indisponível, exportação só com a base central');
+  return notes;
+ }
+ function exportBusy(busy,canCancel=false){
+  exporting=busy;
+  $('exportAllBases').disabled=$('exportVeraZip').disabled=busy;
+  $('cancelVeraZip').hidden=!canCancel;
+ }
+ function finishExportWorker(){
+  exportWorker?.terminate();
+  exportWorker=null;
+  exportBusy(false);
+ }
  async function exportAllBases(){
-  if(!authorized)return;
-  const button=$('exportAllBases'),status=$('exportStatus'),filtered=$('exportScope').value==='filtered';
-  button.disabled=true;
+  if(!authorized||exporting)return;
+  const status=$('exportStatus'),{query,unit,filename}=exportOptions();
+  exportBusy(true);
   status.textContent='Preparando o template VERA…';
   try{
-   const unit=$('exportDistanceUnit').value;
-   const p=new URLSearchParams({idMode:$('exportPoleAsId').checked?'pole':'empty',distanceUnit:unit});
-   const from=$('exportFrom').value,to=$('exportTo').value;
-   if(filtered)for(const [key,value] of params())if(!['page','bbox','zoom'].includes(key))p.append(key,value);
-   if(from)p.set('from',from);
-   if(to)p.set('to',to);
-   if($('exportExtras').checked)p.set('extras','1');
-   const response=await fetch('/api/control/export?'+p,{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(120000)});
+   const response=await fetch('/api/control/export?'+query,{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(120000)});
    if(!response.ok){
     const error=await response.json().catch(()=>null);
     throw Error(error?.error||'Não foi possível gerar a exportação.');
    }
    const count=key=>Number(response.headers.get('X-Campo-'+key))||0;
-   const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');
-   link.href=url;link.download='arbora-template-vera-'+unit+'-'+(from||'inicio')+'-'+(to||new Date().toISOString().slice(0,10))+'.csv';
-   document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-   const notes=[fmt(count('Record-Count'))+' cadastros exportados · distâncias em '+unit];
-   if(count('Distance-Adjustable'))notes.push(fmt(count('Distance-Adjustable'))+' medida(s) com sugestão de ajuste');
-   if(count('Distance-Review'))notes.push(fmt(count('Distance-Review'))+' medida(s) para conferir');
-   if(count('Distance-Missing'))notes.push(fmt(count('Distance-Missing'))+' campo(s) de distância sem valor exportável');
-   if(response.headers.get('X-Campo-Archive-Available')==='0')notes.push('Drive indisponível, exportação só com a base central');
-   status.textContent=notes.join(' · ')+'.';
+   const blob=await response.blob();
+   if(!authorized)return;
+   downloadExport(blob,filename+'.csv');
+   const counts={adjustable:count('Distance-Adjustable'),review:count('Distance-Review'),missing:count('Distance-Missing')};
+   status.textContent=exportNotes(count('Record-Count'),unit,counts,response.headers.get('X-Campo-Archive-Available')!=='0').join(' · ')+'.';
   }catch(e){status.textContent=e.message;}
-  finally{button.disabled=false;}
+  finally{exportBusy(false);}
  }
+ function exportVeraZip(){
+  if(!authorized||exporting)return;
+  const status=$('exportStatus'),{query,unit,filename}=exportOptions();
+  query.set('format','package');
+  status.textContent='Preparando a lista de cadastros e fotos…';
+  try{
+   const worker=new Worker('vera-export-worker.js'+exportVersion);
+   exportWorker=worker;
+   exportBusy(true,true);
+   worker.onmessage=({data})=>{
+    if(exportWorker!==worker||!authorized)return;
+    if(data.progress){
+     const {processed,total,saved}=data.progress;
+     status.textContent='Preparando ZIP · '+fmt(processed)+' de '+fmt(total)+' cadastros · '+fmt(saved)+' fotos incluídas.';
+     return;
+    }
+    try{
+     if(data.error)throw Error(data.error);
+     downloadExport(data.archive,filename+'.zip');
+     const notes=exportNotes(data.total,unit,data.counts,data.driveAvailable);
+     notes.push(fmt(data.saved)+' fotos no ZIP');
+     if(data.remote)notes.push(fmt(data.remote)+' fotos acessíveis por link externo');
+     if(data.missing)notes.push(fmt(data.missing)+' arquivos de foto indisponíveis');
+     if(data.noPhotos)notes.push(fmt(data.noPhotos)+' cadastros sem fotos listadas');
+     status.textContent=notes.join(' · ')+'.';
+    }catch(e){status.textContent=e.message;}
+    finally{finishExportWorker();}
+   };
+   worker.onerror=()=>{
+    if(exportWorker!==worker)return;
+    status.textContent='Falha ao preparar o ZIP. Tente novamente ou reduza o período.';
+    finishExportWorker();
+   };
+   worker.postMessage(query.toString());
+  }catch(e){status.textContent=e.message;finishExportWorker();}
+ }
+ $('cancelVeraZip').onclick=()=>{finishExportWorker();$('exportStatus').textContent='Exportação ZIP cancelada.';};
+ window.addEventListener('campo-control-logout',()=>{finishExportWorker();$('exportStatus').textContent='';});
  function stopLive(){liveGeneration++;clearTimeout(liveRetryTimer);clearTimeout(liveRefreshTimer);const socket=liveSocket;liveSocket=null;if(socket&&socket.readyState<2)socket.close(1000,'Painel pausado');}
  function queueLiveRefresh(){clearTimeout(liveRefreshTimer);liveRefreshTimer=setTimeout(()=>{if(!authorized||document.hidden||!navigator.onLine)return;if(actionBusy){queueLiveRefresh();return;}void load();void auxiliary();if(window.CampoCycle?.active())void window.CampoParque?.refresh();},250);}
  function connectLive(){if(!authorized||document.hidden||!navigator.onLine||typeof WebSocket!=='function')return;stopLive();const generation=liveGeneration,scheme=location.protocol==='https:'?'wss:':'ws:',socket=new WebSocket(scheme+'//'+location.host+'/api/control/live');liveSocket=socket;socket.onopen=()=>{if(generation!==liveGeneration)return;liveRetryTimer=null;$('live').textContent='Tempo real conectado';$('live').classList.remove('offline');};socket.onmessage=event=>{if(generation!==liveGeneration)return;try{const data=JSON.parse(event.data);if(data.type==='change'){queueLiveRefresh();if(data.kind?.startsWith('route-'))window.CampoRoutePlanner?.refresh?.();if(data.kind==='tree-corrections')void window.CampoQualityAdmin?.refresh();}}catch{}};socket.onerror=()=>{};socket.onclose=()=>{if(generation!==liveGeneration)return;liveSocket=null;if(!authorized||document.hidden||!navigator.onLine)return;$('live').textContent='Tempo real reconectando · contingência ativa';liveRetryTimer=setTimeout(connectLive,3000);};}
@@ -127,10 +188,11 @@
  $('filters').onsubmit=e=>e.preventDefault();$('filters').onreset=()=>setTimeout(()=>{for(const id of multiKeys){rotuloMulti(id);$(id).querySelectorAll('.msel-lista label').forEach(l=>{l.hidden=false;});$(id).open=false;}aplicaFiltros();},0);$('query').oninput=()=>{clearTimeout(queryTimer);queryTimer=setTimeout(()=>{page=0;window.CampoQualityAdmin?.reset();void load(false,true);},300);};$('previous').onclick=()=>{page=Math.max(0,page-1);void load();};$('next').onclick=()=>{page++;void load();};$('forecastHours').oninput=forecast;$('forecastCount').oninput=forecast;$('forecastMode').onchange=forecast;
  $('onlyHomologation').onclick=()=>{window.CampoControl.clearFilters();marcaMulti('classification',['homologacao']);void load();};$('allRecords').onclick=()=>window.CampoControl.clearFilters();$('selectPage').onclick=()=>{for(const r of state?.records||[])selected.set(r.id,r);paint();};$('clearSelection').onclick=()=>{selected.clear();paint();};$('classifyProduction').onclick=()=>void changeSelected('producao');$('classifyTest').onclick=()=>void changeSelected('homologacao');$('deleteSelected').onclick=()=>void changeSelected('delete');
  $('exportAllBases').onclick=()=>void exportAllBases();
+ $('exportVeraZip').onclick=exportVeraZip;
  $('auditCase').onchange=()=>{auditOffset=0;void audit();};$('auditPrevious').onclick=()=>{auditOffset=Math.max(0,auditOffset-100);void audit();};$('auditNext').onclick=()=>{if(auditNext!==null){auditOffset=auditNext;void audit();}};
  const checkDelete=()=>{$('confirmDelete').disabled=!$('deleteReviewed').checked||$('deleteConfirmation').value!=='EXCLUIR';};$('deleteReviewed').onchange=checkDelete;$('deleteConfirmation').oninput=checkDelete;$('cancelDelete').onclick=()=>$('deleteDialog').close();$('deleteDialog').addEventListener('close',()=>{deleteSnapshot=null;$('deleteConfirmation').value='';});$('deleteForm').onsubmit=async e=>{e.preventDefault();if(!deleteSnapshot||$('confirmDelete').disabled)return;const snapshot=deleteSnapshot;$('confirmDelete').disabled=true;$('deleteDialog').close();await changeSelected('delete',snapshot,true);};$('closeRecord').onclick=()=>$('recordDialog').close();$('recordDialog').addEventListener('close',()=>{photoSerial++;$('recordPhotos').textContent='';});$('closePhoto').onclick=()=>$('photoDialog').close();$('photoDialog').addEventListener('close',()=>$('largePhoto').removeAttribute('src'));$('largePhoto').onclick=()=>$('largePhoto').classList.toggle('zoomed');
  const dark=localStorage.getItem('campo-theme')==='dark';document.documentElement.classList.toggle('dark',dark);$('theme').onclick=()=>{const on=document.documentElement.classList.toggle('dark');localStorage.setItem('campo-theme',on?'dark':'light');};
  document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>{document.querySelectorAll('nav a').forEach(n=>n.classList.toggle('active',n===a));});
- window.CampoControl={api,load,openRecord,updateBusy:()=>actionBusy,mapParams:()=>params(),clearFilters:()=>{for(const id of filterKeys){if(multiKeys.includes(id))marcaMulti(id,[]);else $(id).value='';}$('query').value='';aplicaFiltros();},authorized:()=>authorized,filters:()=>({feeder:marcados('feeder').length===1?marcados('feeder')[0]:'',feeders:marcados('feeder')}),search:query=>{$('query').value=query;page=0;return load();}};
+ window.CampoControl={api,load,openRecord,updateBusy:()=>actionBusy||exporting,mapParams:()=>params(),clearFilters:()=>{for(const id of filterKeys){if(multiKeys.includes(id))marcaMulti(id,[]);else $(id).value='';}$('query').value='';aplicaFiltros();},authorized:()=>authorized,filters:()=>({feeder:marcados('feeder').length===1?marcados('feeder')[0]:'',feeders:marcados('feeder')}),search:query=>{$('query').value=query;page=0;return load();}};
  setInterval(()=>void poll(),10000);document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLive();else if(authorized){connectLive();void poll();}else void session();});window.addEventListener('online',()=>{connectLive();void poll();});window.addEventListener('offline',()=>{stopLive();$('live').textContent='Offline · última consulta mantida';$('live').classList.add('offline');});void session();
 })();

@@ -4,7 +4,7 @@ class Query{constructor(text,args=[]){this.text=text;this.args=args;}bind(...a){
 const DB={prepare:s=>new Query(s),withSession(){return this;},async batch(qs){sql.exec('BEGIN');try{const out=[];for(const q of qs)out.push(await q.run());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}};
 const source=await fs.readFile(new URL('worker.js',import.meta.url),'utf8'),{default:app}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const env={APP_ORIGIN:'https://team.example',ADMIN_PASSWORD:'private-bootstrap-password',ADMIN_SESSION_SECRET:'s'.repeat(40),LOGIN_GUARD:{get:async()=>0,put:async()=>{}},SHARED_DB:DB,GOOGLE_SCRIPT_URL:'https://script.google.com/macros/s/test/exec',GOOGLE_SCRIPT_TOKEN:'integration-test-secret',REDE_CAMPO_ID:'network-test'};
-let archiveCalls=0;const nativeFetch=globalThis.fetch,archiveRow={id:'legacy',species:'Legado',inspector:'Original',createdAt:'2026-10-31T23:00:00Z',updatedAt:'2026-10-31T23:00:00Z',lat:-9.9,lon:-67.8,pole:'000020001',bt:true,btDistance:0,mt:true,'5. Distância MT (Metros)':'1,25',photos:[{id:'old-photo'}]},manifest={fileId:'network-test',name:'Rede_Campo.gpkg',size:4,revision:'r1',chunkSize:4};
+let archiveCalls=0;const nativeFetch=globalThis.fetch,archiveRow={id:'legacy',species:'Legado',inspector:'Original',createdAt:'2026-10-31T23:00:00Z',updatedAt:'2026-10-31T23:00:00Z',lat:-9.9,lon:-67.8,pole:'000020001',bt:true,btDistance:0,mt:true,'5. Distância MT (Metros)':'1,25',folderUrl:'https://drive.google.com/drive/folders/legacy-folder',photos:[{id:'old-photo',originalUrl:'https://drive.google.com/file/d/legacy-photo/view'}]},manifest={fileId:'network-test',name:'Rede_Campo.gpkg',size:4,revision:'r1',chunkSize:4};
 globalThis.fetch=async(input,options)=>{assert.equal(input,env.GOOGLE_SCRIPT_URL);const b=JSON.parse(options.body);assert.equal(b.token,env.GOOGLE_SCRIPT_TOKEN);if(b.action==='admin_list'){archiveCalls++;return Response.json({ok:true,records:[archiveRow],deletedIds:[],nextOffset:null,revision:'one'});}if(b.action==='network_manifest')return Response.json({ok:true,network:manifest});if(b.action==='network_chunk')return Response.json({ok:true,offset:0,revision:'r1',base64:'AQIDBA=='});throw Error('Unexpected action '+b.action);};
 async function call(path,body,{cookie='',bearer='',origin=env.APP_ORIGIN}={}){const response=await app.fetch(new Request('https://api.test'+path,{method:body===undefined?'GET':'POST',headers:{Origin:origin,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{}),...(bearer?{Authorization:'Bearer '+bearer}:{})},body:body===undefined?undefined:JSON.stringify(body)}),env);return {response,status:response.status,data:response.headers.get('Content-Type')?.includes('json')?await response.clone().json():new Uint8Array(await response.clone().arrayBuffer())};}
 for(const path of ['/api/control/data','/api/control/revision','/api/network/manifest','/api/network/chunk?offset=0&revision=r1'])assert.equal((await call(path)).status,401);
@@ -25,6 +25,24 @@ assert.equal((await call('/api/control/tree?id=t0',undefined,auth)).data.record.
 const revision=(await call('/api/control/revision',undefined,auth)).data.revision;const updated={...JSON.parse(sql.prepare('SELECT data FROM shared_trees WHERE id=?').get('t0').data),height:12,updatedAt:'2026-11-01T13:00:00Z'};sql.prepare('UPDATE shared_trees SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(updated),'t0');assert.notEqual((await call('/api/control/revision',undefined,auth)).data.revision,revision);assert.equal((await call('/api/control/tree?id=t0',undefined,auth)).data.record.height,12,'same central row is immediately visible in desktop');
 const before=sql.prepare('SELECT COUNT(*) n FROM shared_trees').get().n;await call('/api/control/data?refresh=1',undefined,auth);assert.equal(sql.prepare('SELECT COUNT(*) n FROM shared_trees').get().n,before,'analytics is read only');assert.equal(archiveCalls,2);
 const exported=await call('/api/control/export',undefined,auth),csv=new TextDecoder().decode(exported.data);assert.equal(exported.status,200);assert(exported.response.headers.get('Content-Disposition').includes('arbora-todas-as-bases.csv'));assert.equal(csv.split('\r\n')[0].replace(/^\uFEFF/,''),'ID;ESPECIE;LONGITUDE;LATITUDE;ALTURA;DATA;POSTE;DT BT;DT MT;DT AT;FOTO;AREA;DAP;ACESSO;EQUIPE;OBSERVACAO;ALIMENTADOR');assert.equal(csv.trimEnd().split('\r\n').length,15002,'header plus every active central record');const csvFiltered=new TextDecoder().decode((await call('/api/control/export?feeder=RBR-01C1&inspector=Alice',undefined,auth)).data);assert.equal(csvFiltered.trimEnd().split('\r\n').length,7501,'current panel filters limit the export without truncating pages');const csvExtra=new TextDecoder().decode((await call('/api/control/export?extras=1&from=2026-11-01&to=2026-11-01',undefined,auth)).data);assert.match(csvExtra.split('\r\n')[0],/;ID DO VAO;CHAVE;LOGRADOURO;MUNICIPIO;PERIMETRO;LINK DA FOTO$/);
+const oldCsv=new TextDecoder().decode((await call('/api/control/export?q=Legado',undefined,auth)).data);
+assert.equal(oldCsv.split('\r\n')[1].split(';')[10],archiveRow.folderUrl);
+const plan=await call('/api/control/export?format=package&q=Legado',undefined,auth);
+assert.equal(plan.status,200);
+assert.equal(plan.data.headers[10],'FOTO');
+assert.equal(plan.data.rows[0].values[10],archiveRow.folderUrl);
+assert.equal(plan.data.rows[0].photos[0].url,archiveRow.photos[0].originalUrl);
+const putPhoto=sql.prepare('INSERT INTO shared_photos (tree_id,asset_id,image) VALUES(?,?,?)');
+const image='data:image/jpeg;base64,/9j/AA==';
+putPhoto.run('t0','asset0',image);
+putPhoto.run('t0','unreferenced',image);
+const targets={photos:[{id:'t0',asset:'asset0'},{id:'t0',asset:'unreferenced'},{id:'t1',asset:'asset0'}]};
+assert.equal((await call('/api/control/export/photos',targets)).status,401);
+assert.equal((await call('/api/control/export/photos',targets,inspector)).status,401);
+const packagePhotos=await call('/api/control/export/photos',targets,auth);
+assert.equal(packagePhotos.status,200);
+assert.deepEqual(packagePhotos.data.photos,[{id:'t0',asset:'asset0',image}]);
+assert.equal((await call('/api/control/export/photos',{photos:[{id:'../t0',asset:'asset0'}]},auth)).status,400);
 const logout=await call('/api/admin/logout',{},auth);assert.match(logout.response.headers.getSetCookie().join(','),/Max-Age=0/);
 for(const [idMode,unit,id,mt] of [['empty','cm','','125'],['pole','m','000020001','1.25']]){
  const result=await call('/api/control/export?idMode='+idMode+'&distanceUnit='+unit+'&q=Legado',undefined,auth);
