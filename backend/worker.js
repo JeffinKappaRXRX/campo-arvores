@@ -1740,7 +1740,9 @@ async function controlEditAPI(request,env,db,prepared=null){
  const introduced=errors(data).filter(issue=>!existingIssues.has(issue.field+':'+issue.label));
  if(introduced.length)throw sharedError('Complete: '+introduced.map(issue=>issue.label).join(', ')+'.');
  const condition=part.archive?{sql:'NOT EXISTS(SELECT 1 FROM shared_trees WHERE id=?)',args:[body.id]}:historyCondition(part,'editing');
- const guard=condition.sql+' AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)',args=[...condition.args,body.id];
+ const reviewGuard=prepared?" AND NOT EXISTS(SELECT 1 FROM campo_tree_corrections WHERE tree_id=? AND status='pending') AND NOT EXISTS(SELECT 1 FROM campo_record_labels WHERE tree_id=? AND classification='homologacao')":'';
+ const guard=condition.sql+' AND NOT EXISTS(SELECT 1 FROM campo_admin_locks WHERE tree_id=? AND expires_at>unixepoch()*1000)'+reviewGuard;
+ const args=[...condition.args,body.id,...(prepared?[body.id,body.id]:[])];
  const first=part.row?db.prepare('UPDATE shared_trees SET data=?,version=version+1,updated_at=?,last_op=?,actor=? WHERE id=? AND '+guard).bind(JSON.stringify(data),stamp,body.operationId,actor,body.id,...args):db.prepare('INSERT OR IGNORE INTO shared_trees(id,data,version,updated_at,last_op,actor) SELECT ?,?,1,?,?,? WHERE '+guard).bind(body.id,JSON.stringify(data),stamp,body.operationId,actor,...args);
  const statements=[first,...historyBaselineStatements(db,part.baseline,body.operationId,body.id)];
  for(const p of copies)statements.push(db.prepare('INSERT OR IGNORE INTO shared_photos(tree_id,asset_id,image) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM shared_trees WHERE id=? AND last_op=?)').bind(body.id,p.assetId,p.image,body.id,body.operationId));
