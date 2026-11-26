@@ -26,7 +26,7 @@ function csvCell(value){
 async function exportPackage(params){
  const {headers,rows,unit,counts,driveAvailable}=await request('/api/control/export?'+params);
  const photoColumn=headers.indexOf('FOTO'),sheets=[
-  {name:'Template VERA',headers,rows:[],links:[]},
+  {name:'Template VERA',headers,rows:[],links:[],dateColumns:new Set([headers.indexOf('DATA')])},
   {name:'Fotos',headers:['ID do cadastro','POSTE','Nome da foto','Arquivo no ZIP','Pasta ou foto no Drive','Situação'],rows:[],links:[]}
  ];
  const [template,photos]=sheets,parts=[];

@@ -1719,6 +1719,16 @@ function controlPhotoLink(r,archived){
   .map(controlPhotoUrl).find(Boolean)||'';
 }
 function controlCsvNumber(value){return value===null||value===undefined||value===''?'':Number.isFinite(Number(value))?Number(value):value;}
+// Use the inspection day in Rio Branco, including legacy dates already recorded as day/month/year.
+function controlExportDay(value){
+ const raw=String(value??'').trim();
+ if(!raw)return '';
+ const match=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raw);
+ const day=match?match[3]+'-'+match[2]+'-'+match[1]:controlDay(raw);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return '';
+ const time=Date.parse(day+'T00:00:00Z');
+ return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===day?day:'';
+}
 function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
  const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
  if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
@@ -1735,7 +1745,9 @@ function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
    }
    return value===null?'':unit==='cm'?Number((value*100).toPrecision(12)):value;
   });
-  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),r.createdAt,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
+  const day=controlExportDay(r.createdAt);
+  const date=day.split('-').reverse().join('/');
+  const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),date,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
   if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',link);
   if(!manifest)return values;
   const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl)}));
@@ -1752,8 +1764,8 @@ async function controlExport(env,params){
  const data=await controlUniverse(env,false,true);
  const rows=data.records.filter(r=>{
   if(!controlMatches(r,filters))return false;
-  const day=controlDay(r.createdAt);
-  return (!from||day>=from)&&(!to||day<=to);
+  const day=controlExportDay(r.createdAt);
+  return (!from&&!to)||Boolean(day&&(!from||day>=from)&&(!to||day<=to));
  }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
  const manifest=params.get('format')==='package';
  const archive=new Map(data.archiveRecords.map(record=>[record.id,record]));

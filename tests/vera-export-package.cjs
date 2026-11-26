@@ -8,6 +8,7 @@ const folder='https://drive.google.com/drive/folders/example';
 const headers=fs.readFileSync('docs/tree-template.csv','utf8').trim().split(';');
 const record=(id,link,photos)=>{
  const values=Array(headers.length).fill('');
+ values[5]=id==='tree1'?'18/11/2026':'';
  values[6]='00123';
  values[7]=0;
  values[10]=link;
@@ -53,6 +54,10 @@ vm.runInContext(fs.readFileSync('docs/vera-export-worker.js','utf8'),context);
  const xlsx=unzipSync(zip['template-vera.xlsx']);
  const xml=path=>strFromU8(xlsx[path]);
  const sheet=xml('xl/worksheets/sheet1.xml'),links=xml('xl/worksheets/_rels/sheet1.xml.rels');
+ assert.match(sheet,/<c r="F2" s="4"><v>46344<\/v><\/c>/);
+ assert.match(sheet,/<c r="F3" t="inlineStr" s="0">/,'missing dates stay blank');
+ assert.match(xml('xl/styles.xml'),/<numFmt numFmtId="164" formatCode="dd\/mm\/yyyy"\/>/);
+ assert.match(strFromU8(zip['template-vera.csv']),/18\/11\/2026;00123/);
  assert.match(sheet,/<hyperlink ref="K2" r:id="rId1"\/>/);
  assert.match(sheet,/<hyperlink ref="K3" r:id="rId2"\/>/);
  assert.doesNotMatch(sheet,/<hyperlink ref="K4"/);
