@@ -17,6 +17,7 @@
   const p=document.createElement('p');p.textContent=text;parent.append(p);
  }
  function paintFeeders(){
+  if(!feederSelect)return;
   const counts=new Map();
   if(feeder)counts.set(feeder,0);
   for(const item of items){
@@ -148,7 +149,7 @@
   finally{if(token===generation){closing=null;paint();}}
  }
  $('fieldCorrectionsReload').onclick=()=>void refresh();
- feederSelect.onchange=()=>{feeder=feederSelect.value;page=0;paint();};
+ if(feederSelect)feederSelect.onchange=()=>{feeder=feederSelect.value;page=0;paint();};
  $('fieldCorrectionsPrevious').onclick=()=>{page--;paint();};
  $('fieldCorrectionsNext').onclick=()=>{page++;paint();};
  nav.addEventListener('click',()=>void refresh());
