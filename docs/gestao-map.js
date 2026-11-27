@@ -2,12 +2,12 @@
 (()=>{
  const $=id=>document.getElementById(id),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  let map=null,background=null,trees=null,network=null,selection=null,locationPin=null,worker=null,config=null,ready=false,paused=false,importing=false,requestId=0,searchId=0,timer=null,lastData=null,treeSignature='',fitted=false,layerVisibility={},queryController=null,lastNetworkQuery='',lastTreeData=null,treeController=null,treeRequest=0,treeQuery='',visibleNetwork=[],routeLayer=null,routePreview=null,routePreviewFeatures=[],contextLayer=null,filterPair=null,attribute=null,restoring=false,centralWorker=null,centralLayer=null,centralSignature="",centralEpoch=0;
- let outletPicker=null,locationTreeLayer=null,routeDrawnFeatures=[],centralFeatures=[];
+ let outletPicker=null,locationTreeLayer=null,auditLocation=null,routeDrawnFeatures=[],centralFeatures=[];
  let cycleActive=false,unifiedRequest=0;const unifiedPending=new Map(),centralPending=new Map(),readyWaiters=new Set();
  const status=text=>$('networkStatus').textContent=text;
  const api=(path,body,signal)=>window.CampoControl.api(path,body,signal);
  const allowed=()=>window.CampoControl?.authorized();
- function start(){void window.CampoParque?.load();window.CampoRoutePlanner?.open();if(map){window.CampoCycle?.attach(map);setTimeout(()=>{map.invalidateSize();if(!$('controlBasemapStatus').textContent)setTiles();},0);if(!ready&&!importing)void reuse();return;}map=L.map('controlMap',{zoomControl:false,preferCanvas:true}).setView([-9.97,-67.81],11);for(const [name,z]of [['centralRouteContext',405],['controlNetwork',410],['controlContext',420],['controlTrees',640],['controlLabels',430],['controlSelection',450],['controlRoute',475],['controlPhotos',665]])map.createPane(name).style.zIndex=String(z);L.control.zoom({position:'bottomright'}).addTo(map);L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);trees=L.layerGroup();syncTreeVisibility();network=L.layerGroup().addTo(map);setTiles();window.CampoParque?.attach(map);window.CampoCycle?.attach(map);cycleMode(Boolean(window.CampoCycle?.active()));map.on('moveend',()=>{clearTimeout(timer);timer=setTimeout(()=>{networkView();if(allowed())void refreshTrees();},250);});setTimeout(()=>{map.invalidateSize();void refreshTrees(true);},0);map.on('click',handleNetworkClick);window.CampoGestaoFotos?.attachMap(map);window.CampoGestaoLocalizar?.attachMap(map);void reuse();}
+ function start(){void window.CampoParque?.load();window.CampoRoutePlanner?.open();if(map){window.CampoCycle?.attach(map);setTimeout(()=>{map.invalidateSize();if(!$('controlBasemapStatus').textContent)setTiles();},0);if(!ready&&!importing)void reuse();return;}map=L.map('controlMap',{zoomControl:false,preferCanvas:true}).setView([-9.97,-67.81],11);for(const [name,z]of [['centralRouteContext',405],['controlNetwork',410],['controlContext',420],['controlTrees',640],['controlAudit',655],['controlLabels',430],['controlSelection',450],['controlRoute',475],['controlPhotos',665]])map.createPane(name).style.zIndex=String(z);L.control.zoom({position:'bottomright'}).addTo(map);L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);trees=L.layerGroup();syncTreeVisibility();network=L.layerGroup().addTo(map);setTiles();window.CampoParque?.attach(map);window.CampoCycle?.attach(map);cycleMode(Boolean(window.CampoCycle?.active()));map.on('moveend',()=>{clearTimeout(timer);timer=setTimeout(()=>{networkView();if(allowed())void refreshTrees();},250);});setTimeout(()=>{map.invalidateSize();void refreshTrees(true);},0);map.on('click',handleNetworkClick);window.CampoGestaoFotos?.attachMap(map);window.CampoGestaoLocalizar?.attachMap(map);void reuse();}
  function hitNetwork(features,point){
   return typeof CampoNetworkHit==='undefined'?null:CampoNetworkHit.closest(features,point,c=>map.latLngToContainerPoint([c[1],c[0]]));
  }
@@ -59,6 +59,7 @@
  }
  function locate(r,treeLayer=r.id?'showTrees':null){
   if(!map||!Number.isFinite(Number(r.lat))||!Number.isFinite(Number(r.lon)))return;
+  clearAuditLocation();
   locationPin?.remove();
   locationTreeLayer=treeLayer;
   locationPin=L.circleMarker([Number(r.lat),Number(r.lon)],{pane:'controlSelection',radius:7,color:'#f7cb37',weight:2,fillOpacity:.1})
@@ -80,6 +81,36 @@
    $('mapFrame').scrollIntoView({block:'center'});
   });
  }
+ function clearAuditLocation(){
+  auditLocation?.remove();
+  auditLocation=null;
+ }
+ function locateAudit(points){
+  if(!allowed()||!map||!points.length)return;
+  location.hash='mapa';
+  fitted=true;
+  treeController?.abort();treeRequest++;treeQuery='';
+  requestAnimationFrame(()=>{
+   if(!allowed()||location.hash!=='#mapa')return;
+   clearAuditLocation();
+   locationPin?.remove();
+   locationPin=null;
+   map.invalidateSize({pan:false});
+   auditLocation=L.layerGroup().addTo(map);
+   const positions=points.map(point=>[point.lat,point.lon]);
+   if(positions.length>1)L.polyline(positions,{pane:'controlAudit',color:'#f0a429',weight:4,interactive:false}).addTo(auditLocation);
+   positions.forEach((position,i)=>{
+    const label=positions.length===1?'Coordenada repetida':'Ponto '+(i===0?'A':'B');
+    const color=i===0?'#12a6cb':'#f0a429';
+    L.circleMarker(position,{pane:'controlAudit',radius:7,color,weight:3,fillColor:color,fillOpacity:.85,interactive:false})
+     .bindTooltip(label,{permanent:true,direction:i===0?'left':'right'}).addTo(auditLocation);
+   });
+   if(positions.length===1)map.setView(positions[0],20);
+   else map.fitBounds(positions,{padding:[45,55],maxZoom:21});
+   $('mapFrame').scrollIntoView({block:'center'});
+  });
+ }
+ window.addEventListener('hashchange',()=>{if(location.hash!=='#mapa')clearAuditLocation();});
  // Read the existing GPKG configuration only; never load inspection records or photos.
  function meta(value){return new Promise((resolve,reject)=>{const request=indexedDB.open('campo-vegetacao',1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains('records'))db.createObjectStore('records',{keyPath:'id'});if(!db.objectStoreNames.contains('meta'))db.createObjectStore('meta');};request.onerror=()=>reject(request.error);request.onblocked=()=>reject(Error('Armazenamento ocupado por outra aba.'));request.onsuccess=()=>{const db=request.result;let result;const tx=db.transaction('meta',value?'readwrite':'readonly'),s=tx.objectStore('meta'),op=value?s.put(value,'gpkgConfig'):s.get('gpkgConfig');op.onsuccess=()=>result=op.result;tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(tx.error||Error('Leitura da configuração interrompida.'));};};});}
  function ensureWorker(){if(worker)return;worker=new Worker('package-worker.js');worker.onerror=()=>{status('O leitor da rede não pôde iniciar. Tente novamente.');release();};worker.onmessage=async event=>{const m=event.data;if(!allowed())return;if(['view','route-network','route-reference','route-network-error','inspection-pole'].includes(m.action)&&unifiedPending.has(m.requestId)){const wait=unifiedPending.get(m.requestId);unifiedPending.delete(m.requestId);clearTimeout(wait.timer);if(m.action==='route-network-error')wait.reject(Error(m.message));else wait.resolve(m);return;}if(m.action==='progress'){status(m.message);return;}if(m.action==='paused'){ready=false;restoring=false;paused=true;if(!document.hidden)void reuse();return;}if(m.action==='busy'){status(m.message);release(m.message);return;}if(m.action==='error'){status(m.message+' A configuração anterior foi preservada.');release(m.message);return;}
@@ -191,7 +222,7 @@
   if(!on)syncTreeVisibility();
   lastNetworkQuery='';centralSignature='';setTimeout(()=>{map.invalidateSize();networkView();},0);
  }
- function stop(){if(isFullscreen())void fullscreen(false);outletPicker=null;routeDrawnFeatures=[];routePreviewFeatures=[];if(map)map.getContainer().style.cursor='';window.CampoCycle?.stop();stopCentral();window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
+ function stop(){clearAuditLocation();if(isFullscreen())void fullscreen(false);outletPicker=null;routeDrawnFeatures=[];routePreviewFeatures=[];if(map)map.getContainer().style.cursor='';window.CampoCycle?.stop();stopCentral();window.CampoRoutePlanner?.stop();window.CampoParque?.stop();treeController?.abort();treeRequest++;treeQuery='';lastTreeData=null;release();trees?.clearLayers();network?.clearLayers();drawContext(null);lastData=null;treeSignature='';if(selection){map?.removeLayer(selection);selection=null;}if(locationPin){map?.removeLayer(locationPin);locationPin=null;}queryController?.abort();}
  function unifiedNetwork(bounds,zoom,feeders){
   if(!allowed()||!ready||!worker)return Promise.reject(Error('Rede local ainda não disponível. Use a opção de instalar ou atualizar a rede.'));
   const visibleLayers=Object.keys(layerVisibility).filter(k=>layerVisibility[k]&&(!$("networkScale").checked||window.CampoGestaoLayers.inScale(k,zoom)));
@@ -326,5 +357,5 @@
  function routeOverlay(spans,covered,focus,buffer=0,outlet=null){
   routeOverlayGroups([{spans,covered,buffer,outlet}],focus);
  }
- window.CampoControlMap={inspectionPole,resize:()=>map?.invalidateSize(),onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,locateInspection,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
+ window.CampoControlMap={inspectionPole,resize:()=>map?.invalidateSize(),onAvailable(callback){if(map)callback(map);},canPlacePoint:()=>!outletPicker&&!window.CampoRoutePlanner?.picking()&&!window.CampoCycle?.drawing(),pickOutlet(callback){if(!map)return false;outletPicker=callback;map.getContainer().style.cursor=callback?'crosshair':'';if(callback)$('mapFrame').scrollIntoView({block:'center'});return true;},routeCatalogue:()=>api('/api/routes/geometry?catalog=1'),routeBounds(){const b=map?.getBounds();return b?{west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()}:null;},routeNetwork,importRouteReference:file=>routeNetwork({file},'route-reference'),refreshNetwork:networkView,setRouteFilter,routeOverlay,routeOverlayGroups,unifiedNetwork,cycleMode,start,paint,refresh:focus=>refreshTrees(true,Boolean(focus)),appendParams,locate,locateInspection,locateAudit,stop,liveTotal:()=>lastTreeData?lastTreeData.available:null,repaintTrees:()=>{if(lastTreeData)paintTrees(lastTreeData.map);}};
 })();
