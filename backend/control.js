@@ -62,6 +62,43 @@ function controlExportDay(value){
  const time=Date.parse(day+'T00:00:00Z');
  return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===day?day:'';
 }
+function controlParkFilters(params){
+ const values={},query=(params.get('parkQuery')||'').trim();
+ for(const [key] of CampoParqueRegistros.filters)values[key]=(params.get('park.'+key)||'').trim();
+ if([query,...Object.values(values)].some(value=>value.length>200))throw sharedError('Filtro do parque inválido.');
+ return {values,query};
+}
+async function controlParkExportRows(env,data,params,manifest){
+ const db=await adminDb(env),meta=await veraMeta(db);
+ const [historical,live,thumbs]=await Promise.all([
+  veraParkBase(db,meta.generation),veraParkLive(db,data),
+  manifest?db.prepare('SELECT id FROM vera_thumbs').all():null
+ ]);
+ const core=CampoParqueRegistros,reference=meta.referencia?JSON.parse(meta.referencia):null;
+ const base=historical.map(core.baseTree),byId=new Map(base.map(tree=>[tree.id,tree]));
+ const records=new Map(data.records.map(record=>[record.id,record]));
+ const archived=new Map(data.archiveRecords.map(record=>[record.id,record]));
+ const thumbIds=new Set(thumbs?.results.map(row=>row.id));
+ const inactive=new Set([...live.deleted,...live.merged.map(link=>link.sourceId)]);
+ const {values,query}=controlParkFilters(params);
+ const trees=core.merge(base,live.records.map(record=>core.liveTree(record,reference)),inactive,reference);
+ return trees.filter(tree=>core.matches(tree,values,query)).map(tree=>{
+  const field=records.get(tree.campoId||tree.raw?.id);
+  // Only rows with a VERA baseline inherit original coordinates, metadata and photo references.
+  const original=tree.raw&&!tree.campoId?null:byId.get(tree.id);
+  if(!original)return field;
+  const id=field?.id||'vera-'+original.id;
+  const baseline=historyBaseData(original,id);
+  const historicalPhoto={name:'Foto histórica VERA (miniatura)',originalUrl:original.urlFoto,veraId:thumbIds.has(veraPhotoId(original.id))?original.id:null};
+  const photos=controlPhotos(field||{});
+  return {...baseline,...field,id,
+   externalId:original.id,species:tree.especies,lat:tree.lat,lon:tree.lon,pole:tree.poste,span:tree.vao,feeder:tree.alimentador,
+   createdAt:original.data||field?.createdAt,folderUrl:field?.folderUrl||archived.get(id)?.folderUrl||original.urlPasta,photoReference:field?.photoReference||original.urlFoto,
+   key:field?.key||original.chave,municipality:field?.municipality||original.municipio,street:field?.street||original.logradouro,
+   photos:historicalPhoto.veraId||historicalPhoto.originalUrl?[...photos,historicalPhoto]:photos
+  };
+ });
+}
 function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
  const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
  if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
@@ -83,7 +120,7 @@ function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
   const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),date,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
   if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',link);
   if(!manifest)return values;
-  const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl)}));
+  const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl),...(p.veraId&&{veraId:p.veraId})}));
   return {id:r.id,values,photos};
  });
  return {headers,all,counts};
@@ -94,13 +131,14 @@ async function controlExport(env,params){
  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
   throw sharedError('Período inválido.');
  if(!['original','pole','empty'].includes(idMode)||!['m','cm'].includes(unit))throw sharedError('Opção de exportação inválida.');
- const data=await controlUniverse(env,false,true);
- const rows=data.records.filter(r=>{
-  if(!controlMatches(r,filters))return false;
+ const data=await controlUniverse(env,false,true),manifest=params.get('format')==='package';
+ const park=params.get('scope')==='park';
+ const source=park?await controlParkExportRows(env,data,params,manifest):data.records;
+ const rows=source.filter(r=>{
+  if(!park&&!controlMatches(r,filters))return false;
   const day=controlExportDay(r.createdAt);
   return (!from&&!to)||Boolean(day&&(!from||day>=from)&&(!to||day<=to));
  }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
- const manifest=params.get('format')==='package';
  const archive=new Map(data.archiveRecords.map(record=>[record.id,record]));
  const {headers,all,counts}=controlExportTable(rows,{extras,idMode,unit,archive,manifest});
  if(manifest)return json({headers,rows:all,unit,counts,driveAvailable:data.archive.available});
@@ -115,20 +153,34 @@ async function controlExport(env,params){
 async function controlExportPhotos(request,env){
  if(request.method!=='POST')throw sharedError('Use POST.',405);
  const body=await sharedBody(request,12000),photos=body?.photos;
- if(!Array.isArray(photos)||!photos.length||photos.length>12||photos.some(p=>!sharedId(p?.id)||!sharedId(p?.asset)))
+ if(!Array.isArray(photos)||!photos.length||photos.length>12||photos.some(p=>!sharedId(p?.id)||(p.veraId!==undefined?!VERA_ID.test(p.veraId)||p.id!=='vera-'+p.veraId:!sharedId(p.asset))))
   throw sharedError('Selecione até 12 fotos válidas por lote.');
  const db=await adminDb(env);
- const rows=await db.prepare(`
-  WITH requested AS (
-   SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.asset') asset FROM json_each(?)
-  )
-  SELECT s.tree_id id,s.asset_id asset,s.image
-  FROM requested r
-  JOIN shared_photos s ON s.tree_id=r.id AND s.asset_id=r.asset
-  JOIN shared_trees t ON t.id=r.id AND t.deleted=0
-  WHERE EXISTS(SELECT 1 FROM json_each(t.data,'$.photos') p WHERE json_extract(p.value,'$.assetId')=r.asset)
- `).bind(JSON.stringify(photos)).all();
- return json({photos:rows.results});
+ const current=photos.filter(photo=>photo.veraId===undefined),historical=photos.filter(photo=>photo.veraId!==undefined);
+ const [rows,thumbs]=await Promise.all([
+  current.length?db.prepare(`
+   WITH requested AS (
+    SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.asset') asset FROM json_each(?)
+   )
+   SELECT s.tree_id id,s.asset_id asset,s.image
+   FROM requested r
+   JOIN shared_photos s ON s.tree_id=r.id AND s.asset_id=r.asset
+   JOIN shared_trees t ON t.id=r.id AND t.deleted=0
+   WHERE EXISTS(SELECT 1 FROM json_each(t.data,'$.photos') p WHERE json_extract(p.value,'$.assetId')=r.asset)
+  `).bind(JSON.stringify(current)).all():{results:[]},
+  historical.length?db.prepare(`
+   WITH requested AS (
+    SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.veraId') vera_id,
+     json_extract(value,'$.thumbnail') thumbnail FROM json_each(?)
+   )
+   SELECT r.id,r.vera_id veraId,s.image FROM requested r
+   JOIN vera_trees t ON t.id=r.vera_id AND t.generation=(SELECT value FROM vera_meta WHERE key='generation')
+   JOIN vera_thumbs s ON s.id=r.thumbnail
+   WHERE NOT EXISTS(SELECT 1 FROM shared_trees st WHERE st.id=r.id AND st.deleted=1)
+    AND NOT EXISTS(SELECT 1 FROM shared_merges m WHERE m.source_id=r.id)
+  `).bind(JSON.stringify(historical.map(photo=>({...photo,thumbnail:veraPhotoId(photo.veraId)})))).all():{results:[]}
+ ]);
+ return json({photos:[...rows.results,...thumbs.results]});
 }
 async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);

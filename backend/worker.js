@@ -869,13 +869,31 @@ if(typeof module!=='undefined')module.exports=CampoSpanQuality;
 /* Regras compartilhadas pelo parque administrativo e pela consulta gerencial. */
 globalThis.CampoParqueRegistros=(()=>{
  const CAMPO='Campo (prévia)',riscoCore=globalThis.CampoRisco;
+ const VERA='Base VERA';
+ const filters=[['origem','Origem'],['classe','Classe de risco'],['ano','Ano'],['trecho','Trecho'],['alimentador','Alimentador'],['especie','Espécie'],['acao','Ação sugerida'],['verificacao','Conferência pela foto'],['duplicata','Possível duplicata']];
+ const species=t=>String(t.especies||'').split(',').map(s=>s.trim()).filter(Boolean);
+ function matches(tree,values,query=''){
+  for(const [key] of filters){
+   const value=values[key];
+   if(!value)continue;
+   if(key==='classe'&&value==='CRÍTICO + ALTO'){
+    if(!['CRÍTICO','ALTO'].includes(tree.classe))return false;
+   }else if(key==='especie'){
+    if(!species(tree).includes(value))return false;
+   }else if(String(tree[key]??'')!==value)return false;
+  }
+  const q=query.toLocaleLowerCase('pt-BR');
+  return !q||[tree.id,tree.chave,tree.alimentador,tree.especies,tree.poste,tree.vao]
+   .some(value=>String(value??'').toLocaleLowerCase('pt-BR').includes(q));
+ }
+ const baseTree=t=>({...t,origem:t.fonte||VERA});
  const position=t=>Number.isFinite(Number(t.lat))&&Number.isFinite(Number(t.lon))&&t.lat!==null&&t.lat!=='';
  function liveTree(r,referencia){const year=Date.parse(r.createdAt),info=referencia?.alimentadores?.[r.feeder]||{},lat=Number(r.lat),lon=Number(r.lon),dap=Number(r.dap)>0?Number(r.dap):Number(r.circ)>0?Number(r.circ)/Math.PI:null,risco=riscoCore.calcular({altura:r.height,distMT:r.mtDistance,distBT:r.btDistance,dap,dapMedido:dap!==null,especie:r.species,alerta:r.note,verificacao:r.review?.verificacao,projecao:/proje|abaixo/i.test(r.position)?'SIM':'',clientes:info.clientes||0,trecho:info.trecho,vendaval:info.vendaval,clientesMax:referencia?.clientesMax});return {...risco,raw:r,qtd:r.count,photoAsset:r.photoAsset,conferencia:r.review,id:r.id,origem:CAMPO,ano:Number.isFinite(year)?new Date(year).getFullYear():'',especies:r.species,poste:r.pole,vao:r.span,alimentador:r.feeder,trecho:info.trecho||'',clientes:info.clientes||0,clientesEstimado:true,semReferencia:!referencia?.alimentadores?.[r.feeder],verificacao:r.review?.verificacao||'NÃO CONFERIDA',dap,origemDap:dap===null?'Sem medição':'Medido em campo',lat:Number.isFinite(lat)&&r.lat!==null&&r.lat!==''?lat:null,lon:Number.isFinite(lon)&&r.lon!==null&&r.lon!==''?lon:null,data:Number.isFinite(year)?new Date(year).toLocaleDateString('pt-BR',{timeZone:'America/Rio_Branco'}):'',obsFoto:r.review?.obs||r.note};}
  const originalPoint=t=>{const m=/(-?\d+[.,]\d+)\s*;\s*(-?\d+[.,]\d+)/.exec(String(t.coordOriginal||''));return m?{lat:Number(m[1].replace(',','.')),lon:Number(m[2].replace(',','.'))}:null;};
  const baseId=id=>id.startsWith('vera-')?id.slice(5):'';
  function comCampo(b,t,referencia){const r=t.raw,valor=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v)),distMT=r.mt&&valor(r.mtDistance)?r.mtDistance:null,distBT=r.bt&&valor(r.btDistance)?r.btDistance:null,medida=distMT!==null||distBT!==null,verificacao=r.review?.verificacao||(['NÃO CONFIRMADA','SEM PROJEÇÃO NA FOTO'].includes(b.verificacao)?'NÃO CONFERIDA':b.verificacao),original=String(b.observacao||''),texto=String(r.note||''),nota=original&&texto.startsWith(original)?texto.slice(original.length).replace(/^[\s;,.-]+/,''):texto,ano=Number(b.ano),dapNovo=t.dap!==null&&!(Number(b.dap)>0&&Math.abs(t.dap-Number(b.dap))<.06),dap=dapNovo?t.dap:b.dap,dapMedido=dapNovo||!/^(Média|Sem)/.test(b.origemDap||''),especie=r.species||(b.especieConf?'':b.especies),projecao=r.projection==='sim'?'SIM':r.projection==='nao'?'':b.projecao==='SIM'?'SIM':'',risco=riscoCore.calcular({altura:valor(r.height)?r.height:b.altura,distMT,distBT,distRede:medida?null:b.distRede,dap,dapMedido,especie,alerta:ano===2026?[b.obsFoto,nota].filter(Boolean).join('; '):nota,obsAcao:[b.obsFoto,nota,r.review?.obs].filter(Boolean).join('; '),verificacao,elevar:ano===2025,projecao,clientes:b.clientes,trecho:b.trecho,vendaval:b.vendaval,clientesMax:referencia?.clientesMax});return {...b,...risco,campoId:t.id,raw:r,conferencia:r.review,photoAsset:r.photoAsset,especies:r.species||b.especies,especieConf:r.species?'':b.especieConf,dap,origemDap:dapNovo?'Medido em campo (app)':b.origemDap,lat:t.lat??b.lat,lon:t.lon??b.lon,poste:r.pole||b.poste,vao:r.span||b.vao,alimentador:r.feeder||b.alimentador,verificacao,obsFoto:r.review?.obs||nota||b.obsFoto,atualizadoEm:r.updatedAt,atualizadoPor:r.actor};}
  function merge(base,live,mergedIds,referencia){const activeBase=base.filter(t=>!mergedIds.has('vera-'+t.id)),ids=new Set(activeBase.map(t=>t.id)),campo=new Map(live.filter(t=>ids.has(baseId(t.id))).map(t=>[baseId(t.id),t])),novas=live.filter(t=>!ids.has(baseId(t.id))),atual=activeBase.map(b=>campo.has(b.id)?comCampo(b,campo.get(b.id),referencia):b),pool=[...atual.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:Number(t.lat),lon:Number(t.lon)},originalPoint(t)].filter(Boolean)})),...novas.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:t.lat,lon:t.lon}]}))],found=riscoCore.duplicatas(novas,pool);for(const t of novas){const d=found.get(t.id);t.duplicataDe=d?.id;t.duplicataM=d?.m;t.duplicata=d?'Sim':'';}return [...atual,...novas];}
- return {liveTree,merge};
+ return {liveTree,merge,baseTree,matches,filters,species};
 })();
 
 const ROUTE_REFERENCE_KEY='arbora:mt-reference:2026-08-03';
@@ -1729,6 +1747,43 @@ function controlExportDay(value){
  const time=Date.parse(day+'T00:00:00Z');
  return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===day?day:'';
 }
+function controlParkFilters(params){
+ const values={},query=(params.get('parkQuery')||'').trim();
+ for(const [key] of CampoParqueRegistros.filters)values[key]=(params.get('park.'+key)||'').trim();
+ if([query,...Object.values(values)].some(value=>value.length>200))throw sharedError('Filtro do parque inválido.');
+ return {values,query};
+}
+async function controlParkExportRows(env,data,params,manifest){
+ const db=await adminDb(env),meta=await veraMeta(db);
+ const [historical,live,thumbs]=await Promise.all([
+  veraParkBase(db,meta.generation),veraParkLive(db,data),
+  manifest?db.prepare('SELECT id FROM vera_thumbs').all():null
+ ]);
+ const core=CampoParqueRegistros,reference=meta.referencia?JSON.parse(meta.referencia):null;
+ const base=historical.map(core.baseTree),byId=new Map(base.map(tree=>[tree.id,tree]));
+ const records=new Map(data.records.map(record=>[record.id,record]));
+ const archived=new Map(data.archiveRecords.map(record=>[record.id,record]));
+ const thumbIds=new Set(thumbs?.results.map(row=>row.id));
+ const inactive=new Set([...live.deleted,...live.merged.map(link=>link.sourceId)]);
+ const {values,query}=controlParkFilters(params);
+ const trees=core.merge(base,live.records.map(record=>core.liveTree(record,reference)),inactive,reference);
+ return trees.filter(tree=>core.matches(tree,values,query)).map(tree=>{
+  const field=records.get(tree.campoId||tree.raw?.id);
+  // Only rows with a VERA baseline inherit original coordinates, metadata and photo references.
+  const original=tree.raw&&!tree.campoId?null:byId.get(tree.id);
+  if(!original)return field;
+  const id=field?.id||'vera-'+original.id;
+  const baseline=historyBaseData(original,id);
+  const historicalPhoto={name:'Foto histórica VERA (miniatura)',originalUrl:original.urlFoto,veraId:thumbIds.has(veraPhotoId(original.id))?original.id:null};
+  const photos=controlPhotos(field||{});
+  return {...baseline,...field,id,
+   externalId:original.id,species:tree.especies,lat:tree.lat,lon:tree.lon,pole:tree.poste,span:tree.vao,feeder:tree.alimentador,
+   createdAt:original.data||field?.createdAt,folderUrl:field?.folderUrl||archived.get(id)?.folderUrl||original.urlPasta,photoReference:field?.photoReference||original.urlFoto,
+   key:field?.key||original.chave,municipality:field?.municipality||original.municipio,street:field?.street||original.logradouro,
+   photos:historicalPhoto.veraId||historicalPhoto.originalUrl?[...photos,historicalPhoto]:photos
+  };
+ });
+}
 function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
  const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
  if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
@@ -1750,7 +1805,7 @@ function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
   const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),date,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
   if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',link);
   if(!manifest)return values;
-  const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl)}));
+  const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl),...(p.veraId&&{veraId:p.veraId})}));
   return {id:r.id,values,photos};
  });
  return {headers,all,counts};
@@ -1761,13 +1816,14 @@ async function controlExport(env,params){
  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
   throw sharedError('Período inválido.');
  if(!['original','pole','empty'].includes(idMode)||!['m','cm'].includes(unit))throw sharedError('Opção de exportação inválida.');
- const data=await controlUniverse(env,false,true);
- const rows=data.records.filter(r=>{
-  if(!controlMatches(r,filters))return false;
+ const data=await controlUniverse(env,false,true),manifest=params.get('format')==='package';
+ const park=params.get('scope')==='park';
+ const source=park?await controlParkExportRows(env,data,params,manifest):data.records;
+ const rows=source.filter(r=>{
+  if(!park&&!controlMatches(r,filters))return false;
   const day=controlExportDay(r.createdAt);
   return (!from&&!to)||Boolean(day&&(!from||day>=from)&&(!to||day<=to));
  }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
- const manifest=params.get('format')==='package';
  const archive=new Map(data.archiveRecords.map(record=>[record.id,record]));
  const {headers,all,counts}=controlExportTable(rows,{extras,idMode,unit,archive,manifest});
  if(manifest)return json({headers,rows:all,unit,counts,driveAvailable:data.archive.available});
@@ -1782,20 +1838,34 @@ async function controlExport(env,params){
 async function controlExportPhotos(request,env){
  if(request.method!=='POST')throw sharedError('Use POST.',405);
  const body=await sharedBody(request,12000),photos=body?.photos;
- if(!Array.isArray(photos)||!photos.length||photos.length>12||photos.some(p=>!sharedId(p?.id)||!sharedId(p?.asset)))
+ if(!Array.isArray(photos)||!photos.length||photos.length>12||photos.some(p=>!sharedId(p?.id)||(p.veraId!==undefined?!VERA_ID.test(p.veraId)||p.id!=='vera-'+p.veraId:!sharedId(p.asset))))
   throw sharedError('Selecione até 12 fotos válidas por lote.');
  const db=await adminDb(env);
- const rows=await db.prepare(`
-  WITH requested AS (
-   SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.asset') asset FROM json_each(?)
-  )
-  SELECT s.tree_id id,s.asset_id asset,s.image
-  FROM requested r
-  JOIN shared_photos s ON s.tree_id=r.id AND s.asset_id=r.asset
-  JOIN shared_trees t ON t.id=r.id AND t.deleted=0
-  WHERE EXISTS(SELECT 1 FROM json_each(t.data,'$.photos') p WHERE json_extract(p.value,'$.assetId')=r.asset)
- `).bind(JSON.stringify(photos)).all();
- return json({photos:rows.results});
+ const current=photos.filter(photo=>photo.veraId===undefined),historical=photos.filter(photo=>photo.veraId!==undefined);
+ const [rows,thumbs]=await Promise.all([
+  current.length?db.prepare(`
+   WITH requested AS (
+    SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.asset') asset FROM json_each(?)
+   )
+   SELECT s.tree_id id,s.asset_id asset,s.image
+   FROM requested r
+   JOIN shared_photos s ON s.tree_id=r.id AND s.asset_id=r.asset
+   JOIN shared_trees t ON t.id=r.id AND t.deleted=0
+   WHERE EXISTS(SELECT 1 FROM json_each(t.data,'$.photos') p WHERE json_extract(p.value,'$.assetId')=r.asset)
+  `).bind(JSON.stringify(current)).all():{results:[]},
+  historical.length?db.prepare(`
+   WITH requested AS (
+    SELECT DISTINCT json_extract(value,'$.id') id,json_extract(value,'$.veraId') vera_id,
+     json_extract(value,'$.thumbnail') thumbnail FROM json_each(?)
+   )
+   SELECT r.id,r.vera_id veraId,s.image FROM requested r
+   JOIN vera_trees t ON t.id=r.vera_id AND t.generation=(SELECT value FROM vera_meta WHERE key='generation')
+   JOIN vera_thumbs s ON s.id=r.thumbnail
+   WHERE NOT EXISTS(SELECT 1 FROM shared_trees st WHERE st.id=r.id AND st.deleted=1)
+    AND NOT EXISTS(SELECT 1 FROM shared_merges m WHERE m.source_id=r.id)
+  `).bind(JSON.stringify(historical.map(photo=>({...photo,thumbnail:veraPhotoId(photo.veraId)})))).all():{results:[]}
+ ]);
+ return json({photos:[...rows.results,...thumbs.results]});
 }
 async function controlAPI(request,env){try{
  if(!isAdministrator(request,env))throw sharedError('Painel restrito ao administrador.',403);
@@ -2271,6 +2341,21 @@ async function veraField(u,db){
  const generation=meta.generation||null;if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});
  const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,trees:results.map(r=>veraFieldRow(JSON.parse(r.data)))});
 }
+async function veraParkBase(db,generation){
+ const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};
+ return results.map(row=>JSON.parse(row.data));
+}
+async function veraParkLive(db,data){
+ const [reviewRows,links]=await Promise.all([veraReviews(db),db.prepare('SELECT source_id,target_id FROM shared_merges').all()]);
+ const reviews=new Map(reviewRows.map(row=>[row.tree_id,row]));
+ return {
+  merged:links.results.map(row=>({sourceId:row.source_id,targetId:row.target_id})),
+  deleted:data.deletedIds.filter(id=>id.startsWith('vera-')),
+  generatedAt:data.generatedAt,
+  records:data.records.filter(r=>!r.baseline&&!r.archiveCleanupPending&&r.adminClassification!=='homologacao')
+   .map(r=>veraLiveRecord(r,reviews.get(r.id)))
+ };
+}
 async function veraAPI(request,env){try{
  const u=new URL(request.url);
  // Inspetores também leem: o gateway de acesso já exigiu o login antes de chegar aqui.
@@ -2281,8 +2366,12 @@ async function veraAPI(request,env){try{
  try{meta=await veraMeta(db);}catch(e){if(veraMissingTable(e))return json({generation:null,updatedAt:null,total:0,trees:[]});throw e;}
  const generation=meta.generation||null;
  if(u.pathname==='/api/vera/meta'){const reviews=await veraReviews(db);return json({generation,updatedAt:meta.updatedAt||null,total:Number(meta.total||0),reviews:reviews.length+':'+reviews.reduce((m,r)=>r.updated_at>m?r.updated_at:m,'')});}
- if(u.pathname==='/api/vera/trees'){if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,updatedAt:meta.updatedAt||null,total:results.length,trees:results.map(r=>JSON.parse(r.data)),referencia:meta.referencia?JSON.parse(meta.referencia):null});}
- if(u.pathname==='/api/vera/live'){const data=await controlLiveUniverse(env),reviews=new Map((await veraReviews(db)).map(r=>[r.tree_id,r]));const links=await db.prepare('SELECT source_id,target_id FROM shared_merges').all();return json({merged:links.results.map(r=>({sourceId:r.source_id,targetId:r.target_id})),deleted:data.deletedIds.filter(id=>id.startsWith('vera-')),generatedAt:data.generatedAt,records:data.records.filter(r=>!r.baseline&&!r.archiveCleanupPending&&r.adminClassification!=='homologacao').map(r=>veraLiveRecord(r,reviews.get(r.id)))});}
+ if(u.pathname==='/api/vera/trees'){
+  if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});
+  const trees=await veraParkBase(db,generation);
+  return json({generation,updatedAt:meta.updatedAt||null,total:trees.length,trees,referencia:meta.referencia?JSON.parse(meta.referencia):null});
+ }
+ if(u.pathname==='/api/vera/live')return json(await veraParkLive(db,await controlUniverse(env)));
  if(u.pathname==='/api/vera/photo'){const id=u.searchParams.get('id')||'';if(!VERA_ID.test(id))throw sharedError('ID inválido.');const row=await db.prepare('SELECT image FROM vera_thumbs WHERE id=?').bind(veraPhotoId(id)).first();if(!row)throw sharedError('Miniatura indisponível.',404);return json({image:row.image});}
  throw sharedError('Consulta não encontrada.',404);
 }catch(e){return json({error:e.status?e.message:'Base VERA temporariamente indisponível.'},e.status||503);}}

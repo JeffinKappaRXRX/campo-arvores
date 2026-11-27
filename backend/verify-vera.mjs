@@ -23,7 +23,7 @@ assert.equal((await sync({action:'commit',generation:'gen-00001',total:3})).stat
 assert.equal((await sync({action:'commit',generation:'gen-00001',total:2})).status,200);let d=(await call('/api/vera/trees',undefined,auth)).data;assert.equal(d.total,2);assert.equal(d.trees.find(t=>t.id==='1').classe,'CRÍTICO');assert.equal((await call('/api/vera/trees?since=gen-00001',undefined,auth)).data.unchanged,true);assert.equal((await call('/api/vera/meta',undefined,auth)).data.total,2);
 assert.equal((await sync({action:'thumbs',items:[{id:'1',image:'data:image/jpeg;base64,/9j/AA=='},{id:'2',image:'data:image/jpeg;base64,/9j/AB=='}]})).status,200);assert.deepEqual((await sync({action:'thumb-ids'})).data.ids.sort(),['1','2']);assert.equal((await call('/api/vera/photo?id=1',undefined,auth)).data.image,'data:image/jpeg;base64,/9j/AA==');assert.equal((await call('/api/vera/photo?id=9',undefined,auth)).status,404);
 // Geração 2: durante o envio o painel segue na anterior; no commit troca, remove o que saiu e a miniatura órfã.
-await sync({action:'rows',generation:'gen-00002',rows:[{id:'1',data:{classe:'ALTO'}}]});d=(await call('/api/vera/trees',undefined,auth)).data;assert.equal(d.generation,'gen-00001');assert.equal(d.total,2);
+await sync({action:'rows',generation:'gen-00002',rows:[{id:'1',data:{classe:'ALTO',especies:'Manga',alimentador:'TAN-01I2',trecho:'T1',distMT:1.25,data:'26/08/2025',urlPasta:'https://example.com/pasta',lat:-9.9,lon:-67.8}}]});d=(await call('/api/vera/trees',undefined,auth)).data;assert.equal(d.generation,'gen-00001');assert.equal(d.total,2);
 await sync({action:'commit',generation:'gen-00002',total:1,referencia:{clientesMax:7000,alimentadores:{'TAN-01I2':{clientes:2000,trecho:'T1',vendaval:'Não'}}}});assert.equal((await call('/api/vera/trees',undefined,auth)).data.referencia.alimentadores['TAN-01I2'].clientes,2000);
 const addLive=(id,labelled)=>{sql.prepare('INSERT INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').run(id,JSON.stringify({id,species:'Oiti',height:12,mtDistance:.2,lat:-9.9,lon:-67.8,feeder:'TAN-01I2',photos:[{id:'p',original:'data:image/jpeg;base64,AAAA'}],createdAt:'2026-11-02T12:00:00Z',updatedAt:'2026-11-02T12:00:00Z',inspector:'Alice'}),'2026-11-02T12:00:00Z','op-'+id,'Alice');if(labelled)sql.prepare("INSERT INTO campo_record_labels(tree_id,classification,revision,updated_at,actor) VALUES(?,?,1,?,?)").run(id,labelled,'2026-11-02T12:00:00Z','admin');};addLive('campo-1');addLive('campo-teste','homologacao');const live=await call('/api/vera/live',undefined,auth);assert.equal(live.status,200,JSON.stringify(live.data));assert.deepEqual(live.data.records.map(r=>r.id),['campo-1'],'homologação fica fora da prévia de risco');assert(!JSON.stringify(live.data).includes('AAAA'),'prévia não carrega fotos');assert.equal(live.data.records[0].mtDistance,.2);assert.equal((await call('/api/vera/live',undefined,inspector)).status,403);const review=(body,who=auth)=>call('/api/vera/review',body,who);assert.equal((await review({id:'campo-1',verificacao:'CONFIRMADA'},inspector)).status,403,'inspetor não confere');assert.equal((await review({id:'campo-1',verificacao:'CONFIRMADA'},{})).status,401);assert.equal((await review({id:'campo-1',verificacao:'QUALQUER'})).status,400);assert.equal((await review({id:"x' OR 1",verificacao:'CONFIRMADA'})).status,400);const before=sql.prepare('SELECT data FROM shared_trees WHERE id=?').get('campo-1').data;assert.equal((await review({id:'campo-1',verificacao:'CONFIRMADA',obs:'copa na rede'})).status,200);let reviewed=(await call('/api/vera/live',undefined,auth)).data.records[0];assert.equal(reviewed.review.verificacao,'CONFIRMADA');assert.equal(reviewed.review.obs,'copa na rede');assert.equal(sql.prepare('SELECT data FROM shared_trees WHERE id=?').get('campo-1').data,before,'conferência não altera o cadastro do campo');const stamp=(await call('/api/vera/meta',undefined,auth)).data.reviews;assert.match(stamp,/^1:/);assert.equal((await review({id:'campo-1',verificacao:''})).status,200);assert.equal((await call('/api/vera/live',undefined,auth)).data.records[0].review,null);assert.equal((await call('/api/vera/trees',undefined,{bearer:token})).status,401);sql.exec('DELETE FROM campo_record_labels');sql.exec('DELETE FROM shared_trees');d=(await call('/api/vera/trees',undefined,auth)).data;assert.equal(d.generation,'gen-00002');assert.deepEqual(d.trees.map(t=>[t.id,t.classe]),[['1','ALTO']]);assert.deepEqual((await sync({action:'thumb-ids'})).data.ids,['1']);assert.equal(sql.prepare('SELECT COUNT(*) n FROM vera_trees').get().n,1);
 // Inspetor vê o mapa da base com login, sem clientes; a planilha lê o campo só com o token.
@@ -31,7 +31,50 @@ assert.equal((await call('/api/vera/field')).status,401);let campo=await call('/
 assert.equal((await sync({action:'field-export'},'x'.repeat(40))).status,401);assert.equal((await sync({action:'field-photo',id:"1' OR 1",asset:'a'})).status,400);
 sql.prepare('INSERT INTO shared_trees(id,data,version,updated_at,last_op,actor) VALUES(?,?,1,?,?,?)').run('vera-1',JSON.stringify({id:'vera-1',externalId:'1',species:'Oiti',height:12,mt:true,mtDistance:.2,lat:-9.9,lon:-67.8,feeder:'TAN-01I2',photos:[{id:'p',assetId:'a1'}],createdAt:'2026-11-02T12:00:00Z',updatedAt:'2026-11-02T12:00:00Z'}),'2026-11-02T12:00:00Z','op-export','Inspetor');sql.prepare('INSERT INTO shared_photos(tree_id,asset_id,image) VALUES(?,?,?)').run('vera-1','a1','data:image/jpeg;base64,/9j/AA==');
 const exportado=(await sync({action:'field-export'})).data;assert.equal(exportado.records.length,1);assert.equal(exportado.records[0].externalId,'1');assert.deepEqual(exportado.records[0].photos,['a1']);assert.equal(exportado.records[0].mtDistance,.2);assert.deepEqual(exportado.deleted,[]);assert.equal((await sync({action:'field-photo',id:'vera-1',asset:'a1'})).data.image,'data:image/jpeg;base64,/9j/AA==');assert.equal((await sync({action:'field-photo',id:'vera-1',asset:'outra'})).status,404);
-sql.exec("UPDATE shared_trees SET deleted=1 WHERE id='vera-1'");assert.deepEqual((await sync({action:'field-export'})).data.deleted,['vera-1']);sql.exec("DELETE FROM shared_photos;DELETE FROM shared_trees;");
+const park=(query='')=>call('/api/control/export?scope=park&format=package&distanceUnit=cm'+query,undefined,auth);
+const combined=await park();
+assert.equal(combined.status,200);
+assert.deepEqual(combined.data.rows.map(row=>row.id),['vera-1'],'correção em campo substitui a árvore histórica');
+const [updated]=combined.data.rows;
+assert.equal(updated.values[1],'Oiti');
+assert.equal(updated.values[5],'26/08/2025');
+assert.equal(updated.values[8],20);
+assert.equal(updated.values[10],'https://example.com/pasta');
+assert.deepEqual(updated.photos.map(p=>p.asset||p.veraId),['a1','1']);
+const photo=await call('/api/control/export/photos',{photos:[{id:'vera-1',veraId:'1'}]},auth);
+assert.equal(photo.status,200);
+assert.equal(photo.data.photos[0].veraId,'1');
+addLive('campo-agora');
+assert.equal((await park()).data.rows.length,2,'next export reads a newly synchronized field record');
+assert.deepEqual((await park('&park.origem='+encodeURIComponent('Campo (prévia)'))).data.rows.map(row=>row.id),['campo-agora']);
+assert.deepEqual((await park('&park.trecho=T1&parkQuery=1')).data.rows.map(row=>row.id),['vera-1','campo-agora']);
+assert.equal((await park('&park.especie=Manga')).data.rows.length,0);
+assert.deepEqual((await park('&from=2025-08-26&to=2025-08-26')).data.rows.map(row=>row.id),['vera-1']);
+assert.equal((await call('/api/control/export?scope=park&format=package',undefined,inspector)).status,403);
+sql.exec("DELETE FROM shared_trees WHERE id='campo-agora'");
+sql.exec("UPDATE shared_trees SET deleted=1 WHERE id='vera-1'");assert.deepEqual((await sync({action:'field-export'})).data.deleted,['vera-1']);assert.equal((await park()).data.rows.length,0,'deleted tree disappears from the park export');sql.exec("DELETE FROM shared_photos;DELETE FROM shared_trees;");
 // As inspeções do campo não são tocadas.
 assert.equal(sql.prepare('SELECT COUNT(*) n FROM shared_trees').get().n,0);
+// Reproduce the reported park size and verify that the very next export sees the new row.
+const historicalRows=sql.prepare('INSERT INTO vera_trees(generation,id,data) VALUES(?,?,?)');
+const scaleGeneration='gen-00002',historicalCount=3477;
+for(let index=2;index<=historicalCount;index++){
+ const id=String(index);
+ historicalRows.run(scaleGeneration,id,JSON.stringify({id,especies:'Manga',alimentador:'AAL-01C7',trecho:'T1',lat:-9.9,lon:-67.8}));
+}
+for(let index=0;index<203;index++)addLive('campo-export-'+index);
+const csv=async(query='')=>{
+ const response=await app.fetch(new Request('https://api.test/api/control/export?scope=park'+query,{headers:{Origin:env.APP_ORIGIN,Cookie:auth.cookie}}),env);
+ assert.equal(response.status,200);
+ const rows=Number(response.headers.get('X-Campo-Record-Count'));
+ assert.equal((await response.text()).trimEnd().split('\r\n').length,rows+1);
+ return rows;
+};
+assert.equal(await csv(),3680);
+assert.equal(await csv('&park.alimentador=AAL-01C7'),3476);
+assert.equal((await park()).data.rows.length,3680);
+addLive('campo-export-novo');
+assert.equal(await csv(),3681);
+assert.equal(await csv('&park.alimentador=TAN-01I2'),205);
+assert.equal((await park('&park.alimentador=TAN-01I2')).data.rows.length,205);
 console.log('PASS VERA: leitura só de administrador, token só para envio, validação, publicação atômica por geração, miniaturas e nenhuma escrita em shared_trees. Banco em memória.');

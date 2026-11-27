@@ -4,7 +4,7 @@ importScripts('vendor/fflate.js'+version,'exports.js'+version);
 
 const mimeExtensions={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'};
 const encoder=new TextEncoder();
-const photoKey=(id,asset)=>id+':'+asset;
+const photoKey=(id,photo)=>id+':'+(photo.veraId?'vera:'+photo.veraId:photo.asset);
 const maxZipBytes=1024*1024*1024;
 
 async function request(path,body){
@@ -27,7 +27,7 @@ async function exportPackage(params){
  const {headers,rows,unit,counts,driveAvailable}=await request('/api/control/export?'+params);
  const photoColumn=headers.indexOf('FOTO'),sheets=[
   {name:'Template VERA',headers,rows:[],links:[],dateColumns:new Set([headers.indexOf('DATA')])},
-  {name:'Fotos',headers:['ID do cadastro','POSTE','Nome da foto','Arquivo no ZIP','Pasta ou foto no Drive','Situação'],rows:[],links:[]}
+  {name:'Fotos',headers:['ID do cadastro','POSTE','Nome da foto','Arquivo no ZIP','Pasta ou foto na origem','Situação'],rows:[],links:[]}
  ];
  const [template,photos]=sheets,parts=[];
  let saved=0,remote=0,missing=0,noPhotos=0,size=0,processed=0;
@@ -58,7 +58,7 @@ async function exportPackage(params){
   const batch=[],refs=[];
   do {
    const row=rows[offset];
-   const assets=row.photos.filter(p=>p.asset).map(p=>({id:row.id,asset:p.asset}));
+   const assets=row.photos.filter(photo=>photo.asset||photo.veraId).map(photo=>photo.veraId?{id:'vera-'+photo.veraId,veraId:photo.veraId}:{id:row.id,asset:photo.asset});
    if(batch.length&&refs.length+assets.length>12)break;
    batch.push(row);
    refs.push(...assets);
@@ -67,7 +67,7 @@ async function exportPackage(params){
   const images=new Map();
   for(let i=0;i<refs.length;i+=12){
    const result=await request('/api/control/export/photos',{photos:refs.slice(i,i+12)});
-   for(const photo of result.photos)images.set(photoKey(photo.id,photo.asset),photo.image);
+   for(const photo of result.photos)images.set(photoKey(photo.id,photo),photo.image);
   }
   for(const row of batch){
    const folder=row.values[photoColumn]||'',values=row.values.slice();
@@ -80,7 +80,7 @@ async function exportPackage(params){
     }
    }
    for(const [i,p] of row.photos.entries()){
-    const path=addPhoto(row,images.get(photoKey(row.id,p.asset)),i),link=p.url||folder;
+    const path=addPhoto(row,images.get(photoKey(p.veraId?'vera-'+p.veraId:row.id,p)),i),link=p.url||folder;
     if(path){saved++;first||=path;}
     else if(link)remote++;
     else missing++;
@@ -106,11 +106,12 @@ async function exportPackage(params){
   'Na aba Template VERA, FOTO abre a primeira foto local da árvore, quando incluída.',
   'Na aba Fotos, cada linha contém o link individual da foto e o endereço de origem quando disponível.',
   'Mantenha a planilha na mesma pasta de fotos/ para os links relativos continuarem funcionando.',
+  'Fotos históricas com cópia local são miniaturas VERA. A aba Fotos mantém o link do original, quando disponível.',
   'Registros com fotos disponíveis apenas por link precisam de internet e da permissão da pasta de origem.',
   'O CSV mantém os mesmos campos do template. Os caminhos locais só funcionam junto da pasta extraída.',
   'Unidade de DT BT, DT MT e DT AT: '+unit+'.',
   'Fotos incluídas: '+saved+'. Só por link: '+remote+'. Arquivos indisponíveis: '+missing+'. Cadastros sem fotos listadas: '+noPhotos+'.',
-  ...(!driveAvailable?['O índice do Google Drive não respondeu. O pacote foi montado com os dados disponíveis na base central.']:[])
+  ...(!driveAvailable?['O índice do Google Drive não respondeu. O pacote foi montado com os dados disponíveis no VERA e na base central.']:[])
  ];
  add('LEIA-ME.txt',encoder.encode(info.join('\r\n')));
  zip.end();

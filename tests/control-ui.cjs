@@ -6,7 +6,7 @@ async function test(admin){const dom=new JSDOM(html,{url:'https://campo.test/ges
 if(!admin){assert.equal(w.document.getElementById('workspace').hidden,true);assert.equal(calls.filter(c=>c.path.startsWith('/api/control/')).length,0,'inspector never loads admin data');dom.window.close();return;}
 assert.equal(w.document.getElementById('workspace').hidden,false);assert.equal(w.document.querySelectorAll('.metric').length,6);assert.equal(w.document.querySelectorAll('#records tbody tr').length,1);assert.equal(calls.filter(c=>c.path.startsWith('/api/shared/photo')).length,0,'photos are not preloaded with dashboard');assert.equal(w.document.querySelectorAll('input[capture],#species,#form').length,0,'desktop has no inspection entry form');assert(paints>0);
 assert.equal(w.document.getElementById('exportAllBases').textContent,'Extrair CSV do template');
-assert.equal(w.document.getElementById('exportScope').value,'all');
+assert.equal(w.document.getElementById('exportScope').value,'filtered');
 assert.equal(w.document.getElementById('exportDistanceUnit').value,'cm');
 assert.equal(w.document.getElementById('exportPoleAsId').checked,false);
 assert(w.document.querySelector('.rail a[href="#exportacao-vera"]'));

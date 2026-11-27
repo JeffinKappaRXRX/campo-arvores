@@ -16,6 +16,21 @@ async function veraField(u,db){
  const generation=meta.generation||null;if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});
  const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,trees:results.map(r=>veraFieldRow(JSON.parse(r.data)))});
 }
+async function veraParkBase(db,generation){
+ const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};
+ return results.map(row=>JSON.parse(row.data));
+}
+async function veraParkLive(db,data){
+ const [reviewRows,links]=await Promise.all([veraReviews(db),db.prepare('SELECT source_id,target_id FROM shared_merges').all()]);
+ const reviews=new Map(reviewRows.map(row=>[row.tree_id,row]));
+ return {
+  merged:links.results.map(row=>({sourceId:row.source_id,targetId:row.target_id})),
+  deleted:data.deletedIds.filter(id=>id.startsWith('vera-')),
+  generatedAt:data.generatedAt,
+  records:data.records.filter(r=>!r.baseline&&!r.archiveCleanupPending&&r.adminClassification!=='homologacao')
+   .map(r=>veraLiveRecord(r,reviews.get(r.id)))
+ };
+}
 async function veraAPI(request,env){try{
  const u=new URL(request.url);
  // Inspetores também leem: o gateway de acesso já exigiu o login antes de chegar aqui.
@@ -26,8 +41,12 @@ async function veraAPI(request,env){try{
  try{meta=await veraMeta(db);}catch(e){if(veraMissingTable(e))return json({generation:null,updatedAt:null,total:0,trees:[]});throw e;}
  const generation=meta.generation||null;
  if(u.pathname==='/api/vera/meta'){const reviews=await veraReviews(db);return json({generation,updatedAt:meta.updatedAt||null,total:Number(meta.total||0),reviews:reviews.length+':'+reviews.reduce((m,r)=>r.updated_at>m?r.updated_at:m,'')});}
- if(u.pathname==='/api/vera/trees'){if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});const {results}=generation?await db.prepare('SELECT data FROM vera_trees WHERE generation=?').bind(generation).all():{results:[]};return json({generation,updatedAt:meta.updatedAt||null,total:results.length,trees:results.map(r=>JSON.parse(r.data)),referencia:meta.referencia?JSON.parse(meta.referencia):null});}
- if(u.pathname==='/api/vera/live'){const data=await controlLiveUniverse(env),reviews=new Map((await veraReviews(db)).map(r=>[r.tree_id,r]));const links=await db.prepare('SELECT source_id,target_id FROM shared_merges').all();return json({merged:links.results.map(r=>({sourceId:r.source_id,targetId:r.target_id})),deleted:data.deletedIds.filter(id=>id.startsWith('vera-')),generatedAt:data.generatedAt,records:data.records.filter(r=>!r.baseline&&!r.archiveCleanupPending&&r.adminClassification!=='homologacao').map(r=>veraLiveRecord(r,reviews.get(r.id)))});}
+ if(u.pathname==='/api/vera/trees'){
+  if(generation&&u.searchParams.get('since')===generation)return json({generation,unchanged:true});
+  const trees=await veraParkBase(db,generation);
+  return json({generation,updatedAt:meta.updatedAt||null,total:trees.length,trees,referencia:meta.referencia?JSON.parse(meta.referencia):null});
+ }
+ if(u.pathname==='/api/vera/live')return json(await veraParkLive(db,await controlUniverse(env)));
  if(u.pathname==='/api/vera/photo'){const id=u.searchParams.get('id')||'';if(!VERA_ID.test(id))throw sharedError('ID inválido.');const row=await db.prepare('SELECT image FROM vera_thumbs WHERE id=?').bind(veraPhotoId(id)).first();if(!row)throw sharedError('Miniatura indisponível.',404);return json({image:row.image});}
  throw sharedError('Consulta não encontrada.',404);
 }catch(e){return json({error:e.status?e.message:'Base VERA temporariamente indisponível.'},e.status||503);}}

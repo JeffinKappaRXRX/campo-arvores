@@ -86,8 +86,14 @@
  }
  function exportOptions(){
   const unit=$('exportDistanceUnit').value,from=$('exportFrom').value,to=$('exportTo').value;
-  const query=new URLSearchParams({idMode:$('exportPoleAsId').checked?'pole':'empty',distanceUnit:unit});
-  if($('exportScope').value==='filtered')for(const [key,value] of params())if(!['page','bbox','zoom'].includes(key))query.append(key,value);
+  const query=new URLSearchParams({scope:'park',idMode:$('exportPoleAsId').checked?'pole':'empty',distanceUnit:unit});
+  if($('exportScope').value==='filtered'){
+   const park=window.CampoParque?.exportFilters();
+   if(park){
+    for(const [key,value] of Object.entries(park.values))if(value)query.set('park.'+key,value);
+    if(park.query)query.set('parkQuery',park.query);
+   }
+  }
   if(from)query.set('from',from);
   if(to)query.set('to',to);
   if($('exportExtras').checked)query.set('extras','1');
@@ -98,7 +104,7 @@
   if(counts.adjustable)notes.push(fmt(counts.adjustable)+' medida(s) com sugestão de ajuste');
   if(counts.review)notes.push(fmt(counts.review)+' medida(s) para conferir');
   if(counts.missing)notes.push(fmt(counts.missing)+' campo(s) de distância sem valor exportável');
-  if(!driveAvailable)notes.push('Drive indisponível, exportação só com a base central');
+  if(!driveAvailable)notes.push('Drive indisponível, exportação gerada com a base VERA e os cadastros da base central');
   return notes;
  }
  function exportBusy(busy,canCancel=false){
@@ -170,7 +176,7 @@
  $('cancelVeraZip').onclick=()=>{finishExportWorker();$('exportStatus').textContent='Exportação ZIP cancelada.';};
  window.addEventListener('campo-control-logout',()=>{finishExportWorker();$('exportStatus').textContent='';});
  function stopLive(){liveGeneration++;clearTimeout(liveRetryTimer);clearTimeout(liveRefreshTimer);const socket=liveSocket;liveSocket=null;if(socket&&socket.readyState<2)socket.close(1000,'Painel pausado');}
- function queueLiveRefresh(){clearTimeout(liveRefreshTimer);liveRefreshTimer=setTimeout(()=>{if(!authorized||document.hidden||!navigator.onLine)return;if(actionBusy){queueLiveRefresh();return;}void load();void auxiliary();if(window.CampoCycle?.active())void window.CampoParque?.refresh();},250);}
+ function queueLiveRefresh(){clearTimeout(liveRefreshTimer);liveRefreshTimer=setTimeout(()=>{if(!authorized||document.hidden||!navigator.onLine)return;if(actionBusy){queueLiveRefresh();return;}void load();void auxiliary();void window.CampoParque?.refresh();},250);}
  function connectLive(){if(!authorized||document.hidden||!navigator.onLine||typeof WebSocket!=='function')return;stopLive();const generation=liveGeneration,scheme=location.protocol==='https:'?'wss:':'ws:',socket=new WebSocket(scheme+'//'+location.host+'/api/control/live');liveSocket=socket;socket.onopen=()=>{if(generation!==liveGeneration)return;liveRetryTimer=null;$('live').textContent='Tempo real conectado';$('live').classList.remove('offline');};socket.onmessage=event=>{if(generation!==liveGeneration)return;try{const data=JSON.parse(event.data);if(data.type==='change'){queueLiveRefresh();if(data.kind?.startsWith('route-'))window.CampoRoutePlanner?.refresh?.();if(data.kind==='tree-corrections')void window.CampoQualityAdmin?.refresh();}}catch{}};socket.onerror=()=>{};socket.onclose=()=>{if(generation!==liveGeneration)return;liveSocket=null;if(!authorized||document.hidden||!navigator.onLine)return;$('live').textContent='Tempo real reconectando · contingência ativa';liveRetryTimer=setTimeout(connectLive,3000);};}
  async function poll(){if(!authorized||pollBusy||document.hidden)return;if(!navigator.onLine){$('live').textContent='Offline · última consulta mantida';$('live').classList.add('offline');return;}window.CampoRoutePlanner?.poll?.();if(loadController)return;if(lastDataAt&&liveSocket?.readyState===1&&Date.now()-lastRevisionCheck<60000){if(Date.now()-lastDataAt>=30000)await presence();return;}pollBusy=true;try{const d=await api('/api/control/revision');lastRevisionCheck=Date.now();if(d.revision!==revision||Date.now()-lastDataAt>=60000){revision=d.revision;await load();await auxiliary();}else if(Date.now()-lastDataAt>=30000)await presence();}catch(e){feedback(e.message+' A contingência tentará novamente em 10 s.');}finally{pollBusy=false;}}
  function reviewDelete(list){if(!authorized||actionBusy||!list.length)return;deleteSnapshot=structuredClone(list);$('deleteReview').innerHTML=table(['Árvore / poste','ID do cadastro','Classificação','Criado'],list.map(r=>[esc(r.species||'Árvore')+'<small>'+esc(r.pole||'Poste sem ID')+'</small>',esc(r.id),esc(r.adminClassification==='homologacao'?'Homologação':r.adminClassification==='producao'?'PRODUÇÃO':'Sem classificação'),esc(stamp(r.createdAt))]));$('deleteReviewed').checked=false;$('deleteConfirmation').value='';$('deleteFeedback').textContent='';$('confirmDelete').disabled=true;$('deleteDialog').showModal();}
