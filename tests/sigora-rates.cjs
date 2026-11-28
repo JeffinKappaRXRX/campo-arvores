@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {fit,predict}=require('../docs/sigora-rates.js');
+const hist=[{assetId:'A',assetClass:'CHAVE',exposureDays:365,events:3},{assetId:'B',assetClass:'CHAVE',exposureDays:365,events:0},{assetId:'C',assetClass:'TRAFO',exposureDays:365,events:2}];
+const model=fit(hist);
+const p=predict(model,{assetId:'D',assetClass:'CHAVE',exposureDays:90,events:0},90);
+assert.ok(p.expectedEvents>0&&p.probabilityAtLeastOne>0&&p.probabilityAtLeastOne<1);
+assert.ok(predict(model,{assetClass:'CHAVE',exposureDays:90,events:4},90).expectedEvents>p.expectedEvents);
+assert.ok(predict(model,{assetClass:'CHAVE',exposureDays:90,events:0},180).probabilityAtLeastOne>p.probabilityAtLeastOne);
+assert.throws(()=>fit([...hist,hist[0]]),/duplicado/);
+assert.throws(()=>fit([{assetId:'X',assetClass:'TRAFO',exposureDays:0,events:1}]),/invalido/);
+assert.throws(()=>predict(model,{assetClass:'INEXISTENTE',exposureDays:90,events:1}),/desconhecida/);
+assert.equal(model.validated,false);
+console.log('PASS SIGORA rates: pooling, exposicao, horizonte, dados invalidos e classe desconhecida.');

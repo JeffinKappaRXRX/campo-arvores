@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {validateObservation,validateBatch}=require('../docs/sigora-data-contract.js');
+const row={assetId:'RBR1',assetClass:'CHAVE',sourceSystem:'SGM',sourceRecordId:'OS123',windowStart:'2026-01-01',windowEnd:'2026-03-31',exposureDays:90,events:2};
+assert.equal(validateObservation(row).valid,true);
+assert.equal(validateObservation({...row,exposureDays:100}).valid,false);
+assert.equal(validateObservation({...row,windowStart:'2026-02-30'}).valid,false);
+assert.equal(validateObservation({...row,events:-1}).valid,false);
+assert.equal(validateBatch([row,{...row,sourceRecordId:'OS124'}]).accepted.length,2);
+const batch=validateBatch([row,{...row}]);
+assert.equal(batch.complete,false);
+assert.match(batch.rejected[0].issues.join(','),/duplicado/);
+console.log('PASS SIGORA data contract: origem, janela, exposicao, duplicidade e rejeicao.');
