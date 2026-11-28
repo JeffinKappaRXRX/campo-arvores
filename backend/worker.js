@@ -1777,16 +1777,28 @@ async function controlParkExportRows(env,data,params,manifest){
   const historicalPhoto={name:'Foto histórica VERA (miniatura)',originalUrl:original.urlFoto,veraId:thumbIds.has(veraPhotoId(original.id))?original.id:null};
   const photos=controlPhotos(field||{});
   return {...baseline,...field,id,
-   externalId:original.id,species:tree.especies,lat:tree.lat,lon:tree.lon,pole:tree.poste,span:tree.vao,feeder:tree.alimentador,
+   externalId:original.id,treeId:original.id,species:tree.especies,lat:tree.lat,lon:tree.lon,pole:tree.poste,span:tree.vao,feeder:tree.alimentador,
    createdAt:original.data||field?.createdAt,folderUrl:field?.folderUrl||archived.get(id)?.folderUrl||original.urlPasta,photoReference:field?.photoReference||original.urlFoto,
    key:field?.key||original.chave,municipality:field?.municipality||original.municipio,street:field?.street||original.logradouro,
    photos:historicalPhoto.veraId||historicalPhoto.originalUrl?[...photos,historicalPhoto]:photos
   };
  });
 }
-function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
+const CONTROL_EXPORT_EXTRAS=[
+ ['span','ID DO VAO',r=>r.span],
+ ['key','CHAVE',r=>r.key||r.chave],
+ ['street','LOGRADOURO',r=>r.street||r.logradouro||r.address],
+ ['municipality','MUNICIPIO',r=>r.municipality||r.municipio],
+ ['perimeter','PERIMETRO',r=>controlCsvNumber(r.perimeter||r.perimetro||r.circ)],
+ ['photoLink','LINK DA FOTO',(_r,link)=>link]
+];
+const CONTROL_EXPORT_COLUMNS=[
+ ...CONTROL_EXPORT_EXTRAS,
+ ['treeId','ID DA ARVORE',r=>String(r.treeId??r.id)]
+];
+function controlExportTable(rows,{columns,idMode,unit,archive,manifest}){
  const headers=['ID','ESPECIE','LONGITUDE','LATITUDE','ALTURA','DATA','POSTE','DT BT','DT MT','DT AT','FOTO','AREA','DAP','ACESSO','EQUIPE','OBSERVACAO','ALIMENTADOR'];
- if(extras)headers.push('ID DO VAO','CHAVE','LOGRADOURO','MUNICIPIO','PERIMETRO','LINK DA FOTO');
+ headers.push(...columns.map(([,header])=>header));
  const counts={missing:0,review:0,adjustable:0};
  const all=rows.map(r=>{
   const pole=String(r.pole??''),link=controlPhotoLink(r,archive.get(r.id));
@@ -1803,7 +1815,7 @@ function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
   const day=controlExportDay(r.createdAt);
   const date=day.split('-').reverse().join('/');
   const values=[id,r.species,controlCsvNumber(r.lon),controlCsvNumber(r.lat),controlCsvNumber(r.height),date,pole,...distances,link,r.area,controlCsvNumber(r.dap),r.access,r.team,r.note,r.feeder];
-  if(extras)values.push(r.span,r.key||r.chave||'',r.street||r.logradouro||r.address||'',r.municipality||r.municipio||'',r.perimeter||r.perimetro||'',link);
+  values.push(...columns.map(([,,value])=>value(r,link)??''));
   if(!manifest)return values;
   const photos=controlPhotos(r).map(p=>({asset:sharedId(p.assetId)?p.assetId:null,name:p.name||p.id||'',url:controlPhotoUrl(p.originalUrl),...(p.veraId&&{veraId:p.veraId})}));
   return {id:r.id,values,photos};
@@ -1811,7 +1823,12 @@ function controlExportTable(rows,{extras,idMode,unit,archive,manifest}){
  return {headers,all,counts};
 }
 async function controlExport(env,params){
- const from=params.get('from')||'',to=params.get('to')||'',extras=params.get('extras')==='1';
+ const from=params.get('from')||'',to=params.get('to')||'';
+ const selected=new Set(params.getAll('column'));
+ // Older clients still use the original group of six columns.
+ if(params.get('extras')==='1')for(const [key] of CONTROL_EXPORT_EXTRAS)selected.add(key);
+ const columns=CONTROL_EXPORT_COLUMNS.filter(([key])=>selected.has(key));
+ if(columns.length!==selected.size)throw sharedError('Coluna opcional inválida.');
  const idMode=params.get('idMode')??'original',unit=params.get('distanceUnit')??'m',filters=controlFilters(params);
  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
   throw sharedError('Período inválido.');
@@ -1825,7 +1842,7 @@ async function controlExport(env,params){
   return (!from&&!to)||Boolean(day&&(!from||day>=from)&&(!to||day<=to));
  }).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));
  const archive=new Map(data.archiveRecords.map(record=>[record.id,record]));
- const {headers,all,counts}=controlExportTable(rows,{extras,idMode,unit,archive,manifest});
+ const {headers,all,counts}=controlExportTable(rows,{columns,idMode,unit,archive,manifest});
  if(manifest)return json({headers,rows:all,unit,counts,driveAvailable:data.archive.available});
  const csv='\uFEFF'+[headers,...all].map(row=>row.map(controlCsvCell).join(';')).join('\r\n')+'\r\n';
  return new Response(csv,{headers:{

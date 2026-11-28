@@ -105,8 +105,20 @@
   <label>Até<input id="exportTo" type="date"></label>
   <label>Unidade de DT BT, DT MT e DT AT<select id="exportDistanceUnit"><option value="cm">Centímetros (cm)</option><option value="m">Metros (m)</option></select></label>
   <label class="map-check"><input id="exportPoleAsId" type="checkbox"> Preencher ID com o ID do poste</label>
-  <label class="map-check"><input id="exportExtras" type="checkbox"> Acrescentar ID do vão, chave, logradouro, município, perímetro e link da foto</label>
  </div>
+ <fieldset class="export-columns">
+  <legend>Colunas adicionais</legend>
+  <label class="map-check"><input id="exportExtras" type="checkbox"> Marcar todas as colunas adicionais</label>
+  <div class="export-column-options">
+   <label class="map-check"><input type="checkbox" data-export-column="treeId"> ID da árvore</label>
+   <label class="map-check"><input type="checkbox" data-export-column="span"> ID do vão</label>
+   <label class="map-check"><input type="checkbox" data-export-column="key"> Chave</label>
+   <label class="map-check"><input type="checkbox" data-export-column="street"> Logradouro</label>
+   <label class="map-check"><input type="checkbox" data-export-column="municipality"> Município</label>
+   <label class="map-check"><input type="checkbox" data-export-column="perimeter"> Perímetro (cm)</label>
+   <label class="map-check"><input type="checkbox" data-export-column="photoLink"> Link da foto</label>
+  </div>
+ </fieldset>
  <p class="small">Cada extração consulta o parque atualizado. Sem filtros e sem período, o arquivo inclui toda a base VERA e os cadastros de campo sincronizados.</p>
  <p class="small">POSTE sempre recebe o ID do poste cadastrado. Com a opção desmarcada, ID sai em branco.</p>
  <button type="button" id="exportAllBases">Extrair CSV do template</button>

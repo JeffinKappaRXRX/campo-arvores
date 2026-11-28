@@ -11,6 +11,28 @@ assert.equal(w.document.getElementById('exportDistanceUnit').value,'cm');
 assert.equal(w.document.getElementById('exportPoleAsId').checked,false);
 assert(w.document.querySelector('.rail a[href="#exportacao-vera"]'));
 assert.equal(w.document.getElementById('exportVeraZip').disabled,false);
+const allExtra=w.document.getElementById('exportExtras');
+const col=[...w.document.querySelectorAll('[data-export-column]')];
+assert.equal(col.length,7);
+assert(col.every(input=>!input.checked));
+const treeId=col.find(input=>input.dataset.exportColumn==='treeId');
+treeId.click();
+assert.equal(allExtra.indeterminate,true);
+let exportQuery;
+w.Worker=class {postMessage(value){exportQuery=new URLSearchParams(value);}terminate(){}};
+w.document.getElementById('exportVeraZip').click();
+assert.deepEqual(exportQuery.getAll('column'),['treeId']);
+assert.equal(exportQuery.get('idMode'),'empty');
+w.document.getElementById('cancelVeraZip').click();
+allExtra.click();
+assert(col.every(input=>input.checked));
+assert.equal(allExtra.indeterminate,false);
+w.document.getElementById('exportVeraZip').click();
+assert.deepEqual(exportQuery.getAll('column'),col.map(input=>input.dataset.exportColumn));
+w.document.getElementById('cancelVeraZip').click();
+allExtra.click();
+assert(col.every(input=>!input.checked));
+
 w.document.getElementById('month').value='2026-11';w.document.getElementById('month').dispatchEvent(new w.Event('change'));await new Promise(r=>setTimeout(r,20));assert(calls.some(c=>c.path.includes('month=2026-11')));
 await w.CampoControl.openRecord(row.id);await new Promise(r=>setTimeout(r,20));assert(w.document.getElementById('recordDialog').open);assert.equal(calls.filter(c=>c.path.startsWith('/api/shared/photo')).length,1);assert.equal(w.document.querySelectorAll('#recordPhotos img').length,1);
 w.document.getElementById('closeRecord').click();w.document.getElementById('selectPage').click();w.document.getElementById('deleteSelected').click();assert(w.document.getElementById('deleteDialog').open);assert(w.document.getElementById('confirmDelete').disabled);w.document.getElementById('cancelDelete').click();await new Promise(r=>setTimeout(r,10));assert.equal(calls.filter(c=>c.options.method==='POST').length,0,'cancelled deletion performs no write');w.document.getElementById('deleteSelected').click();w.document.getElementById('deleteReviewed').checked=true;w.document.getElementById('deleteReviewed').dispatchEvent(new w.Event('change'));w.document.getElementById('deleteConfirmation').value='EXCLUIR';w.document.getElementById('deleteConfirmation').dispatchEvent(new w.Event('input'));assert.equal(w.document.getElementById('confirmDelete').disabled,false);await w.document.getElementById('deleteForm').onsubmit({preventDefault(){}});const writes=calls.filter(c=>c.options.method==='POST');assert.equal(writes.length,1);const item=JSON.parse(writes[0].options.body).records[0];assert.equal(item.id,row.id);assert.equal(item.sharedVersion,2);assert.equal(item.labelRevision,1);dom.window.close();}

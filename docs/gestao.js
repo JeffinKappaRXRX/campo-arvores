@@ -84,6 +84,19 @@
   link.href=url;link.download=filename;
   document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
+ const exportColumns=[...document.querySelectorAll('[data-export-column]')];
+ const exportExtras=$('exportExtras');
+ function syncExportExtras(){
+  const count=exportColumns.filter(input=>input.checked).length;
+  exportExtras.checked=count===exportColumns.length;
+  exportExtras.indeterminate=count>0&&count<exportColumns.length;
+ }
+ exportExtras.onchange=()=>{
+  for(const input of exportColumns)input.checked=exportExtras.checked;
+  syncExportExtras();
+ };
+ for(const input of exportColumns)input.onchange=syncExportExtras;
+ syncExportExtras();
  function exportOptions(){
   const unit=$('exportDistanceUnit').value,from=$('exportFrom').value,to=$('exportTo').value;
   const query=new URLSearchParams({scope:'park',idMode:$('exportPoleAsId').checked?'pole':'empty',distanceUnit:unit});
@@ -96,7 +109,7 @@
   }
   if(from)query.set('from',from);
   if(to)query.set('to',to);
-  if($('exportExtras').checked)query.set('extras','1');
+  for(const input of exportColumns)if(input.checked)query.append('column',input.dataset.exportColumn);
   return {query,unit,filename:'arbora-template-vera-'+unit+'-'+(from||'inicio')+'-'+(to||new Date().toISOString().slice(0,10))};
  }
  function exportNotes(total,unit,counts,driveAvailable){

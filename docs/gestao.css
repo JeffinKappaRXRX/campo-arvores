@@ -35,3 +35,5 @@
 .control-location-ghost { position:fixed; z-index:9999; transform:translate(-50%,-95%); pointer-events:none; }
 .control-location-ghost[hidden] { display:none; }
 .control-location-actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+
+.export-columns{min-width:0;border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:6px 12px 10px}.export-columns legend{font-size:13px;font-weight:650;padding:0 4px}.export-column-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:0 12px}.export-columns .map-check{margin:0;min-height:34px}.export-columns .map-check input{flex:none}
