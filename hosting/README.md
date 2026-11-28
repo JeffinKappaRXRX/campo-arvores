@@ -302,3 +302,25 @@ A camada leve `18_Vaos_BT_secundario` preserva `Id` e `NAME BLOCO`, mas não pre
 No aparelho autenticado, `bt-feeder-lookup.js` baixa a relação e mantém uma cópia offline privada. Tocar em um vão BT passa a preencher ID e alimentador como na MT; a indexação de uma base nova também associa o alimentador ao vão. Valores SOG e vazios não são promovidos a alimentador. Se não houver relação inequívoca, o app mantém o alimentador atual e não inventa dado.
 
 Fonte conciliada em 06/11/2026: 114.535 vãos BT, 95.510 com alimentador operacional inequívoco, representados por 11.660 blocos e 20 IDs diretos. Outros 19.025 registros da origem estavam sem alimentador confiável e permanecem sem preenchimento automático. A varredura central corrigiu 10 cadastros exclusivamente BT com divergência, gerando nova versão e evento de sincronização para cada um; cadastros MT/BT não foram alterados pelo ID de vão MT.
+
+## ARBORA · Consulta gerencial
+
+- Página de consulta: `/consulta-arbora.html`. Mostra produtividade, qualidade cadastral, metas e cobertura das contas selecionadas em **Equipe → Consulta gerencial · inspetores e acessos**. A seleção inicial usa as contas ativas de Herlen e Lucivaldo. O mapa mostra a rede da rota escolhida, com segmentos vistoriados e pendências. Os KPIs excluem homologações. O controle **Todas as árvores** mostra no mapa os pontos do VERA e dos cadastros ativos de campo, inclusive do Drive quando disponível. Essa camada cobre todos os períodos e equipes. A consulta recebe apenas as coordenadas das árvores, sem fichas, fotos ou trilhas de GPS.
+- No painel administrativo, abra **Equipe → Consulta gerencial · inspetores e acessos** para gerar o link de leitura. O código fica no fragmento do link e é trocado por uma sessão de oito horas. Gerar outro link ou revogar o atual encerra o acesso por ele. A auditoria mostra horário, número do acesso e identificador pseudonimizado da rede. O IP bruto não é gravado.
+- A projeção gerencial estima a meta diária de 100 cadastros por inspetor, usando o tempo médio medido no filtro e 8 horas ativas por pessoa.
+- A conferência cadastral mostra árvores a mais de 60 m da linha do vão informado. O app usa a geometria local selecionada ou encontrada pelo ID e permite salvar com o aviso. Registros anteriores podem ser avaliados pela geometria MT das rotas ou do pacote privado. Registros sem correspondência aparecem na contagem de distância não verificada. No painel administrativo, a conferência fica em **Cadastros e limpeza**.
+- Aplique `backend/gerencial-schema.sql` à mesma D1 e publique a API e Pages com os builds deste repositório, preservando os vínculos de produção.
+
+
+### Vistoria por chave e homologação
+
+- Ao atribuir uma rota, inclua toda a rede a vistoriar, desde a saída da subestação até as pontas. Use **Marcar saída da subestação no mapa** para vincular a ponta T1. Nas rotas antigas, use **Vincular saída da subestação** na rota atribuída. Um trecho desconectado, sem chave ou com topologia ambígua continua disponível pela marcação detalhada ou pelo GPS. A linha principal sugerida prioriza T1, depois T2 e T3. Quando os ramos têm a mesma classificação, usa a extensão restante para escolher a continuação.
+- Em **Minhas rotas**, inicie a saída e toque na chave ou use **Marcar área no mapa**. Confirme os segmentos por inteiro. Uma confirmação enfileira os trechos registrados e envia imediatamente quando há conexão. O cálculo de extensão usa os comprimentos dos vãos do cadastro sem exigir marcação individual. Vãos repetidos na mesma rota contam uma única vez. Derivações não marcadas ficam pendentes e a chave só encerra quando toda a rede daquele bloco estiver coberta.
+- Marque **Rota de homologação** antes de atribuir um teste. **Mostrar homologação** no histórico administrativo revela testes e devoluções anteriores classificadas como homologação. **Excluir homologação** remove a rota das telas e mantém o histórico técnico recebido; uma rota de produção precisa ser classificada como homologação antes de usar esse comando.
+
+
+### Equipes e mapa de rotas
+
+Em **Equipe → Consulta gerencial · inspetores e acessos**, crie o código da equipe e escolha o vínculo na linha do inspetor. A escolha **Sem equipe** remove o vínculo. O vínculo atual identifica os registros históricos e as rotas desse usuário; a atribuição de campo continua na conta do inspetor. A consulta agrupa por equipe e usa a soma das metas individuais. Os nomes ficam ocultos por padrão e podem ser exibidos pelo controle administrativo.
+
+A coluna **Ver rota** abre a rota ou as rotas da equipe. A lista permite marcar várias rotas e abrir todas as rotas exibidas no filtro. Cada rota mantém sua própria cobertura no mapa. Em Administração, **Mostrar árvores no mapa** liga ou desliga simultaneamente VERA e campo e preserva o recorte atual. Execute novamente `backend/gerencial-schema.sql` antes de publicar a API para adicionar as tabelas de equipes e vínculos.

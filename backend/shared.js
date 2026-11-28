@@ -14,6 +14,8 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
+ const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
+ if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest,{type:'MultiLineString',coordinates:spanCheck.network});
  out.imported=imported||raw.imported===true;out.lastInspector=actor;
  return out;
 }

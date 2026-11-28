@@ -11,13 +11,28 @@ function streetsFromOSM(data,allowEmpty=false){
 function streetContains(bounds,point){return Boolean(bounds&&point&&point.lat>=bounds.south&&point.lat<=bounds.north&&point.lng>=bounds.west&&point.lng<=bounds.east);}
 function streetCoverage(){if(!offlineStreets||!fieldMap)return false;const c=fieldMap.getCenter();return offlineStreets.partial?(offlineStreets.partBounds||[]).some(b=>streetContains(b,c)):streetContains(offlineStreets.bounds,c);}
 function streetPartial(job){if(!job?.features?.length||!job.next)return null;return {collection:{type:'FeatureCollection',features:job.features},bounds:job.bounds,center:job.center,radius:job.radius,partial:true,completed:job.next,total:job.parts.length,partBounds:job.parts.slice(0,job.next).map(p=>streetBounds(p.center,p.radius)),savedAt:job.savedAt||new Date().toISOString()};}
+const streetFeatureBounds=new WeakMap();
 function renderStreets(){
  if(!fieldMap)return;if(streetsLayer){fieldMap.removeLayer(streetsLayer);streetsLayer=null;}
  if($('basemap').value!=='streets')return;
  if(!offlineStreets){$('mapstatus').textContent='Sem ruas salvas. Baixe a área com internet; rede e árvores locais continuam disponíveis.';return;}
- const b=fieldMap.getBounds();let shown=0;const visible=offlineStreets.collection.features.filter(f=>{const c=f.geometry.type==='Point'?[f.geometry.coordinates]:f.geometry.coordinates;return c.some(p=>b.contains([p[1],p[0]]))||f.geometry.type==='LineString'&&L.latLngBounds(c.map(p=>[p[1],p[0]])).intersects(b);});
- streetsLayer=L.geoJSON(visible.slice(0,3000),{pane:'offlineStreets',interactive:false,style:f=>({color:['motorway','trunk','primary'].includes(f.properties.highway)?'#c68c42':'#8599a3',weight:['footway','path','track'].includes(f.properties.highway)?2:4,opacity:.85}),pointToLayer:(f,p)=>L.circleMarker(p,{pane:'offlineStreets',interactive:false,radius:2,weight:0,fillOpacity:0}),onEachFeature:(f,l)=>{if(f.properties.name){l.bindTooltip(esc(f.properties.name),{permanent:fieldMap.getZoom()>=15&&shown++<150||Boolean(f.properties.place),direction:'center',className:'street-label',interactive:false});}}}).addTo(fieldMap);
- const covered=streetCoverage();$('mapstatus').textContent=(covered?(offlineStreets.partial?'Ruas offline · download parcial':'Ruas offline · área salva'):'Fora da área salva · retorne à área ou baixe outra região')+' · © OpenStreetMap contributors'+(visible.length>3000?' · aproxime para detalhar':'');
+ const b=fieldMap.getBounds(),west=b.getWest(),south=b.getSouth(),east=b.getEast(),north=b.getNorth();
+ const source=offlineStreets.collection.features,visible=[];
+ let shown=0,capped=false;
+ for(const feature of source){
+  let bounds=streetFeatureBounds.get(feature);
+  if(!bounds){
+   const points=feature.geometry.type==='Point'?[feature.geometry.coordinates]:feature.geometry.coordinates;
+   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+   for(const [x,y] of points){minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);}
+   bounds=[minX,minY,maxX,maxY];streetFeatureBounds.set(feature,bounds);
+  }
+  if(bounds[2]<west||bounds[0]>east||bounds[3]<south||bounds[1]>north)continue;
+  if(visible.length===1200){capped=true;break;}
+  visible.push(feature);
+ }
+ streetsLayer=L.geoJSON(visible,{pane:'offlineStreets',interactive:false,style:f=>({color:['motorway','trunk','primary'].includes(f.properties.highway)?'#c68c42':'#8599a3',weight:['footway','path','track'].includes(f.properties.highway)?2:4,opacity:.85}),pointToLayer:(f,p)=>L.circleMarker(p,{pane:'offlineStreets',interactive:false,radius:2,weight:0,fillOpacity:0}),onEachFeature:(f,l)=>{if(f.properties.name){l.bindTooltip(esc(f.properties.name),{permanent:(fieldMap.getZoom()>=15||Boolean(f.properties.place))&&shown++<60,direction:'center',className:'street-label',interactive:false});}}}).addTo(fieldMap);
+ const covered=streetCoverage();$('mapstatus').textContent=(covered?(offlineStreets.partial?'Ruas offline · download parcial':'Ruas offline · área salva'):'Fora da área salva · retorne à área ou baixe outra região')+' · © OpenStreetMap contributors'+(capped?' · aproxime para detalhar':'');
 }
 async function initOfflineStreets(){
  offlineStreets=await req('meta','readonly',s=>s.get('offlineStreets'))||null;const interrupted=await req('meta','readonly',s=>s.get('streetDownloadJob'));streetJobPending=Boolean(interrupted);if(!offlineStreets)offlineStreets=streetPartial(interrupted);$('resumeStreets').hidden=!interrupted;

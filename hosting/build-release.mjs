@@ -14,7 +14,7 @@ assets['/sw.js']=canonical['/sw.js'].replace("const CACHE='campo-app-build';","c
 // Use distinct request URLs even when the browser is still controlled by an older worker.
 const versionLinks=html=>html.replace(/((?:src|href)=")([\w./-]+\.(?:js|css))"/g,'$1$2?v='+build+'"');
 assets['/acesso.html']=versionLinks(assets['/index.html']);
-if(assets['/gestao.html'])assets['/gestao.html']=versionLinks(assets['/gestao.html']);
+for(const page of ['/gestao.html','/consulta-arbora.html'])if(assets[page])assets[page]=versionLinks(assets[page]);
 await fs.writeFile(new URL('sw.js',docs),assets['/sw.js']);
 const template=await fs.readFile(new URL('pages-worker.js',import.meta.url),'utf8');
 const route=" if(Object.prototype.hasOwnProperty.call(RELEASE_ASSETS,path)){const mime=path.endsWith('.css')?'text/css':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.csv')?'text/csv':path.endsWith('.txt')?'text/plain':'application/javascript';return new Response(request.method==='HEAD'?null:RELEASE_ASSETS[path],{headers:{'Content-Type':mime+'; charset=utf-8','Cache-Control':'no-cache'}});}\n const upstream=new URL(";

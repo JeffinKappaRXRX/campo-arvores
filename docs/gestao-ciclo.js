@@ -371,10 +371,15 @@
   }
   return box;
  }
+ function mapTreesVisible(){
+  const toggle=$('showAllTrees');
+  return !toggle||toggle.checked||toggle.indeterminate;
+ }
+ const mapRows=()=>mapTreesVisible()?visible:visible.filter(row=>row.kind!=='arvore');
  function paintMap(){
   if(!map||!markers||!active())return;
   markers.clearLayers();links.clearLayers();markerByRow=new Map();
-  const bounds=map.getBounds().pad(.06), onScreen=visible.filter(row=>row.point&&bounds.contains(row.point));
+  const rows=mapRows(),bounds=map.getBounds().pad(.06),onScreen=rows.filter(row=>row.point&&bounds.contains(row.point));
   const grouped=onScreen.length>800||$('cycleClusters').checked&&map.getZoom()<=13;
   if(grouped){
    const grid=new Map();
@@ -398,10 +403,10 @@
    }
   }
   $('cycleMapStatus').textContent=nums(onScreen.length)+' serviços e árvores na área visível'+(grouped?' · aproxime para abrir pontos individuais':'')+'.';
-  if(needsFit&&visible.some(row=>row.point)){needsFit=false;fit();}
+  if(needsFit&&rows.some(row=>row.point)){needsFit=false;fit();}
  }
  function fit(){
-  const points=visible.filter(row=>row.point).map(row=>row.point);
+  const points=mapRows().filter(row=>row.point).map(row=>row.point);
   if(!map||!points.length){$('cycleMapStatus').textContent='Nenhum ponto com coordenada no recorte.';return;}
   map.invalidateSize();map.fitBounds(L.latLngBounds(points),{padding:[32,36],maxZoom:18});
  }
@@ -657,6 +662,7 @@
   territorial.clearArea();populate();recalc();
  };
  fields.query.oninput=()=>{clearTimeout(filterTimer);filterTimer=setTimeout(()=>update(),220);};
+ $('showAllTrees')?.addEventListener('change',paintMap);
  $('cycleMapTools').onchange=event=>{if(event.target.matches('[data-cycle-layer],#cycleLinks,#cycleClusters'))render();};
  $('cycleFit').onclick=fit;
  $('cycleReload').onclick=()=>{void load(true);void loadStructures();void window.CampoParque?.refresh();};
@@ -668,7 +674,7 @@
   const target=event.target.closest('[data-cycle-row],[data-cycle-map]');if(!target)return;
   const row=ledgerRows[Number(target.dataset.cycleRow??target.dataset.cycleMap)];if(!row)return;
   $('cycleDetail').replaceChildren(row.kind==='estrutura'?territorial.structurePopup(row):details(row));
-  if(map&&row.point&&target.dataset.cycleMap!==undefined){
+  if(map&&row.point&&target.dataset.cycleMap!==undefined&&(row.kind!=='arvore'||mapTreesVisible())){
    const layer=tools.querySelector('[data-cycle-layer="'+row.kind+'"]');
    if(!layer.checked){layer.checked=true;visible=allRows.filter(r=>tools.querySelector('[data-cycle-layer="'+r.kind+'"]').checked);}
    $('mapFrame').scrollIntoView({block:'center'});

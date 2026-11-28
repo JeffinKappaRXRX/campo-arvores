@@ -203,6 +203,85 @@ const CampoRoutes=(()=>{
   }
   return result;
  }
+ // Direct the selected network from the confirmed substation outlet. Unrooted, cyclic
+ // or disconnected sections remain available for manual/GPS inspection.
+ function directedRoute(spans,outlet){
+  if(!Array.isArray(outlet)||outlet.length!==2||!outlet.every(Number.isFinite))return null;
+  const nodes=new Map(),pointKey=p=>p.map(n=>n.toFixed(5)).join(',');
+  const node=p=>{
+   const id=pointKey(p);
+   if(!nodes.has(id))nodes.set(id,{id,point:p,edges:[],depth:0,children:[]});
+   return nodes.get(id);
+  };
+  for(const span of spans){
+   const a=node(span.line[0]),b=node(span.line.at(-1)),edge={span,a,b};
+   a.edges.push(edge);b.edges.push(edge);
+  }
+  const roots=[...nodes.values()].filter(n=>n.edges.length===1&&n.edges[0].span.section==='1')
+   .map(n=>({n,d:distance(n.point,outlet)})).filter(x=>x.d<=35).sort((a,b)=>a.d-b.d);
+  if(!roots.length||roots.length>1&&roots[1].d-roots[0].d<3)return null;
+  const root=roots[0].n,feeder=root.edges[0].span.feeder,walk=[root],seen=new Set([root]);
+  for(let at=0;at<walk.length;at++){
+   const n=walk[at];
+   for(const edge of n.edges){
+    if(edge===n.parent||edge.span.feeder!==feeder)continue;
+    const next=edge.a===n?edge.b:edge.a;
+    if(seen.has(next))return null;
+    seen.add(next);walk.push(next);next.parent=edge;
+    const directed={edge,from:n,to:next};
+    n.children.push(directed);
+   }
+  }
+  const orderOf=link=>Number(link.edge.span.section)||4;
+  for(const n of [...walk].reverse()){
+   n.children.sort((a,b)=>orderOf(a)-orderOf(b)||(b.edge.span.metres+b.to.depth)-(a.edge.span.metres+a.to.depth)||a.edge.span.id.localeCompare(b.edge.span.id));
+   if(n.children.length)n.depth=n.children[0].edge.span.metres+n.children[0].to.depth;
+  }
+  return {root,feeder};
+ }
+ function outletOrder(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return spans;
+  const pending=[...network.root.children].reverse(),oriented=[],seen=new Set();
+  while(pending.length){
+   const {edge,from,to}=pending.pop();
+   oriented.push({...edge.span,reverse:edge.b===from});
+   seen.add(edge.span.id);
+   for(let i=to.children.length-1;i>=0;i--)pending.push(to.children[i]);
+  }
+  return [...oriented,...spans.filter(span=>!seen.has(span.id))];
+ }
+ function keySections(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return [];
+  const {root,feeder}=network;
+  const byKey=new Map(),pending=root.children.map(child=>({child,segment:null,branch:false}));
+  for(let index=0;index<pending.length;index++){
+   const {child,segment,branch}=pending[index],{edge,from,to}=child,code=edge.span.block;
+   let part=segment;
+   if(code&&(!part||part.code!==code||branch)){
+    part={id:edge.span.id,code,branch,start:from.point,end:to.point,ids:[],metres:0};
+    if(!byKey.has(code))byKey.set(code,[]);
+    byKey.get(code).push(part);
+   }
+   if(part&&code){
+    part.ids.push(edge.span.id);part.end=to.point;part.metres+=edge.span.metres;
+   }
+   for(const [i,next] of to.children.entries()){
+    const diverges=i>0;
+    pending.push({child:next,segment:code?part:null,branch:diverges});
+   }
+  }
+  const counts=new Map();
+  for(const span of spans)if(span.feeder===feeder&&span.block)counts.set(span.block,(counts.get(span.block)||0)+1);
+  return [...byKey].flatMap(([code,segments])=>segments.reduce((n,part)=>n+part.ids.length,0)===counts.get(code)?[{code,segments}]:[]);
+ }
+ function keyProgress(section,cover){
+  return section.segments.map(segment=>{
+   const ranges=segment.ids.flatMap(spanId=>remaining(cover?.get(spanId)).map(([start,end])=>({spanId,start,end})));
+   return {...segment,closed:!ranges.length,ranges};
+  });
+ }
  function bounds(intervals){
   return intervals.map(([start,end])=>{
    if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>FULL||start>=end)throw Error('Faixa de cobertura inválida.');
@@ -309,6 +388,6 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;

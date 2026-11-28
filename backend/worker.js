@@ -212,6 +212,85 @@ const CampoRoutes=(()=>{
   }
   return result;
  }
+ // Direct the selected network from the confirmed substation outlet. Unrooted, cyclic
+ // or disconnected sections remain available for manual/GPS inspection.
+ function directedRoute(spans,outlet){
+  if(!Array.isArray(outlet)||outlet.length!==2||!outlet.every(Number.isFinite))return null;
+  const nodes=new Map(),pointKey=p=>p.map(n=>n.toFixed(5)).join(',');
+  const node=p=>{
+   const id=pointKey(p);
+   if(!nodes.has(id))nodes.set(id,{id,point:p,edges:[],depth:0,children:[]});
+   return nodes.get(id);
+  };
+  for(const span of spans){
+   const a=node(span.line[0]),b=node(span.line.at(-1)),edge={span,a,b};
+   a.edges.push(edge);b.edges.push(edge);
+  }
+  const roots=[...nodes.values()].filter(n=>n.edges.length===1&&n.edges[0].span.section==='1')
+   .map(n=>({n,d:distance(n.point,outlet)})).filter(x=>x.d<=35).sort((a,b)=>a.d-b.d);
+  if(!roots.length||roots.length>1&&roots[1].d-roots[0].d<3)return null;
+  const root=roots[0].n,feeder=root.edges[0].span.feeder,walk=[root],seen=new Set([root]);
+  for(let at=0;at<walk.length;at++){
+   const n=walk[at];
+   for(const edge of n.edges){
+    if(edge===n.parent||edge.span.feeder!==feeder)continue;
+    const next=edge.a===n?edge.b:edge.a;
+    if(seen.has(next))return null;
+    seen.add(next);walk.push(next);next.parent=edge;
+    const directed={edge,from:n,to:next};
+    n.children.push(directed);
+   }
+  }
+  const orderOf=link=>Number(link.edge.span.section)||4;
+  for(const n of [...walk].reverse()){
+   n.children.sort((a,b)=>orderOf(a)-orderOf(b)||(b.edge.span.metres+b.to.depth)-(a.edge.span.metres+a.to.depth)||a.edge.span.id.localeCompare(b.edge.span.id));
+   if(n.children.length)n.depth=n.children[0].edge.span.metres+n.children[0].to.depth;
+  }
+  return {root,feeder};
+ }
+ function outletOrder(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return spans;
+  const pending=[...network.root.children].reverse(),oriented=[],seen=new Set();
+  while(pending.length){
+   const {edge,from,to}=pending.pop();
+   oriented.push({...edge.span,reverse:edge.b===from});
+   seen.add(edge.span.id);
+   for(let i=to.children.length-1;i>=0;i--)pending.push(to.children[i]);
+  }
+  return [...oriented,...spans.filter(span=>!seen.has(span.id))];
+ }
+ function keySections(spans,outlet){
+  const network=directedRoute(spans,outlet);
+  if(!network)return [];
+  const {root,feeder}=network;
+  const byKey=new Map(),pending=root.children.map(child=>({child,segment:null,branch:false}));
+  for(let index=0;index<pending.length;index++){
+   const {child,segment,branch}=pending[index],{edge,from,to}=child,code=edge.span.block;
+   let part=segment;
+   if(code&&(!part||part.code!==code||branch)){
+    part={id:edge.span.id,code,branch,start:from.point,end:to.point,ids:[],metres:0};
+    if(!byKey.has(code))byKey.set(code,[]);
+    byKey.get(code).push(part);
+   }
+   if(part&&code){
+    part.ids.push(edge.span.id);part.end=to.point;part.metres+=edge.span.metres;
+   }
+   for(const [i,next] of to.children.entries()){
+    const diverges=i>0;
+    pending.push({child:next,segment:code?part:null,branch:diverges});
+   }
+  }
+  const counts=new Map();
+  for(const span of spans)if(span.feeder===feeder&&span.block)counts.set(span.block,(counts.get(span.block)||0)+1);
+  return [...byKey].flatMap(([code,segments])=>segments.reduce((n,part)=>n+part.ids.length,0)===counts.get(code)?[{code,segments}]:[]);
+ }
+ function keyProgress(section,cover){
+  return section.segments.map(segment=>{
+   const ranges=segment.ids.flatMap(spanId=>remaining(cover?.get(spanId)).map(([start,end])=>({spanId,start,end})));
+   return {...segment,closed:!ranges.length,ranges};
+  });
+ }
  function bounds(intervals){
   return intervals.map(([start,end])=>{
    if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>FULL||start>=end)throw Error('Faixa de cobertura inválida.');
@@ -318,9 +397,116 @@ const CampoRoutes=(()=>{
   return ({'URBANO:1':1,'URBANO:2':1,'URBANO:3':2,'RURAL:1':3,'RURAL:2':3,'RURAL:3':4})[key(zone)+':'+key(section).replace(/^T/,'').trim()]||0;
  }
  const day=at=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Rio_Branco',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
+ return {FULL,DEFAULT_BUFFER,bufferMetres,bufferRings,campaignParts,pendingPaths,roadStops,matchedRanges,metres,mapLines,dailyCoverage,routePlan,schedule,capacity,pendingColor,confirmedColor,haloColor,streetDirections,routeParts,outletOrder,keySections,keyProgress,text,key,codes,sections,sectionLabel,identifier,distance,first,last,span,feature,order,merge,remaining,coverage,portion,trailMetres,phase,day};
 })();
 if(typeof module!=='undefined')module.exports=CampoRoutes;
+
+'use strict';
+const CampoSpanQuality=(()=>{
+ const threshold=60;
+ const coordinate=(value,max)=>(typeof value==='number'||typeof value==='string'&&value.trim()!=='')&&Number.isFinite(Number(value))&&Math.abs(Number(value))<=max;
+ const point=pair=>Array.isArray(pair)&&coordinate(pair[0],180)&&coordinate(pair[1],90);
+ const key=value=>String(value??'').trim().toUpperCase();
+ const metresPerDegree=Math.PI*6371000/180;
+
+ function measure(lat,lon,geometry){
+  if(!coordinate(lat,90)||!coordinate(lon,180))return null;
+  lat=Number(lat);lon=Number(lon);
+  const east=metresPerDegree*Math.cos(lat*Math.PI/180);
+  if(east<1)return null;
+  const lines=geometry?.type==='LineString'?[geometry.coordinates]:
+   geometry?.type==='MultiLineString'?geometry.coordinates:[];
+  let best=null;
+  for(const line of lines||[]){
+   if(!Array.isArray(line))continue;
+   for(let i=1;i<line.length;i++){
+    const a=line[i-1],b=line[i];
+    if(!point(a)||!point(b))continue;
+    const x=(a[0]-lon)*east,y=(a[1]-lat)*metresPerDegree;
+    const dx=(b[0]-a[0])*east,dy=(b[1]-a[1])*metresPerDegree;
+    const length=dx*dx+dy*dy;
+    if(!length)continue;
+    const t=Math.max(0,Math.min(1,-(x*dx+y*dy)/length));
+    const metres=Math.hypot(x+t*dx,y+t*dy);
+    if(!best||metres<best.metres)best={metres,nearest:[Number(a[0])+t*(b[0]-a[0]),Number(a[1])+t*(b[1]-a[1])]};
+   }
+  }
+  return best;
+ }
+ function select(matches,feeder){
+  if(matches.length===1)return matches[0];
+  const exact=key(feeder)?matches.filter(match=>key(match.feeder)===key(feeder)):[];
+  return exact.length===1?exact[0]:null;
+ }
+ function lines(geometry){
+  const list=geometry?.type==='LineString'?[geometry.coordinates]:geometry?.type==='MultiLineString'?geometry.coordinates:null;
+  if(!list?.length||list.length>16)return null;
+  let count=0;
+  for(const line of list){
+   if(!Array.isArray(line)||line.length<2||(count+=line.length)>500||!line.every(point))return null;
+  }
+  return list.map(line=>line.map(pair=>pair.slice(0,2).map(Number)));
+ }
+ function reference(record,nearest,geometry){
+  const span=String(record.span??'').trim();
+  if(!span||span.length>1000||!coordinate(record.lat,90)||!coordinate(record.lon,180)||!point(nearest))return null;
+  const network=lines(geometry);
+  return {span,feeder:key(record.feeder),lat:Number(record.lat),lon:Number(record.lon),nearest:nearest.slice(0,2).map(Number),...(network?{network}:{})};
+ }
+ function read(record){
+  const stored=record.spanReference;
+  if(!stored||key(stored.span)!==key(record.span)||key(stored.feeder)!==key(record.feeder)||
+   stored.lat!==Number(record.lat)||stored.lon!==Number(record.lon))return null;
+  const checked=reference(record,stored.nearest,{type:'MultiLineString',coordinates:stored.network});
+  if(!checked)return null;
+  return {...checked,metres:metresPerDegree*Math.hypot((checked.nearest[0]-checked.lon)*Math.cos(checked.lat*Math.PI/180),checked.nearest[1]-checked.lat)};
+ }
+ const format=metres=>new Intl.NumberFormat('pt-BR',{maximumFractionDigits:1}).format(metres>threshold&&metres<threshold+.05?threshold+.1:metres);
+ const alert=check=>check?.metres>threshold?'A árvore está a '+format(check.metres)+' m do vão '+check.span+'. Confira o ponto no mapa e o ID do vão.':'';
+ return {threshold,key,measure,select,reference,read,format,alert};
+})();
+if(typeof window!=='undefined')window.CampoSpanQuality=CampoSpanQuality;
+if(typeof module!=='undefined')module.exports=CampoSpanQuality;
+
+'use strict';
+// Mesma fórmula de risco da análise VERA (analise_vera.py), para as inspeções novas do campo.
+// tests/gestao-risco.cjs compara o resultado com o Python; qualquer mudança aqui precisa ser igual lá.
+(()=>{
+ const H_MT=9,H_BT=7,ESBELTEZ=80,FRAGEIS=['EUCALIPTO','EMBAÚBA','EMBAUBA','LEUCENA','BAMBU','BAMBÚ','PINHEIRO','PINUS','ACÁCIA','FLAMBOYANT','PAU-DE-BALSA','PAU DE BALSA','GUAPURUVU'],ALERTA=/crítico|inclinad|mort|decepad/i,PESO={T1:1,T2:.8},SOBE={'MÉDIO':'ALTO','BAIXO':'MÉDIO','SEM RISCO':'MÉDIO'};
+ const rede=v=>{const n=num(v);return n<0?NaN:n;},num=v=>{if(v===null||v===undefined||v==='')return NaN;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:NaN;};
+ const round=(v,d)=>{const f=10**d;return Math.round(v*f)/f;};
+ // Entrada: altura, distâncias (m), DAP (cm), espécie, alerta, projeção, clientes, trecho, vendaval, clientesMax.
+ function calcular(a){let h=num(a.altura);if(h<=0)h=NaN;if(h>40)h=round(h/10,1);const dmt=rede(a.distMT),dbt=rede(a.distBT),raio=Number.isFinite(h)?Math.min(6,Math.max(1.5,.25*h)):NaN;let d=num(a.distRede);if(!Number.isFinite(d)){const base=Number.isFinite(dmt)?dmt:Number.isFinite(dbt)?dbt:1;d=base+raio;}
+  const alcanca=(alt)=>Number.isFinite(h)&&Number.isFinite(d)&&h*h>=d*d+alt*alt,alcancaMT=alcanca(H_MT),alcancaBT=alcanca(H_BT),copa=dmt<=.5||dbt<=.3;
+  const dap=num(a.dap),altaFina=Boolean(a.dapMedido)&&dap>0&&Number.isFinite(h)&&h/(dap/100)>=ESBELTEZ,especie=String(a.especie||'').toUpperCase(),fragil=FRAGEIS.some(e=>especie.includes(e)),alerta=ALERTA.test(String(a.alerta||''));
+  const prob=Math.max(0,Math.min(100,(alcancaMT?40:0)+(!alcancaMT&&alcancaBT?25:0)+(copa?20:0)+(dmt>.5&&dmt<=1.5?10:0)+(altaFina?15:0)+(fragil?10:0)+(h>=15?10:0)+(alerta?15:0)+(a.projecao==='SIM'?10:0)));
+  const clientes=num(a.clientes)||0,maximo=Math.max(num(a.clientesMax)||0,1);let impacto=Math.sqrt(clientes/maximo)*(PESO[a.trecho]??.6)*(a.vendaval==='Sim'?1.15:1);impacto=round(Math.max(0,Math.min(1,impacto)),3);
+  const prioridade=round(prob*(.4+.6*impacto),1),real=alcancaMT||alcancaBT||copa,calculada=!real?'SEM RISCO':prioridade>=60?'CRÍTICO':prioridade>=40?'ALTO':prioridade>=25?'MÉDIO':'BAIXO',forte=calculada==='CRÍTICO'||calculada==='ALTO';
+  // Foto que não sustenta manda revisar em campo; foto que confirma sobe um nível.
+  let classe=calculada;if(a.verificacao==='NÃO CONFIRMADA'&&forte)classe='REVISAR EM CAMPO';else if(a.verificacao==='CONFIRMADA'&&a.elevar!==false)classe=SOBE[calculada]||calculada;
+  let acao=real?'Monitorar no ciclo':'Sem ação';if(classe==='CRÍTICO'||classe==='ALTO'){if(forte&&alcancaMT&&(altaFina||fragil||ALERTA.test(String(a.obsAcao??a.alerta??''))||h>=15))acao='Supressão (com compensação SEMEIA)';else acao=copa||alcancaMT?'Poda de redução/afastamento':'Poda de limpeza';}
+  const motivo=[];if(alcancaMT)motivo.push('alcança a MT se cair ('+h+' m a '+round(d,1)+' m da rede)');else if(alcancaBT)motivo.push('alcança a BT se cair ('+h+' m)');if(copa)motivo.push('copa encostada na rede');if(altaFina)motivo.push('alta e fina');if(fragil)motivo.push('espécie de queda/quebra frequente');if(alerta)motivo.push('alerta na observação do campo');
+  return {classeCalculada:calculada,altura:Number.isFinite(h)?h:null,distRede:Number.isFinite(d)?round(d,1):null,prob,impacto,prioridade,classe,acao,alcancaMT:alcancaMT?'SIM':'NÃO',motivo:motivo.join('; ')};}
+ const plain=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
+ const nomes=s=>plain(s).split(/[,;/]/).map(x=>x.trim()).filter(Boolean);
+ const metros=(a,b)=>{const y=(a.lat-b.lat)*111320,x=(a.lon-b.lon)*111320*Math.cos(a.lat*Math.PI/180);return Math.hypot(x,y);};
+ // Possível duplicata: mesma espécie a poucos metros. Árvores diferentes lado a lado não são marcadas.
+ function duplicatas(novas,base,limite=15){const cell=.0005,grid=new Map(),key=(la,lo)=>Math.floor(la/cell)+':'+Math.floor(lo/cell);for(const b of base)for(const p of b.pontos){const k=key(p.lat,p.lon);if(!grid.has(k))grid.set(k,[]);grid.get(k).push({...p,id:b.id,especies:nomes(b.especies)});}
+  const out=new Map();for(const n of novas){if(!Number.isFinite(n.lat)||!Number.isFinite(n.lon))continue;const esp=nomes(n.especies),ci=Math.floor(n.lat/cell),cj=Math.floor(n.lon/cell);let melhor=null;for(let i=ci-1;i<=ci+1;i++)for(let j=cj-1;j<=cj+1;j++)for(const c of grid.get(i+':'+j)||[]){if(c.id===n.id||!c.especies.some(e=>esp.includes(e)))continue;const m=metros(n,c);if(m<=limite&&(!melhor||m<melhor.m))melhor={id:c.id,m:Math.round(m)};}if(melhor)out.set(n.id,melhor);}return out;}
+ const api={calcular,duplicatas};if(typeof module!=='undefined')module.exports=api;globalThis.CampoRisco=api;if(typeof window!=='undefined')window.CampoRisco=api;
+})();
+
+/* Regras compartilhadas pelo parque administrativo e pela consulta gerencial. */
+globalThis.CampoParqueRegistros=(()=>{
+ const CAMPO='Campo (prévia)',riscoCore=globalThis.CampoRisco;
+ const position=t=>Number.isFinite(Number(t.lat))&&Number.isFinite(Number(t.lon))&&t.lat!==null&&t.lat!=='';
+ function liveTree(r,referencia){const year=Date.parse(r.createdAt),info=referencia?.alimentadores?.[r.feeder]||{},lat=Number(r.lat),lon=Number(r.lon),dap=Number(r.dap)>0?Number(r.dap):Number(r.circ)>0?Number(r.circ)/Math.PI:null,risco=riscoCore.calcular({altura:r.height,distMT:r.mtDistance,distBT:r.btDistance,dap,dapMedido:dap!==null,especie:r.species,alerta:r.note,verificacao:r.review?.verificacao,projecao:/proje|abaixo/i.test(r.position)?'SIM':'',clientes:info.clientes||0,trecho:info.trecho,vendaval:info.vendaval,clientesMax:referencia?.clientesMax});return {...risco,raw:r,qtd:r.count,photoAsset:r.photoAsset,conferencia:r.review,id:r.id,origem:CAMPO,ano:Number.isFinite(year)?new Date(year).getFullYear():'',especies:r.species,poste:r.pole,vao:r.span,alimentador:r.feeder,trecho:info.trecho||'',clientes:info.clientes||0,clientesEstimado:true,semReferencia:!referencia?.alimentadores?.[r.feeder],verificacao:r.review?.verificacao||'NÃO CONFERIDA',dap,origemDap:dap===null?'Sem medição':'Medido em campo',lat:Number.isFinite(lat)&&r.lat!==null&&r.lat!==''?lat:null,lon:Number.isFinite(lon)&&r.lon!==null&&r.lon!==''?lon:null,data:Number.isFinite(year)?new Date(year).toLocaleDateString('pt-BR',{timeZone:'America/Rio_Branco'}):'',obsFoto:r.review?.obs||r.note};}
+ const originalPoint=t=>{const m=/(-?\d+[.,]\d+)\s*;\s*(-?\d+[.,]\d+)/.exec(String(t.coordOriginal||''));return m?{lat:Number(m[1].replace(',','.')),lon:Number(m[2].replace(',','.'))}:null;};
+ const baseId=id=>id.startsWith('vera-')?id.slice(5):'';
+ function comCampo(b,t,referencia){const r=t.raw,valor=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v)),distMT=r.mt&&valor(r.mtDistance)?r.mtDistance:null,distBT=r.bt&&valor(r.btDistance)?r.btDistance:null,medida=distMT!==null||distBT!==null,verificacao=r.review?.verificacao||(['NÃO CONFIRMADA','SEM PROJEÇÃO NA FOTO'].includes(b.verificacao)?'NÃO CONFERIDA':b.verificacao),original=String(b.observacao||''),texto=String(r.note||''),nota=original&&texto.startsWith(original)?texto.slice(original.length).replace(/^[\s;,.-]+/,''):texto,ano=Number(b.ano),dapNovo=t.dap!==null&&!(Number(b.dap)>0&&Math.abs(t.dap-Number(b.dap))<.06),dap=dapNovo?t.dap:b.dap,dapMedido=dapNovo||!/^(Média|Sem)/.test(b.origemDap||''),especie=r.species||(b.especieConf?'':b.especies),projecao=r.projection==='sim'?'SIM':r.projection==='nao'?'':b.projecao==='SIM'?'SIM':'',risco=riscoCore.calcular({altura:valor(r.height)?r.height:b.altura,distMT,distBT,distRede:medida?null:b.distRede,dap,dapMedido,especie,alerta:ano===2026?[b.obsFoto,nota].filter(Boolean).join('; '):nota,obsAcao:[b.obsFoto,nota,r.review?.obs].filter(Boolean).join('; '),verificacao,elevar:ano===2025,projecao,clientes:b.clientes,trecho:b.trecho,vendaval:b.vendaval,clientesMax:referencia?.clientesMax});return {...b,...risco,campoId:t.id,raw:r,conferencia:r.review,photoAsset:r.photoAsset,especies:r.species||b.especies,especieConf:r.species?'':b.especieConf,dap,origemDap:dapNovo?'Medido em campo (app)':b.origemDap,lat:t.lat??b.lat,lon:t.lon??b.lon,poste:r.pole||b.poste,vao:r.span||b.vao,alimentador:r.feeder||b.alimentador,verificacao,obsFoto:r.review?.obs||nota||b.obsFoto,atualizadoEm:r.updatedAt,atualizadoPor:r.actor};}
+ function merge(base,live,mergedIds,referencia){const activeBase=base.filter(t=>!mergedIds.has('vera-'+t.id)),ids=new Set(activeBase.map(t=>t.id)),campo=new Map(live.filter(t=>ids.has(baseId(t.id))).map(t=>[baseId(t.id),t])),novas=live.filter(t=>!ids.has(baseId(t.id))),atual=activeBase.map(b=>campo.has(b.id)?comCampo(b,campo.get(b.id),referencia):b),pool=[...atual.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:Number(t.lat),lon:Number(t.lon)},originalPoint(t)].filter(Boolean)})),...novas.filter(position).map(t=>({id:t.id,especies:t.especies,pontos:[{lat:t.lat,lon:t.lon}]}))],found=riscoCore.duplicatas(novas,pool);for(const t of novas){const d=found.get(t.id);t.duplicataDe=d?.id;t.duplicataM=d?.m;t.duplicata=d?'Sim':'';}return [...atual,...novas];}
+ return {liveTree,merge};
+})();
 
 const ROUTE_REFERENCE_KEY='arbora:mt-reference:2026-08-03';
 async function routeReference(request,env,admin){
@@ -367,6 +553,53 @@ async function authorizeRouteHomologation(request,env,db,input){
  if(!await checkCampoPassword(password,administrator,env))throw sharedError('Administrador ou senha incorretos.',401);
  return {id:administrator.id,name:administrator.name};
 }
+function routeIsTest(route){
+ return route.homologation===true||['homologacao','gestao_homologacao'].includes(route.returned?.reasonCode);
+}
+const validRouteOutlet=point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite)&&Math.abs(point[0])<=180&&Math.abs(point[1])<=90;
+async function routeUpdateOutlet(db,input){
+ const {routeId,outlet}=input;
+ if(!CampoRoutes.identifier(routeId)||!validRouteOutlet(outlet))throw sharedError('Selecione a saída da subestação no mapa.');
+ const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first();
+ if(!entry)throw sharedError('Rota não encontrada.',404);
+ const route=JSON.parse(entry.data);
+ if(route.deletedAt)throw sharedError('Rota indisponível.',404);
+ if(route.outlet&&JSON.stringify(route.outlet)!==JSON.stringify(outlet))throw sharedError('A saída já foi vinculada a esta rota. Preserve a referência das chaves já confirmadas.',409);
+ const args=route.campaign?[route.assignee,route.campaign.id]:[route.id];
+ const where=route.campaign?"assignee=? AND json_extract(data,'$.campaign.id')=?":"id=?";
+ const {results}=await db.prepare('SELECT data FROM campo_routes WHERE '+where).bind(...args).all();
+ if(!CampoRoutes.keySections(visibleRoutes(results.map(row=>JSON.parse(row.data))).flatMap(part=>part.spans),outlet).length)throw sharedError('A saída não tem conexão inequívoca com uma ponta T1 da rota.');
+ const edited=await db.prepare("UPDATE campo_routes SET data=json_set(data,'$.outlet',json(?)) WHERE "+where+" AND json_extract(data,'$.outlet') IS NULL AND json_extract(data,'$.deletedAt') IS NULL").bind(JSON.stringify(outlet),...args).run();
+ if(!edited.meta?.changes&&!route.outlet)throw sharedError('A rota mudou durante o vínculo. Atualize a tela.',409);
+ return json({ok:true});
+}
+async function routeUpdateTest(db,input){
+ const {routeId,action}=input;
+ if(!CampoRoutes.identifier(routeId)||!['classify','delete'].includes(action))throw sharedError('Informe uma rota válida.');
+ const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first();
+ if(!entry)throw sharedError('Rota não encontrada.',404);
+ const route=JSON.parse(entry.data),scope=route.campaign?.id||route.id;
+ const returned=await db.prepare('SELECT data FROM campo_route_returns WHERE scope_id=?').bind(scope).first();
+ if(action==='delete'&&!routeIsTest({...route,returned:returned?JSON.parse(returned.data):null}))throw sharedError('Classifique a rota como homologação antes de excluir.',409);
+ const rows=route.campaign?await db.prepare("SELECT data FROM campo_routes WHERE assignee=? AND json_extract(data,'$.campaign.id')=?").bind(route.assignee,scope).all():{results:[entry]};
+ const stamp=new Date().toISOString(),parts=rows.results.map(row=>JSON.parse(row.data));
+ if(parts.some(part=>part.deletedAt))return json({ok:true});
+ const where=route.campaign?"assignee=? AND json_extract(data,'$.campaign.id')=?":"id=?";
+ const args=route.campaign?[route.assignee,scope]:[route.id];
+ const assign=action==='delete'?"json_set(data,'$.homologation',json('true'),'$.deletedAt',?)":"json_set(data,'$.homologation',json('true'))";
+ await db.prepare("UPDATE campo_routes SET data="+assign+" WHERE "+where+" AND json_extract(data,'$.deletedAt') IS NULL").bind(...(action==='delete'?[stamp,...args]:args)).run();
+ return json({ok:true});
+}
+async function routeKeyRanges(db,route,check){
+ if(!check||typeof check.code!=='string'||!Array.isArray(check.segments)||!check.segments.length||check.segments.length>250||new Set(check.segments).size!==check.segments.length)throw sharedError('Selecione a chave e os trechos vistoriados.');
+ const rows=route.campaign?await db.prepare("SELECT data FROM campo_routes WHERE assignee=? AND json_extract(data,'$.campaign.id')=?").bind(route.assignee,route.campaign.id).all():{results:[{data:JSON.stringify(route)}]};
+ const parts=visibleRoutes(rows.results.map(row=>JSON.parse(row.data)).filter(part=>!part.deletedAt));
+ if(!parts.length)throw sharedError('Rota ainda indisponível.',409);
+ const section=CampoRoutes.keySections(parts.flatMap(part=>part.spans),route.outlet).find(part=>part.code===check.code);
+ const byId=new Map((section?.segments||[]).map(segment=>[segment.id,segment]));
+ if(check.segments.some(id=>!byId.has(id)))throw sharedError('A chave ou derivação não pertence a esta rota.',409);
+ return check.segments.flatMap(id=>byId.get(id).ids.map(spanId=>({spanId,start:0,end:CampoRoutes.FULL})));
+}
 async function routeAPI(request,env){
  try{
   const admin=isAdministrator(request,env),actor=env.CAMPO_USER?.id,url=new URL(request.url),path=url.pathname;
@@ -384,15 +617,26 @@ async function routeAPI(request,env){
      const returnQuery=all?db.prepare('SELECT data FROM campo_route_returns ORDER BY created_at DESC'):db.prepare('SELECT data FROM campo_route_returns WHERE assignee=? ORDER BY created_at DESC').bind(actor);
      const [a,b,c]=await Promise.all([routeQuery.all(),visitQuery.all(),returnQuery.all()]);
      const returns=c.results.map(row=>JSON.parse(row.data)),byScope=new Map(returns.map(item=>[item.scopeId,item]));
-     let routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data))).map(route=>{const returned=byScope.get(route.campaign?.id||route.id);return returned?{...route,returned}:route;});
+     let routes=visibleRoutes(a.results.map(row=>JSON.parse(row.data)).filter(route=>!route.deletedAt)).map(route=>{const returned=byScope.get(route.campaign?.id||route.id);return returned?{...route,returned}:route;});
      if(!all)routes=routes.filter(route=>!route.returned);
      const ids=new Set(routes.map(route=>route.id));
     const visits=b.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at})).filter(visit=>ids.has(visit.routeId));
-     return json({routes,visits,returns});
+     const deletedIds=all?[]:a.results.map(row=>JSON.parse(row.data)).filter(route=>route.deletedAt).map(route=>route.id);
+    return json({routes,visits,returns,...(deletedIds.length?{deletedIds}:{})});
     }catch(error){if(centralMissingTable(error))return json({routes:[],visits:[],returns:[]});throw error;}
   }
   if(request.method!=='POST')throw sharedError('Use GET ou POST.',405);
   const input=await sharedBody(request,500000),now=new Date().toISOString();
+  if(path==='/api/routes/saida'&&admin){
+   const result=await routeUpdateOutlet(db,input);
+   await realtimePublish(env,'route-assigned');
+   return result;
+  }
+  if(path==='/api/routes/homologacao'&&admin){
+   const result=await routeUpdateTest(db,input);
+   await realtimePublish(env,'route-return');
+   return result;
+  }
   if(path==='/api/routes'&&admin){
    const {id,assignee}=input||{};
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(assignee)||!Array.isArray(input.spans)||!input.spans.length||input.spans.length>250)throw sharedError('Informe o inspetor e até 250 vãos.');
@@ -414,16 +658,19 @@ async function routeAPI(request,env){
    const buffer=CampoRoutes.bufferMetres(input.buffer),plan=CampoRoutes.routePlan(input.plan);
    if(input.plan!=null&&!plan)throw sharedError('Informe a data inicial e uma capacidade diária válida.');
    const campaign=input.campaign;
+   const outlet=input.outlet;
+   if(outlet!==undefined&&!validRouteOutlet(outlet))throw sharedError('Selecione a saída da subestação no mapa.');
    if(campaign&&(!CampoRoutes.identifier(campaign.id)||!Number.isInteger(campaign.index)||!Number.isInteger(campaign.total)||campaign.total<2||campaign.total>160||campaign.index<1||campaign.index>campaign.total||id!==campaign.id+'-'+campaign.index||!text(campaign.name)))throw sharedError('Identificação da rota fracionada inválida.');
    const operator=await db.prepare(`SELECT id,name FROM campo_users WHERE id=? AND blocked=0 AND NOT EXISTS (SELECT 1 FROM campo_user_lifecycle WHERE user_id=campo_users.id AND deleted_at IS NOT NULL)`).bind(assignee).first();
    if(!operator)throw sharedError('Selecione uma conta ativa.');
-   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
+   const route={id,assignee,operator:operator.name,name,locality,feeder,zone,section,...(sections.length>1?{sections}:{}),phase,spans,createdAt:now,...(input.homologation===true?{homologation:true}:{}),...(outlet?{outlet}:{}),...(plan?{plan}:{}),...(input.buffer!=null?{buffer}:{}),...(campaign?{campaign:{id:campaign.id,index:campaign.index,total:campaign.total,name:text(campaign.name)}}:{})};
    if(campaign){
     const peer=await db.prepare('SELECT assignee,data FROM campo_routes WHERE id=?').bind(campaign.id+'-1').first();
-    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
+    if((peer&&(peer.assignee!==assignee||JSON.stringify(JSON.parse(peer.data).plan||null)!==JSON.stringify(plan)||JSON.stringify(JSON.parse(peer.data).outlet||null)!==JSON.stringify(outlet||null)||Boolean(JSON.parse(peer.data).homologation)!==Boolean(route.homologation)||JSON.parse(peer.data).deletedAt))||(!peer&&campaign.index!==1))throw sharedError('A primeira parte da rota precisa estar gravada para o mesmo inspetor.',409);
    }
    const insert=await db.prepare('INSERT OR IGNORE INTO campo_routes(id,assignee,data,created_at) VALUES(?,?,?,?)').bind(id,assignee,JSON.stringify(route),now).run();
    if(!insert.meta?.changes){const stored=JSON.parse((await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(id).first()).data);const {createdAt:_new,...wanted}=route,{createdAt:_old,...existing}=stored;if(JSON.stringify(wanted)!==JSON.stringify(existing))throw sharedError('Esta rota já foi publicada. Crie uma nova rota para alterar o plano.',409);return json({route:stored});}
+   await realtimePublish(env,'route-assigned');
    return json({route},201);
   }
    if(path==='/api/routes/return'&&(actor||admin)){
@@ -433,7 +680,7 @@ async function routeAPI(request,env){
     if(management&&!admin)throw sharedError('Somente a gestão pode retirar uma rota do inspetor.',403);
     const entry=management?await db.prepare('SELECT data FROM campo_routes WHERE id=?').bind(routeId).first():await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
     if(!entry)throw sharedError(management?'Rota não encontrada.':'Rota não atribuída à sua conta.',404);
-    const route=JSON.parse(entry.data),scopeId=route.campaign?.id||route.id;
+    const route=JSON.parse(entry.data);if(route.deletedAt)throw sharedError('Rota de homologação excluída.',410);const scopeId=route.campaign?.id||route.id;
     const authorizedBy=reasonCode==='homologacao'?await authorizeRouteHomologation(request,env,db,input):null;
     const returnActor=actor||'administrator',returned={id,scopeId,routeId,assignee:route.assignee,actor:returnActor,actorName:env.CAMPO_USER?.name||(management?'Administrador':route.operator||'Inspetor'),source:management?'management':'field',reasonCode,reason:ROUTE_RETURN_REASONS[reasonCode],note,createdAt:now,...(authorizedBy?{authorizedBy}:{})};
     const insert=await db.prepare('INSERT OR IGNORE INTO campo_route_returns(id,scope_id,route_id,assignee,actor,data,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,scopeId,routeId,route.assignee,returnActor,JSON.stringify(returned),now).run();
@@ -448,20 +695,28 @@ async function routeAPI(request,env){
   if(path==='/api/routes/visit'&&actor){
    const {id,routeId,startedAt,endedAt}=input||{},start=Date.parse(startedAt),end=Date.parse(endedAt);
    if(!CampoRoutes.identifier(id)||!CampoRoutes.identifier(routeId)||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end>Date.now()+600000||end-start>7*86400000||
-     !Array.isArray(input.ranges)||input.ranges.length>750)throw sharedError('Dados da vistoria inválidos.');
+     (!input.keyCheck&&(!Array.isArray(input.ranges)||input.ranges.length>750)))throw sharedError('Dados da vistoria inválidos.');
    const entry=await db.prepare('SELECT data FROM campo_routes WHERE id=? AND assignee=?').bind(routeId,actor).first();
    if(!entry)throw sharedError('Rota não atribuída à sua conta.',404);
    const route=JSON.parse(entry.data),ids=new Set(route.spans.map(s=>s.id));
+   if(route.deletedAt)throw sharedError('Rota de homologação excluída.',410);
+   const old=await db.prepare('SELECT data,received_at FROM campo_route_visits WHERE id=? AND actor=?').bind(id,actor).first();
+   if(old&&input.keyCheck){
+    const saved=JSON.parse(old.data);
+    if(saved.routeId===routeId&&JSON.stringify(saved.keyCheck)===JSON.stringify(input.keyCheck))return json({visit:{...saved,receivedAt:old.received_at}});
+    throw sharedError('O identificador já pertence a outra vistoria.',409);
+   }
     if(await db.prepare('SELECT id FROM campo_route_returns WHERE scope_id=?').bind(route.campaign?.id||route.id).first())throw sharedError('A rota já foi devolvida e não aceita novas conclusões.',409);
-   const ranges=input.ranges.map(x=>{
+   const ranges=input.keyCheck?await routeKeyRanges(db,route,input.keyCheck):input.ranges.map(x=>{
     if(!x||!ids.has(x.spanId)||!Number.isInteger(x.start)||!Number.isInteger(x.end)||x.start<0||x.end>CampoRoutes.FULL||x.start>=x.end)throw sharedError('Vão ou faixa de vistoria inválida.');
     return {spanId:x.spanId,start:x.start,end:x.end};
    });
-   const visit={id,routeId,actor,startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),day:CampoRoutes.day(end),trackMetres:Math.round(Math.max(0,Math.min(1000000,Number(input.trackMetres)||0))),ranges,reason:CampoRoutes.text(input.reason,480)};
+   const visit={id,routeId,actor,startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),day:CampoRoutes.day(end),trackMetres:Math.round(Math.max(0,Math.min(1000000,Number(input.trackMetres)||0))),ranges,reason:CampoRoutes.text(input.reason,480),...(input.keyCheck?{keyCheck:input.keyCheck}:{})};
    if(!ranges.length&&!visit.reason)throw sharedError('Informe por que a rota foi encerrada sem cobertura.');
-   await db.prepare('INSERT OR IGNORE INTO campo_route_visits(id,route_id,actor,data,received_at) VALUES(?,?,?,?,?)').bind(id,routeId,actor,JSON.stringify(visit),now).run();
+   const result=await db.prepare("INSERT OR IGNORE INTO campo_route_visits(id,route_id,actor,data,received_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_routes WHERE id=? AND json_extract(data,'$.deletedAt') IS NULL) AND NOT EXISTS(SELECT 1 FROM campo_route_returns WHERE scope_id=?)").bind(id,routeId,actor,JSON.stringify(visit),now,routeId,route.campaign?.id||route.id).run();
    const row=await db.prepare('SELECT data,received_at FROM campo_route_visits WHERE id=? AND actor=?').bind(id,actor).first();
-   if(row?.data!==JSON.stringify(visit))throw sharedError('O identificador já pertence a outra vistoria.',409);
+   if(row?.data!==JSON.stringify(visit))throw sharedError('A rota mudou antes de confirmar a vistoria ou o identificador já foi usado.',409);
+   if(result.meta?.changes)await realtimePublish(env,'route-visit');
    return json({visit:{...visit,receivedAt:row.received_at}});
   }
   throw sharedError('Operação não permitida.',403);
@@ -595,7 +850,7 @@ function isAdministrator(request,env){
 }
 const internalApp={async fetch(request,env){
  const url=new URL(request.url);
- if(['/api/routes','/api/routes/visit','/api/routes/return','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
+ if(['/api/routes','/api/routes/visit','/api/routes/return','/api/routes/homologacao','/api/routes/saida','/api/routes/reference','/api/routes/geometry'].includes(url.pathname))return routeAPI(request,env);
  if(url.pathname.startsWith('/api/control/'))return controlAPI(request,env);
  if(url.pathname.startsWith('/api/vera/'))return veraAPI(request,env);
  if(url.pathname==='/api/ciclo-poda')return cicloPodaAPI(request,env);
@@ -674,6 +929,8 @@ function sharedData(raw,actor,imported=false){
  for(const key of ['height','dap','circ','mtDistance','btDistance','atDistance'])if(out[key]!==undefined&&out[key]!==''&&(!Number.isFinite(Number(out[key]))||Number(out[key])<0))throw sharedError('Medida inválida: '+key);
  for(const key of ['mt','bt','at'])out[key]=raw[key]===true||raw[key]==='sim';
  for(const key of ['inspectionTiming','plantIdentification','heightMeasurement','measurements','origin'])if(raw[key]&&typeof raw[key]==='object'){const serialized=JSON.stringify(raw[key]);if(serialized.length>16000)throw sharedError('Metadados acima do limite: '+key);out[key]=JSON.parse(serialized);}
+ const spanCheck=typeof CampoSpanQuality==='undefined'?null:CampoSpanQuality.read({...out,spanReference:raw.spanReference});
+ if(spanCheck)out.spanReference=CampoSpanQuality.reference(out,spanCheck.nearest,{type:'MultiLineString',coordinates:spanCheck.network});
  out.imported=imported||raw.imported===true;out.lastInspector=actor;
  return out;
 }
@@ -973,7 +1230,7 @@ async function controlInventory(env,force=false){
  if(!force&&state.expires>now)return state;
  state.promise=(async()=>{try{state.inventory=await adminArchiveInventory(env);state.at=Date.now();state.error='';state.expires=state.at+60000;}catch(e){state.error=e.message;state.expires=Date.now()+30000;}finally{state.promise=null;}return state;})();return state.promise;
 }
-function controlDay(v){const date=Date.parse(v);return Number.isFinite(date)?new Date(date-5*3600000).toISOString().slice(0,10):'';}
+function controlDay(v){if(/^\d{4}-\d{2}-\d{2}$/.test(v))return v;const date=Date.parse(v);return Number.isFinite(date)?new Date(date-5*3600000).toISOString().slice(0,10):'';}
 function controlFilters(params){
  const f=Object.fromEntries(['month','day','q'].map(k=>[k,(params.get(k)||'').trim()]));for(const k of ['inspector','feeder','classification','state'])f[k]=[...new Set(params.getAll(k).map(v=>v.trim()).filter(Boolean))];
  if(f.month&&!/^\d{4}-\d{2}$/.test(f.month)||f.day&&!/^\d{4}-\d{2}-\d{2}$/.test(f.day)||Object.values(f).flat().some(v=>v.length>200)||[f.inspector,f.feeder].some(l=>l.length>200)||f.classification.some(v=>!['producao','homologacao','unknown'].includes(v))||f.state.some(v=>!['missing','identification','poda','request'].includes(v)))throw sharedError('Filtro inválido.');return f;
@@ -1008,8 +1265,9 @@ async function controlAPI(request,env){try{
  const u=new URL(request.url),p=u.pathname,db=await adminDb(env);
  if(p==='/api/control/live'){if(!env.CAMPO_REALTIME)throw sharedError('Canal em tempo real ainda não configurado.',503);if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('WebSocket obrigatório.',{status:426,headers:{Upgrade:'websocket','Cache-Control':'no-store'}});return env.CAMPO_REALTIME.getByName('management').fetch(new Request('https://campo-realtime/connect',{headers:request.headers}));}
  if(p==='/api/control/revision'){const r=await db.prepare('SELECT COALESCE(MAX(seq),0) seq FROM shared_changes').first(),labels=await db.prepare('SELECT MAX(updated_at) stamp FROM campo_record_labels').first();return json({revision:r.seq+':'+(labels.stamp||''),intervalSeconds:10,version:'4.7.3',at:new Date().toISOString()});}
+ if(p==='/api/control/span-quality')return await adminSpanChecks(env,db,await controlUniverse(env),u.searchParams);
  if(p==='/api/control/export'){const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',extras=u.searchParams.get('extras')==='1',filters=controlFilters(u.searchParams);if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))throw sharedError('Período inválido.');const data=await controlUniverse(env);const rows=data.records.filter(r=>{if(!controlMatches(r,filters))return false;const day=controlDay(r.createdAt);return (!from||day>=from)&&(!to||day<=to);}).sort((a,b)=>String(a.externalId||a.id).localeCompare(String(b.externalId||b.id),'pt-BR',{numeric:true}));return new Response(controlExportCsv(rows,extras),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="arbora-todas-as-bases.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Campo-Record-Count':String(rows.length)}});}
- if(p==='/api/control/map'){const data=await controlLiveUniverse(env),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
+ if(p==='/api/control/map'){const data=await (u.searchParams.get('archive')==='1'?controlUniverse(env):controlLiveUniverse(env)),filters=controlFilters(u.searchParams),all=data.records.filter(r=>!r.archiveCleanupPending),rows=all.filter(r=>controlMatches(r,filters));return json({map:controlMap(rows,u.searchParams),bounds:controlBounds(rows),total:rows.length,available:all.length,filtered:Object.values(filters).some(v=>v.length>0),generatedAt:data.generatedAt});}
  if(p!=='/api/control/data'&&p!=='/api/control/tree')throw sharedError('Consulta não encontrada.',404);
  let data=p==='/api/control/tree'?await controlLiveUniverse(env):await controlUniverse(env,u.searchParams.get('refresh')==='1');
  if(p==='/api/control/tree'&&!data.records.some(r=>r.id===u.searchParams.get('id')))data=await controlUniverse(env);
@@ -1421,6 +1679,442 @@ async function campoManageAccessRequests(request,env,identity,bootstrapAdmin){
  return json({ok:true,status:decision});
 }
 
+// Published route geometry and the private MT package allow checking older records.
+function spanRouteIndex(routes,wanted){
+ const result=new Map();
+ for(const route of routes){
+  if(routeIsTest(route))continue;
+  for(const span of route.spans||[]){
+   const id=CampoSpanQuality.key(span.id);
+   if(!wanted.has(id))continue;
+   if(!result.has(id))result.set(id,new Map());
+   const byFeeder=result.get(id),feeder=CampoSpanQuality.key(span.feeder||route.feeder);
+   if(!byFeeder.has(feeder))byFeeder.set(feeder,{feeder,geometry:{type:'LineString',coordinates:span.line}});
+  }
+ }
+ return new Map([...result].map(([id,byFeeder])=>[id,[...byFeeder.values()]]));
+}
+async function spanPrivateIndex(env,wanted){
+ const index=new Map();
+ if(!wanted.size||!env.LOGIN_GUARD)return index;
+ try{
+  const response=await routeGeometry(new Request('https://campo-internal/api/routes/geometry'),env,true);
+  const reader=response.body.pipeThrough(new DecompressionStream('gzip')).pipeThrough(new TextDecoderStream()).getReader();
+  let buffer='',feeders=null;
+  function add(row){
+   // The compact route package starts each row with a numeric or quoted span ID.
+   const raw=row.slice(1,row.indexOf(','));
+   const id=CampoSpanQuality.key(raw.startsWith('"')?raw.slice(1,-1):raw);
+   if(!wanted.has(id))return;
+   const fields=JSON.parse(row),xy=fields[10],line=[];
+   for(let i=0;i<xy.length;i+=2)line.push([xy[i]/1e6,xy[i+1]/1e6]);
+   if(!index.has(id))index.set(id,[]);
+   index.get(id).push({feeder:feeders[fields[1]],geometry:{type:'LineString',coordinates:line}});
+  }
+  try{
+   for(;;){
+    const {value,done}=await reader.read();
+    if(done)break;
+    buffer+=value;
+    if(!feeders){
+     const rows=buffer.indexOf('"rows":[');
+     if(rows<0){if(buffer.length>500000)throw Error('Cabeçalho do pacote MT inválido.');continue;}
+     feeders=JSON.parse(buffer.slice(0,rows)+'"rows":[]}').feeders;
+     buffer=buffer.slice(rows+8);
+    }
+    // Each row ends with its flat coordinate array and the enclosing row bracket.
+    let from=0,to;
+    while((to=buffer.indexOf(']],',from))!==-1){add(buffer.slice(from,to+2));from=to+3;}
+    buffer=buffer.slice(from);
+    if(buffer.length>500000)throw Error('Linha do pacote MT inválida.');
+   }
+   if(feeders&&buffer.startsWith('[')&&buffer.endsWith(']]]}'))add(buffer.slice(0,-2));
+  }finally{await reader.cancel();}
+  return index;
+ }catch{return new Map();}
+}
+async function spanCheckRecords(env,records,routes){
+ const Q=CampoSpanQuality;
+ const eligible=records.filter(record=>Q.key(record.span)&&sharedCoordinate(record.lat,90)&&sharedCoordinate(record.lon,180));
+ const wanted=new Set(eligible.map(record=>Q.key(record.span)));
+ const byRoute=spanRouteIndex(routes,wanted),checked=new Map(),pending=[],alertsWithoutGeometry=[];
+ const isMT=record=>!(record.bt&&!record.mt||record.at&&!record.mt);
+ function attach(record,check,candidates){
+  const found=Q.select(candidates||[],record.feeder);
+  const measured=Q.measure(check.nearest[1],check.nearest[0],found?.geometry);
+  // Render the registered span only if the recorded nearest point belongs to it.
+  if(!measured||measured.metres>3)return false;
+  const reference=Q.reference(record,check.nearest,found.geometry);
+  if(!reference.network)return false;
+  checked.set(record.id,{...check,network:reference.network});
+  return true;
+ }
+ function add(record,candidates){
+  const selected=Q.select(candidates||[],record.feeder);
+  const found=Q.measure(record.lat,record.lon,selected?.geometry);
+  if(!found)return false;
+  checked.set(record.id,{...Q.reference(record,found.nearest,found.metres>Q.threshold?selected.geometry:null),metres:found.metres});
+  return true;
+ }
+ for(const record of eligible){
+  const captured=Q.read(record);
+  if(captured){
+   checked.set(record.id,captured);
+   if(isMT(record)&&captured.metres>Q.threshold&&!captured.network&&!attach(record,captured,byRoute.get(Q.key(record.span))))alertsWithoutGeometry.push(record);
+  }else if(isMT(record)&&!add(record,byRoute.get(Q.key(record.span))))pending.push(record);
+ }
+ const privateIndex=await spanPrivateIndex(env,new Set([...pending,...alertsWithoutGeometry].map(record=>Q.key(record.span))));
+ for(const record of pending)add(record,privateIndex.get(Q.key(record.span)));
+ for(const record of alertsWithoutGeometry)attach(record,checked.get(record.id),privateIndex.get(Q.key(record.span)));
+ return checked;
+}
+async function adminSpanChecks(env,db,data,params){
+ const filters=controlFilters(params),rows=data.records.filter(record=>controlMatches(record,filters));
+ const page=Number(params.get('page')||0);
+ if(!Number.isSafeInteger(page)||page<0)throw sharedError('Página inválida.');
+ let routes=[];
+ try{
+  const plans=await db.prepare("SELECT data FROM campo_routes WHERE COALESCE(json_extract(data,'$.deletedAt'),'')='' ORDER BY created_at DESC").all();
+  routes=plans.results.map(row=>JSON.parse(row.data));
+ }catch(error){if(!centralMissingTable(error))throw error;}
+ const checked=await spanCheckRecords(env,rows,routes),alerts=rows.flatMap(record=>{
+  const check=checked.get(record.id);
+  return check?.metres>CampoSpanQuality.threshold?[{...check,id:record.id,feeder:record.feeder,species:record.species}]:[];
+ }).sort((a,b)=>b.metres-a.metres);
+ const last=Math.max(0,Math.ceil(alerts.length/50)-1),current=Math.min(page,last);
+ return json({checked:checked.size,total:rows.length,count:alerts.length,items:alerts.slice(current*50,(current+1)*50),page:current,last});
+}
+
+// A viewer link grants read-only access and is independent of field and admin sessions.
+const GERENCIAL_COOKIE='__Host-arbora-gerencial';
+const GERENCIAL_TTL=8*3600;
+const GERENCIAL_LINK_ID='gerencial_viewer_link_hash';
+const gerencialToken=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
+
+async function gerencialLinkHash(db){
+ const setting=await db.prepare('SELECT value FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).first();
+ return setting?.value||null;
+}
+async function gerencialManageLink(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=authDB(env);
+ if(request.method==='GET')return json({enabled:Boolean(await gerencialLinkHash(db))});
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const {action}=await sharedBody(request,256);
+ if(action==='revoke'){
+  await db.prepare('DELETE FROM campo_admin_settings WHERE id=?').bind(GERENCIAL_LINK_ID).run();
+  return json({enabled:false});
+ }
+ if(action!=='rotate')throw sharedError('Ação de link inválida.');
+ const token=authRandom(),hash=await authHash(token);
+ await db.prepare('INSERT INTO campo_admin_settings(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
+  .bind(GERENCIAL_LINK_ID,hash,new Date().toISOString()).run();
+ return json({enabled:true,fragment:'acesso='+token});
+}
+async function gerencialSession(request,db){
+ const token=authCookie(request,GERENCIAL_COOKIE);
+ if(!gerencialToken(token))return null;
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash)return null;
+ const hash=await authHash(linkHash+':'+token);
+ const row=await db.prepare('SELECT id FROM campo_gerencial_acessos WHERE token_hash=? AND expira_em>?').bind(hash,Date.now()).first();
+ return row?{hash}:null;
+}
+async function gerencialLogin(request,env,db){
+ const {token:link}=await sharedBody(request,256);
+ if(!gerencialToken(link))throw sharedError('Link gerencial inválido ou revogado.',401);
+ const linkHash=await gerencialLinkHash(db);
+ if(!linkHash||!await equalSecret(await authHash(link),linkHash))throw sharedError('Link gerencial inválido ou revogado.',401);
+ if(await gerencialSession(request,db))return json({ok:true});
+ const token=authRandom(),hash=await authHash(linkHash+':'+token);
+ const ip=request.headers.get('CF-Connecting-IP');
+ const network=ip&&env.ADMIN_SESSION_SECRET?b64(new Uint8Array(await crypto.subtle.sign('HMAC',await sessionKey(env),encoder.encode('arbora-gerencial:'+linkHash+':'+ip)))).slice(0,12):null;
+ const label=network?'Link · rede '+network:'Link · rede indisponível';
+ const now=Date.now(),stamp=new Date(now).toISOString();
+ const inserted=await db.prepare('INSERT INTO campo_gerencial_acessos(email,entrou_em,expira_em,token_hash) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM campo_admin_settings WHERE id=? AND value=?)')
+  .bind(label,stamp,now+GERENCIAL_TTL*1000,hash,GERENCIAL_LINK_ID,linkHash).run();
+ if(!inserted.meta?.changes)throw sharedError('Link gerencial inválido ou revogado.',401);
+ const response=json({ok:true});
+ response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,token,GERENCIAL_TTL));
+ return response;
+}
+async function gerencialAudit(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const raw=new URL(request.url).searchParams.get('before');
+ const before=raw===null?Number.MAX_SAFE_INTEGER:Number(raw);
+ if(!Number.isSafeInteger(before)||before<=0)throw sharedError('Página inválida.');
+ const {results}=await authDB(env).prepare('SELECT id,email,entrou_em,saiu_em FROM campo_gerencial_acessos WHERE id<? ORDER BY id DESC LIMIT 51').bind(before).all();
+ const items=results.slice(0,50);
+ return json({items,next:results.length>50?items.at(-1).id:null});
+}
+function gerencialActiveField(record){
+ return !record.archiveCleanupPending&&record.adminClassification!=='homologacao';
+}
+function gerencialName(value){
+ return String(value||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').trim().toLowerCase();
+}
+async function gerencialInspectors(db){
+ const [setting,users]=await Promise.all([
+  db.prepare('SELECT inspector_ids FROM campo_gerencial_vitrine WHERE id=1').first(),
+  db.prepare("SELECT id,name FROM campo_users u WHERE role='inspector' AND blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle l WHERE l.user_id=u.id)").all()
+ ]);
+ const accounts=users.results;
+ const defaults=['herlen','lucivaldo'].flatMap(name=>{
+  const matches=accounts.filter(account=>gerencialName(account.name).split(/\s+/)[0]===name);
+  return matches.length===1?[matches[0].id]:[];
+ });
+ const ids=new Set(setting?JSON.parse(setting.inspector_ids):defaults);
+ return {accounts,enabled:accounts.filter(account=>ids.has(account.id))};
+}
+async function gerencialSelection(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=await adminDb(env),scope=await gerencialInspectors(db);
+ if(request.method==='GET')return json(scope);
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const {ids}=await sharedBody(request,12000);
+ if(!Array.isArray(ids)||ids.length>100||new Set(ids).size!==ids.length||ids.some(id=>!scope.accounts.some(account=>account.id===id)))throw sharedError('Selecione contas ativas de inspetores.');
+ await db.prepare('INSERT INTO campo_gerencial_vitrine(id,inspector_ids) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET inspector_ids=excluded.inspector_ids').bind(JSON.stringify(ids)).run();
+ return json({enabled:scope.accounts.filter(account=>ids.includes(account.id))});
+}
+async function gerencialTeams(db){
+ const [teams,members,preference]=await Promise.all([
+  db.prepare('SELECT id,nome AS name FROM campo_gerencial_equipes ORDER BY nome').all(),
+  db.prepare('SELECT user_id AS userId,equipe_id AS teamId FROM campo_gerencial_equipe_membros').all(),
+  db.prepare("SELECT value FROM campo_admin_settings WHERE id='gerencial_show_inspectors'").first()
+ ]);
+ return {teams:teams.results,members:members.results,showInspectorNames:preference?.value==='true'};
+}
+async function gerencialManageTeams(request,env,admin){
+ if(!admin)throw sharedError('Acesso restrito ao administrador.',403);
+ const db=await adminDb(env);
+ if(request.method==='GET')return json(await gerencialTeams(db));
+ if(request.method!=='POST')throw sharedError('Método não permitido.',405);
+ const input=await sharedBody(request,12000);
+ if(input.action==='create'){
+  const name=typeof input.name==='string'?input.name.trim().replace(/\s+/g,' ').toLocaleUpperCase('pt-BR'):'';
+  if(!/^[\p{L}\p{N}][\p{L}\p{N} ./_-]{0,39}$/u.test(name))throw sharedError('Informe um código ou nome de equipe de até 40 caracteres.');
+  const id=crypto.randomUUID();
+  const result=await db.prepare('INSERT OR IGNORE INTO campo_gerencial_equipes(id,nome) VALUES(?,?)').bind(id,name).run();
+  if(!result.meta?.changes)throw sharedError('Já existe uma equipe com esse nome.',409);
+  return json({team:{id,name}},201);
+ }
+ if(input.action==='assign'){
+  const {userId,teamId}=input;
+  if(!CampoRoutes.identifier(userId)||(teamId!==null&&!CampoRoutes.identifier(teamId)))throw sharedError('Vínculo de equipe inválido.');
+  const account=await db.prepare("SELECT id FROM campo_users u WHERE id=? AND role='inspector' AND blocked=0 AND NOT EXISTS(SELECT 1 FROM campo_user_lifecycle l WHERE l.user_id=u.id)").bind(userId).first();
+  if(!account)throw sharedError('Selecione um inspetor ativo.',404);
+  if(teamId===null)await db.prepare('DELETE FROM campo_gerencial_equipe_membros WHERE user_id=?').bind(userId).run();
+  else{
+   const found=await db.prepare('SELECT id FROM campo_gerencial_equipes WHERE id=?').bind(teamId).first();
+   if(!found)throw sharedError('Equipe não encontrada.',404);
+   await db.prepare('INSERT INTO campo_gerencial_equipe_membros(user_id,equipe_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET equipe_id=excluded.equipe_id').bind(userId,teamId).run();
+  }
+  return json({userId,teamId});
+ }
+ if(input.action==='visibility'&&typeof input.showInspectorNames==='boolean'){
+  await db.prepare("INSERT INTO campo_admin_settings(id,value,updated_at) VALUES('gerencial_show_inspectors',?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
+   .bind(String(input.showInspectorNames),new Date().toISOString()).run();
+  return json({showInspectorNames:input.showInspectorNames});
+ }
+ throw sharedError('Ação de equipe inválida.');
+}
+function gerencialTeamGroups(enabled,{teams,members,showInspectorNames}){
+ const byTeam=new Map(teams.map(team=>[team.id,team])),assignments=new Map(members.map(member=>[member.userId,member.teamId]));
+ const groups=new Map(),operators=new Map();
+ let unassigned=0;
+ for(const account of [...enabled].sort((a,b)=>a.id.localeCompare(b.id))){
+  const team=byTeam.get(assignments.get(account.id));
+  const id=team?.id||'unlinked-'+(++unassigned);
+  if(!groups.has(id))groups.set(id,{id,label:team?.name||'Sem equipe '+unassigned,operatorCount:0});
+  const group=groups.get(id);
+  group.operatorCount++;
+  if(showInspectorNames)(group.inspectors??=[]).push(account.name);
+  operators.set(account.id,group);
+ }
+ for(const group of groups.values()){
+  group.inspectors?.sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  if(showInspectorNames)group.label+=' · '+group.inspectors.join(', ');
+  delete group.inspectors;
+ }
+ return {groups:[...groups.values()].sort((a,b)=>a.label.localeCompare(b.label,'pt-BR',{numeric:true})),operators};
+}
+async function gerencialRouteSource(db,enabled){
+ if(!enabled.length)return {routes:[],visits:[]};
+ const scope=JSON.stringify(enabled.map(account=>account.id));
+ try{
+  const [plans,visits,returns]=await Promise.all([
+   db.prepare('SELECT data FROM campo_routes WHERE assignee IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC').bind(scope).all(),
+   db.prepare('SELECT v.data,v.received_at FROM campo_routes r JOIN campo_route_visits v ON v.route_id=r.id WHERE r.assignee IN (SELECT value FROM json_each(?)) ORDER BY v.received_at').bind(scope).all(),
+   db.prepare('SELECT scope_id,data FROM campo_route_returns WHERE assignee IN (SELECT value FROM json_each(?))').bind(scope).all()
+  ]);
+  const returned=new Map(returns.results.map(row=>[row.scope_id,JSON.parse(row.data)]));
+  return {
+   routes:visibleRoutes(plans.results.map(row=>JSON.parse(row.data)).filter(route=>!route.deletedAt)).filter(route=>!routeIsTest({...route,returned:returned.get(route.campaign?.id||route.id)})),
+   visits:visits.results.map(row=>({...JSON.parse(row.data),receivedAt:row.received_at}))
+  };
+ }catch(error){
+  if(centralMissingTable(error))return {routes:[],visits:[]};
+  throw error;
+ }
+}
+function gerencialScopedTrees(records,enabled,accounts){
+ const byId=new Map(enabled.map(account=>[account.id,account])),byName=new Map();
+ for(const account of accounts){
+  const name=gerencialName(account.name);
+  byName.set(name,byName.has(name)?null:byId.get(account.id));
+ }
+ return records.filter(gerencialActiveField).flatMap(r=>{
+  const operator=r.createdByUserId?byId.get(r.createdByUserId):byName.get(gerencialName(r.collectionInspector||r.inspector));
+  return operator?[{r,operator}]:[];
+ });
+}
+async function gerencialFieldHistory(env){
+ const db=await adminDb(env);
+ const [{enabled,accounts},data,settings,merges]=await Promise.all([
+  gerencialInspectors(db),controlUniverse(env),gerencialTeams(db),db.prepare('SELECT source_id FROM shared_merges').all()
+ ]);
+ const {operators}=gerencialTeamGroups(enabled,settings);
+ const inactive=new Set([...data.deletedIds,...merges.results.map(row=>row.source_id)]);
+ const points=gerencialScopedTrees(data.records,enabled,accounts).filter(({r})=>
+  !inactive.has(r.id)&&sharedCoordinate(r.lat,90)&&sharedCoordinate(r.lon,180)
+ ).map(({r,operator})=>[Number(r.lat),Number(r.lon),operators.get(operator.id).id,CampoSpanQuality.key(r.span)]);
+ return json({points,archiveAvailable:data.archive.available});
+}
+
+let gerencialBingCache;
+async function gerencialBing(env){
+ if(!env.BING_MAPS_KEY)return json({available:false});
+ if(gerencialBingCache?.until>Date.now())return json(gerencialBingCache.data);
+ const endpoint=new URL('https://dev.virtualearth.net/REST/v1/Imagery/Metadata/Aerial');
+ endpoint.searchParams.set('key',env.BING_MAPS_KEY);
+ try{
+  const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000),redirect:'error'});
+  if(!response.ok)return json({available:false});
+  const metadata=await response.json(),resource=metadata.resourceSets?.[0]?.resources?.[0];
+  const source=String(resource?.imageUrl||'').replace(/^http:/,'https:');
+  if(!/^https:\/\/[^/]*\.tiles\.virtualearth\.net\/tiles\/[A-Za-z]\{quadkey\}\.[a-z]+(?:\?[^#]*)?$/i.test(source)||source.includes(env.BING_MAPS_KEY))return json({available:false});
+  const subdomains=(resource.imageUrlSubdomains||[]).filter(value=>/^[a-z0-9-]+$/i.test(value));
+  if(source.includes('{subdomain}')&&!subdomains.length)return json({available:false});
+  const data={available:true,source,subdomains,attribution:String(metadata.copyright||'© Microsoft Bing Maps'),nativeZoom:15};
+  gerencialBingCache={data,until:Date.now()+3600000};
+  return json(data);
+ }catch{return json({available:false});}
+}
+async function gerencialData(env){
+ const db=await adminDb(env);
+ const [{enabled,accounts},data,settings]=await Promise.all([gerencialInspectors(db),controlUniverse(env),gerencialTeams(db)]);
+ const {groups,operators}=gerencialTeamGroups(enabled,settings);
+ const source=await gerencialRouteSource(db,enabled);
+ const byId=new Map(enabled.map(account=>[account.id,account]));
+ const scoped=gerencialScopedTrees(data.records,enabled,accounts);
+ const checked=await spanCheckRecords(env,scoped.map(row=>row.r),source.routes);
+ const field=scoped.map(({r,operator})=>{
+  const check=checked.get(r.id);
+  return {
+   inspector:operators.get(operator.id).id,day:controlDay(r.createdAt),seconds:r.inspectionTiming?.collectionSeconds,
+   poda:r.poda,grouped:r.grouped,position:r.position,feeder:r.feeder,
+   identification:CampoInspectionRules.identificationPending(r),missing:controlProblems(r).length>0,
+   spanChecked:Boolean(check),...(check?.metres>CampoSpanQuality.threshold?{spanAlert:check}:{})
+  };
+ });
+ const routes=gerencialCampaigns(source,byId).map(parts=>{
+  const route=parts[0],id=route.campaign?.id||route.id,spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+  const visits=source.visits.filter(visit=>ids.has(visit.routeId)),planned=CampoRoutes.metres(spans),cover=CampoRoutes.coverage(spans,visits);
+  const keys=CampoRoutes.keySections(spans,route.outlet),closed=keys.filter(section=>CampoRoutes.keyProgress(section,cover.bySpan).every(segment=>segment.closed));
+  return {
+   id,name:settings.showInspectorNames?(route.campaign?.name||route.name):[route.feeder,CampoRoutes.sectionLabel(route),controlDay(route.createdAt).split('-').reverse().join('/')].filter(Boolean).join(' · '),
+   inspector:operators.get(route.assignee).id,feeder:route.feeder,revision:visits.at(-1)?.receivedAt||null,
+   planned,confirmed:cover.metres,pending:Math.max(0,planned-cover.metres),keys:keys.length,closed:closed.length,
+   daily:CampoRoutes.dailyCoverage(spans,visits),targets:CampoRoutes.schedule(route.plan,planned)
+  };
+ });
+ return json({field,routes,groups,archiveAvailable:data.archive.available,updatedAt:data.generatedAt});
+}
+function gerencialCampaigns(source,byId){
+ return CampoRoutes.campaignParts(source.routes.filter(route=>byId.has(route.assignee)));
+}
+async function gerencialVeraPositions(db){
+ try{
+  return (await db.prepare(`SELECT id,json_extract(data,'$.lat') AS lat,json_extract(data,'$.lon') AS lon
+   FROM vera_trees WHERE generation=(SELECT value FROM vera_meta WHERE key='generation')`).all()).results;
+ }catch(error){
+  if(veraMissingTable(error))return null;
+  throw error;
+ }
+}
+async function gerencialTreePositions(env,veraOnly=false){
+ const db=await adminDb(env);
+ const [data,vera,merges]=await Promise.all([
+  controlUniverse(env),gerencialVeraPositions(db),db.prepare('SELECT source_id FROM shared_merges').all()
+ ]);
+ const inactive=new Set([...data.deletedIds,...merges.results.map(row=>row.source_id)]);
+ const field=new Map(data.records.filter(row=>gerencialActiveField(row)&&!inactive.has(row.id)).map(row=>[row.id,row]));
+ const coordinates=row=>sharedCoordinate(row.lat,90)&&sharedCoordinate(row.lon,180)?[Number(row.lat),Number(row.lon)]:null;
+ const baseline=(vera||[]).flatMap(row=>{
+  const id='vera-'+row.id;
+  if(inactive.has(id))return [];
+  const updated=field.get(id);
+  field.delete(id);
+  const point=(updated&&coordinates(updated))||coordinates(row);
+  return point?[point]:[];
+ });
+ return json({
+  vera:baseline,...(veraOnly?{}:{field:[...field.values()].map(coordinates).filter(Boolean)}),
+  veraAvailable:vera!==null,archiveAvailable:data.archive.available
+ });
+}
+async function gerencialRouteMap(request,env){
+ const params=new URL(request.url).searchParams,requested=[...new Set(params.getAll('id'))];
+ if(!requested.length||requested.length>12||requested.some(id=>!CampoRoutes.identifier(id)))throw sharedError('Seleção de rotas inválida.');
+ const db=await adminDb(env),{enabled}=await gerencialInspectors(db);
+ const source=await gerencialRouteSource(db,enabled),byId=new Map(enabled.map(account=>[account.id,account]));
+ const routes=new Map(gerencialCampaigns(source,byId).map(parts=>[parts[0].campaign?.id||parts[0].id,parts]));
+ const views=requested.flatMap(id=>{
+  const parts=routes.get(id);
+  if(!parts)return [];
+  const route=parts[0],spans=parts.flatMap(part=>part.spans),ids=new Set(parts.map(part=>part.id));
+  const cover=CampoRoutes.coverage(spans,source.visits.filter(visit=>ids.has(visit.routeId)));
+  const lines=CampoRoutes.mapLines(spans,cover.bySpan);
+  const keys=CampoRoutes.keySections(spans,route.outlet).map(section=>({
+   code:section.code,point:section.segments[0].start,
+   pending:CampoRoutes.keyProgress(section,cover.bySpan).filter(segment=>!segment.closed).length
+  }));
+  return [{id,lines,keys,spanIds:spans.map(span=>CampoSpanQuality.key(span.id)),outlet:route.outlet}];
+ });
+ if(!views.length)throw sharedError('Rotas indisponíveis.',404);
+ return json(params.has('batch')||requested.length>1?{routes:views}:views[0]);
+}
+async function gerencialAPI(request,env,path,admin){
+ try{
+  if(path==='/api/admin/gerencial/acessos'&&request.method==='GET')return await gerencialAudit(request,env,admin);
+  if(path==='/api/admin/gerencial/equipes')return await gerencialManageTeams(request,env,admin);
+  if(path==='/api/admin/gerencial/inspetores')return await gerencialSelection(request,env,admin);
+  if(path==='/api/admin/gerencial/link')return await gerencialManageLink(request,env,admin);
+  const db=authDB(env);
+  if(path==='/api/gerencial/link-session'&&request.method==='POST')return await gerencialLogin(request,env,db);
+  const viewer=await gerencialSession(request,db);
+  if(path==='/api/gerencial/sair'&&request.method==='POST'){
+   if(viewer)await db.prepare('UPDATE campo_gerencial_acessos SET token_hash=NULL,saiu_em=? WHERE token_hash=?').bind(new Date().toISOString(),viewer.hash).run();
+   const response=json({ok:true});
+   response.headers.append('Set-Cookie',sessionCookie(GERENCIAL_COOKIE,'',0));
+   return response;
+  }
+  if(request.method!=='GET')throw sharedError('Método não permitido.',405);
+  if(path==='/api/gerencial/sessao')return json({authenticated:Boolean(viewer||admin),admin:Boolean(admin),viewer:Boolean(viewer)});
+  if(!viewer&&!admin)throw sharedError('Abra o link compartilhado pela administração.',401);
+  if(path==='/api/gerencial/dados')return await gerencialData(env);
+  if(path==='/api/gerencial/arvores'){
+   const layer=new URL(request.url).searchParams.get('camada');
+   return layer==='campo'?await gerencialFieldHistory(env):await gerencialTreePositions(env,layer==='vera');
+  }
+  if(path==='/api/gerencial/bing')return await gerencialBing(env);
+  if(path==='/api/gerencial/rota')return await gerencialRouteMap(request,env);
+  return json({error:'Consulta não encontrada.'},404);
+ }catch(error){
+  return json({error:error.status?error.message:'Consulta gerencial temporariamente indisponível.'},error.status||503);
+ }
+}
+
 const encoder=new TextEncoder();
 const b64=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 const unb64=s=>Uint8Array.from(atob(s.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
@@ -1449,6 +2143,12 @@ export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{await ru
  let identity=null;try{identity=await authenticatedOperator(request,env);}catch{if(fieldAuthenticationRequired(env))return response({error:'Autenticação central indisponível. Seus cadastros locais foram preservados.'},503);}
  const bootstrapAdmin=await validSession((request.headers.get('Authorization')||'').replace(/^Bearer /,''),env)||await validSession(authCookie(request,'__Host-campo-admin-recovery'),env);
  let authResult=null;
+ if(path.startsWith('/api/gerencial/')||path.startsWith('/api/admin/gerencial/')){
+  const admin=bootstrapAdmin||identity?.user.role==='admin';
+  const result=await gerencialAPI(request,env,path,admin);
+  for(const [key,value] of Object.entries(cors))result.headers.set(key,value);
+  return result;
+ }
  try{if(path==='/api/auth/start')authResult=new Response(null,{status:303,headers:{Location:CAMPO_AUTH_APP_ORIGIN+'/?login=senha','Cache-Control':'no-store'}});
  else if(path==='/api/auth/login'){authResult=await campoPasswordLogin(request,env);if(authResult.ok)authResult.headers.append('Set-Cookie',sessionCookie('__Host-campo-admin-recovery','',0));}
  else if(path==='/api/auth/password')authResult=await campoChangePassword(request,env,identity);
